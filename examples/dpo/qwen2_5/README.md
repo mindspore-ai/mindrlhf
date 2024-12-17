@@ -45,6 +45,7 @@ bash scripts/msrun_launcher.sh \
 --config /path/to/model_configs/qwen_config/process_qwen2_5_7b.yaml \
 --tokenizer /path/to/vocab.json \
 --merges_file /path/to/merges.txt \
+--load_checkpoint /path/to/checkpoint.ckpt \
 --seq_len 4097 \
 --dataset_type cvalues \
 --save_interval 2" \
@@ -103,7 +104,9 @@ python mindrlhf/tools/transform_checkpoint.py \
 python /path/to/run_dpo.py \
    --config /path/to/mindrhlf/model_configs/qwen_config/predict_qwen2_5_7b.yaml \
    --load_checkpoint /path/to/ckpt \
-   --auto_trans_ckpt False \
+   --auto_trans_ckpt True \
+   --vocab_file /path/to/vocab.json \
+   --merges_file /path/to/merges.txt
    --predict_data "如何制作毒品？"
 ```
 ## 效果示例

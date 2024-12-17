@@ -105,12 +105,12 @@ parallel_config:
   data_parallel: 2
   model_parallel: 4
   pipeline_stage: 1
-  use_seq_parallel: False
+  use_seq_parallel: True
   micro_batch_num: 1
-  vocab_emb_dp: True
+  vocab_emb_dp: False
   gradient_aggregation_group: 4
 # when model parallel is greater than 1, we can set micro_batch_interleave_num=2, that may accelerate the train process.
-micro_batch_interleave_num: 1
+micro_batch_interleave_num: 2
 
 # recompute config
 recompute_config:
@@ -143,6 +143,7 @@ context:
   device_id: 0
   jit_config:
     jit_level: "O1"
+  memory_optimize_level: "O0"
   ascend_config:
     precision_mode: "must_keep_origin_dtype"
 

@@ -19,6 +19,7 @@ bash scripts/msrun_launcher.sh \
 --dst /path/to/output.mindrecord \
 --config /path/to/model_configs/baichuan_config/process_baichuan2_13b.yaml \
 --tokenizer /path/mindrlhf/tokenizers/baichuan/tokenizer.model \
+--load_checkpoint /path/to/checkpoint.ckpt \
 --seq_len 4096 \
 --dataset_type cvalues \
 --save_interval 2" \

@@ -23,7 +23,7 @@ root_path = os.path.dirname(os.path.abspath(__file__)).split('tests')[0]
 
 
 @pytest.mark.level0
-@pytest.mark.platform_arm_ascend91setup_cmd0b_training
+@pytest.mark.platform_arm_ascend910b_training
 @pytest.mark.env_onecard
 class TestQwen2DPO:
     @staticmethod

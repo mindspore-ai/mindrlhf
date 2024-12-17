@@ -13,24 +13,6 @@ trainer:
   type: CausalLanguageModelingTrainer
   model_name: 'qwen2_7b'
 
-# dataset
-train_dataset: &train_dataset
-  data_loader:
-    type: MindDataset
-    dataset_dir: ""
-    shuffle: True
-  input_columns: ["input_ids", "labels", "attention_mask"]
-  num_parallel_workers: 8
-  python_multiprocessing: False
-  drop_remainder: True
-  batch_size: 1
-  repeat: 1
-  numa_enable: False
-  prefetch_size: 1
-train_dataset_task:
-  type: CausalLanguageModelDataset
-  dataset_config: *train_dataset
-
 # runner config
 runner_config:
   epochs: 5
@@ -46,31 +28,7 @@ runner_wrapper:
     scale_window: 1000
   use_clip_grad: True
 
-# optimizer
-optimizer:
-  type: FP32StateAdamWeightDecay
-  beta1: 0.9
-  beta2: 0.95
-  eps: 1.e-6
-  weight_decay: 0.1
 
-# lr schedule
-lr_schedule:
-  type: CosineWithWarmUpLR
-  learning_rate: 1.e-5
-  warmup_ratio: 0.01
-  total_steps: -1 # -1 means it will load the total steps of the dataset
-
-# callbacks
-callbacks:
-  - type: MFLossMonitor
-  - type: CheckpointMonitor
-    prefix: "qwen2"
-    save_checkpoint_steps: 10000
-    keep_checkpoint_max: 3
-    integrated_save: False
-    async_save: False
-  - type: ObsMonitor
 
 # default parallel of device num = 8 for Atlas 800T A2
 parallel_config:
@@ -78,18 +36,11 @@ parallel_config:
   model_parallel: 4
   pipeline_stage: 1
   micro_batch_num: 1
-  vocab_emb_dp: True
+  vocab_emb_dp: False
   gradient_aggregation_group: 4
 # when model parallel is greater than 1, we can set micro_batch_interleave_num=2, that may accelerate the train process.
 micro_batch_interleave_num: 1
 
-# recompute config
-recompute_config:
-  recompute: False
-  select_recompute: False
-  parallel_optimizer_comm_recompute: False
-  mp_comm_recompute: False
-  recompute_slice_activation: False
 
 model:
   model_config:
@@ -105,31 +56,29 @@ model:
     qkv_has_bias: True
     rms_norm_eps: 1.0e-6
     theta: 1000000.0
-    max_position_embedding: 131072
+    max_position_embedding: 32768
     emb_dropout_prob: 0.0
     eos_token_id: [151645,151643]
     pad_token_id: 151643
     bos_token_id: 151645
     compute_dtype: "bfloat16"
-    layernorm_compute_type: "float32"
-    softmax_compute_type: "float16"
-    rotary_dtype: "float16"
-    param_init_type: "float32"
+    layernorm_compute_type: "bfloat16"
+    softmax_compute_type: "float32"
+    rotary_dtype: "bfloat16"
+    param_init_type: "bfloat16"
     use_past: True
-    extend_method: "None" # support "None", "PI", "NTK"
     use_flash_attention: True
-    fine_grain_interleave: 1
     qkv_concat: False
     block_size: 32
-    num_blocks: 128
+    num_blocks: 1024
     offset: 0
+    use_past_shard: False
     checkpoint_name_or_path: ""
-    repetition_penalty: 1
-    max_decode_length: 4096
+    repetition_penalty: 1.05
+    max_decode_length: 512
     top_k: 0
     top_p: 0.8
     do_sample: False
-    compute_in_2d: True
     is_dynamic: True
     auto_map:
       AutoTokenizer: [qwen2_tokenizer.Qwen2Tokenizer, null]
@@ -147,8 +96,8 @@ processor:
     vocab_file: "/path/to/vocab.json"
     merges_file: "/path/to/merges.txt"
     unk_token: "<|endoftext|>"
-    eos_token: "<|endoftext|>"
     pad_token: "<|endoftext|>"
+    chat_template: "{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
     type: Qwen2Tokenizer
   type: Qwen2Processor
 
@@ -172,7 +121,7 @@ parallel:
   enable_alltoall: False
   full_batch: True
   search_mode: "sharding_propagation"
-  enable_parallel_optimizer: True
+  enable_parallel_optimizer: False
   strategy_ckpt_config:
     save_file: "./ckpt_strategy.ckpt"
     only_trainable_params: False
