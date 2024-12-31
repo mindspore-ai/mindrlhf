@@ -89,7 +89,7 @@ def tensor_shard_grad_scale_pipeline(scale, grad, accu_grad):
     return new_grad
 
 
-class TrainOneStepWithLossScaleCell(TrainOneStepWithLossScaleCell):
+class TrainOneStepWithLossScale(TrainOneStepWithLossScaleCell):
     """
     Encapsulation class of PanguAlpha network training.
 
@@ -108,7 +108,7 @@ class TrainOneStepWithLossScaleCell(TrainOneStepWithLossScaleCell):
                  scale_update_cell=None,
                  enable_global_norm=False,
                  config=None):
-        super(TrainOneStepWithLossScaleCell,
+        super(TrainOneStepWithLossScale,
               self).__init__(network, optimizer, scale_update_cell)
         self.network = network
         self.config = config
@@ -118,9 +118,10 @@ class TrainOneStepWithLossScaleCell(TrainOneStepWithLossScaleCell):
         self.global_step = self.optimizer.global_step
         self.default_lr = Tensor([0.0], dtype=mstype.float32)
         self.enable_global_norm = enable_global_norm
-        self.enable_offload = config.enable_offload
+        # this config seems deleted
+        self.enable_offload = False
         self.clip_value = Tensor([1.0], dtype=mstype.float32)
-        if config.enable_offload:
+        if self.enable_offload:
             self.clip = GlobalNorm(self.weights, config)
         else:
             self.clip = ClipByGlobalNorm(self.weights, config, clip_norm=10.0)
@@ -128,8 +129,7 @@ class TrainOneStepWithLossScaleCell(TrainOneStepWithLossScaleCell):
 
     def construct(self,
                   query_tensors, response_tensors, logprobs, values, rewards,
-                  advantages, returns, pretrain_ids, loss_mask, attention_mask,
-                  layer_past=None, sens=None):
+                  advantages, returns, pretrain_ids, loss_mask, attention_mask):
         """Defines the computation performed."""
         lr = self.learning_rate(self.global_step)
         weights = self.weights
@@ -223,9 +223,9 @@ class TrainPipelineWithLossScaleCell(nn.Cell):
         self.clip = ClipByGlobalNorm(self.weights, self.config)
         self.micro_size = config.parallel_config.micro_batch_num
         self.opt_shard = _get_enable_parallel_optimizer()
-        self.enable_offload = config.enable_offload
+        self.enable_offload = False
         self.clip_value = Tensor([1.0], dtype=mstype.float32)
-        if config.enable_offload:
+        if self.enable_offload:
             self.clip = GlobalNorm(self.weights, config)
         else:
             self.clip = ClipByGlobalNorm(self.weights, config)
@@ -233,9 +233,7 @@ class TrainPipelineWithLossScaleCell(nn.Cell):
     @C.add_flags(has_effect=True)
     def construct(self,
                   query_tensors, response_tensors, logprobs, values, rewards, advantages,
-                  returns, pretrain_ids, loss_mask, attention_mask,
-                  past=None,
-                  sens=None):
+                  returns, pretrain_ids, loss_mask, attention_mask, sens=None):
         """Defines the computation performed."""
         lr = self.learning_rate(self.global_step)
         weights = self.weights

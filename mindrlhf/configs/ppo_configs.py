@@ -1,6 +1,19 @@
-
+# Copyright 2024 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License
+# ============================================================================
+"""PPO model"""
 from dataclasses import dataclass
-
 
 @dataclass
 class PPOConfig:
@@ -11,7 +24,7 @@ class PPOConfig:
     align_type: str = ''
     epochs: int = 2
     total_steps: int = 100000
-    batch_size: int = 1
+    batch_size: int = 2
     checkpoint_interval = 10000
     eval_interval: int = 200
 
@@ -23,7 +36,7 @@ class PPOConfig:
     weight_decay: float = 0.01
 
     sceduler_name: str = 'cosine_annealing'
-    T_max: int = 100000
+    t_max: int = 100000
     eta_min: float = 5.0e-6
 
     num_rollouts: int = 8
@@ -44,7 +57,7 @@ class PPOConfig:
     ref_std: bool = False
     gen_experience_kwargs: bool = False
 
-    sink_size: int = 1
+    sink_size: int = 2
     device_target: str = 'Ascend'
     parallel_mode: str = 'semi_auto_parallel'
     full_batch: bool = True
@@ -62,3 +75,6 @@ class PPOConfig:
     sft_model_path: str = "/path/model.yaml"
     critic_model_path: str = "/path/model.yaml"
     reward_model_path: str = "/path/model.yaml"
+    is_shared_backbone: bool = True
+    only_save_strategy: bool = False
+    use_parallel: bool = False

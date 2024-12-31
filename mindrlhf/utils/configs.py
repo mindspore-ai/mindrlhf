@@ -1,3 +1,20 @@
+# Copyright 2024 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+"""
+MindRLHF config
+"""
 import copy
 import math
 from dataclasses import asdict, make_dataclass
@@ -14,7 +31,7 @@ from mindrlhf.configs.ppo_configs import PPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.utils.dataset import IteratorStore
-from mindrlhf.wrapper import TrainOneStepWithLossScaleCell, TrainPipelineWithLossScaleCell
+from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell
 
 __all__ = ['combine_config', 'init_configs']
 
@@ -23,7 +40,10 @@ def set_weight_decay(params):
     """
     Set weight decay coefficient, zero for bias and layernorm, 1e-1 for rest
     """
-    def decay_filter(x): return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
+
+    def decay_filter(x):
+        return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
+
     decay_params = list(filter(decay_filter, params))
     other_params = list(filter(lambda x: not decay_filter(x), params))
     group_params = [{
@@ -40,15 +60,18 @@ def set_weight_decay(params):
 
 def combine_config(ppo_config, model_config):
     config_temp = asdict(ppo_config)
-    for k, v in model_config.items():
+    for k, v in model_config.to_dict().items():
         if k not in config_temp:
             config_temp[k] = v
     config_temp['max_prompt_length'] = config_temp['seq_length'] - config_temp['max_decode_length']
-    PPOConfig = make_dataclass("PPOConfig", [(key, type(value)) for key, value in config_temp.items()])
-    return PPOConfig(**config_temp)
+    ppo_config_ = make_dataclass("PPOConfig", [(key, type(value)) for key, value in config_temp.items()])
+    return ppo_config_(**config_temp)
 
 
 def init_configs(args=None):
+    """
+    init configs
+    """
     ppo_config = PPOConfig()
     if args:
         ppo_config.mind_dataset_dir = args.dataset_dir
@@ -144,12 +167,15 @@ def init_network_and_optimizer(trainer):
                                                        scale_update_cell=update_cell)
     else:
         print("non-pipeline cell")
-        ppo_with_grad = TrainOneStepWithLossScaleCell(ppo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                      scale_update_cell=update_cell, enable_global_norm=True)
+        ppo_with_grad = TrainOneStepWithLossScale(ppo_with_loss, optimizer=optimizer, config=sft_model_config,
+                                                  scale_update_cell=update_cell, enable_global_norm=True)
     return ppo_with_grad
 
 
 def init_ppo_dataset(trainer):
+    """
+    init ppo dataset
+    """
     ppo_config = trainer.ppo_config
     sft_model_config = trainer.sft_model_config
     column_names = ["query_tensors", "response_tensors", "logprobs",
@@ -171,8 +197,11 @@ def init_ppo_dataset(trainer):
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="advantages")
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="returns")
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="pretrain_ids")
-    dataset = dataset.map(operations=type_cast_op_fp16, input_columns="loss_mask")
-    dataset = dataset.map(operations=type_cast_op_fp16, input_columns="attention_mask")
-    dataset = dataset.batch(batch_size=ppo_config.batch_size
-                            * sft_model_config.parallel_config.data_parallel)
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="loss_mask")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="attention_mask")
+    micro_batch_num = 1
+    if sft_model_config.parallel_config.pipeline_stage > 1:
+        micro_batch_num = sft_model_config.parallel_config.micro_batch_num
+    dataset = dataset.batch(
+        batch_size=ppo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num)
     return dataset
