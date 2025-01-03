@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
+"""run dpo"""
 import os
-import sys
-import shutil
 import argparse
 
 # pylint: disable=W0611
@@ -34,7 +32,7 @@ from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 from mindrlhf.models.glm4.glm_dpo import Glm4DPO
 from mindrlhf.models.glm4.glm4_tokenizer import ChatGLM4Tokenizer
-from mindrlhf import DPODataset
+from mindrlhf.utils import DPODataset
 
 
 @cloud_monitor()
