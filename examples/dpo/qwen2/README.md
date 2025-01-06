@@ -1,14 +1,21 @@
 ## QWEN2-DPO 训练教程
 
-DPO训练中使用的网络和Mindformers中使用的结构一致。请参考[链接](https://gitee.com/mindspore/mindformers/blob/dev/research/qwen2/qwen2.md)获得更详细的介绍内容。
+DPO训练中使用的网络和Mindformers中使用的结构一致。请参考[链接](https://gitee.com/mindspore/mindformers/blob/dev/research/qwen2/qwen2.md)
+获得更详细的介绍内容。
 
+## 数据准备
 
-### 数据准备
-数据集采用的是开源的中文大模型价值观比较数据集CValues-Comparison。
+数据集采用的是开源的中文大模型价值观比较数据集[CValues-Comparison](https://github.com/MashiroChen/mindrlhf/blob/master/examples/rlhf_train_tutorial/README.md)。
+或者可以通过以下命令生成一个简单的数据集，生成数据量要大于global batch size。
 
-### 模型准备
+```sh
+bash scripts/create_dpo_dataset.sh 8 path/to/train.jsonl
+```
 
-参考Mindformers中的网络权重和相关配置文件的下载方式，请参考[链接](https://gitee.com/mindspore/mindformers/blob/dev/research/qwen2/qwen2.md)，下载模型权重，vocab.json，merged.txt，config.json文件。
+## 模型准备
+
+参考Mindformers中的网络权重和相关配置文件的下载方式，请参考[链接](https://gitee.com/mindspore/mindformers/blob/dev/research/qwen2/qwen2.md)
+，下载模型权重，vocab.json，merged.txt，config.json文件。
 
 运行如下命令，采用[convert_weight.py](https://gitee.com/mindspore/mindformers/blob/r1.2.0/convert_weight.py)将pt权重转换到ms权重。
 
@@ -25,15 +32,12 @@ python convert_weight.py --model glm-n \
 # dtype:       转换权重的精度
 ```
 
-### 版本依赖
+## 版本依赖
 
-mindformers  == 1.2
+mindformers == 1.2
 mindspore == 2.3
 
-
-
-### 运行
-
+## 运行
 
 1. 数据预处理
 
@@ -51,7 +55,7 @@ bash scripts/msrun_launcher.sh \
 --seq_len 4097 \
 --dataset_type cvalues \
 --save_interval 2" \
-8 
+8
 # 参数说明
 src: 原始数据集文件路径
 dst: 输出数据集文件路径
@@ -62,12 +66,14 @@ seq_len: 输出数据的序列长度
 dataset_type: 需要处理的数据类型
 save_interval: 生成数据集数量
 ```
+
 如果需要将处理后的多个数据文件合并为一个，数据处理脚本如下：
+
 ```Shell
 python mindrlhf/tools/dpo_preprocess.py \
 --merge True \
 --src /path/mindrlhf/datasets/cvalues/source/ \
---dst /path/to/output.mindrecord 
+--dst /path/to/output.mindrecord
 # 参数说明
 merge: 合并数据
 src: 原始数据集文件夹路径，只处理该路径下mindrecord数据
@@ -92,7 +98,9 @@ bash ../../../scripts/msrun_launcher.sh \
 
 3. 推理
 
-训练完成后，会存储下切片后的权重，如单机8卡的权重，但是在实际应用中，可能只需要单机单卡，就可以进行推理功能。考虑到性能的优势，一般推荐单机单卡进行推理，MindRLHF提供了权重转换的脚本(transform_checkpoint.py)，参考示例如下：
+训练完成后，会存储下切片后的权重，如单机8卡的权重，但是在实际应用中，可能只需要单机单卡，就可以进行推理功能。考虑到性能的优势，一般推荐单机单卡进行推理，MindRLHF提供了权重转换的脚本(
+transform_checkpoint.py)，参考示例如下：
+
 ```sh
 python mindrlhf/tools/transform_checkpoint.py \
    --src_checkpoint=/path/output/checkpoint_network \
@@ -100,7 +108,8 @@ python mindrlhf/tools/transform_checkpoint.py \
    --dst_checkpoint=/path/mindrlhf/examples/dpo/baichuan2
 ```
 
-   完成权重转化后，执行如下命令进行单卡推理：
+完成权重转化后，执行如下命令进行单卡推理：
+
 ```sh
 # 1. 修改yaml配置，vocab，merge.txt路径
 # 2. 修改 predict_qwen_dpo.sh 中的相关文件路径
@@ -112,4 +121,3 @@ python /path/to/run_dpo.py \
    --merges_file /path/to/merges.txt
    --predict_data 帮助我制定一份去上海的旅游攻略
 ```
-   
