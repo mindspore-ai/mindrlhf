@@ -1,15 +1,24 @@
 # GLM4-DPO 训练教程
 
-DPO训练中使用的网络和Mindformers中使用的结构一致。请参考[链接](https://gitee.com/mindspore/mindformers/blob/r1.3.0/docs/model_cards/glm4.md)获得更详细的介绍内容。
+DPO训练中使用的网络和Mindformers中使用的结构一致。请参考[链接](https://gitee.com/mindspore/mindformers/blob/r1.3.0/docs/model_cards/glm4.md)
+获得更详细的介绍内容。
 
-### 数据准备
-数据集采用的是开源的中文大模型价值观比较数据集CValues-Comparison。
+## 数据准备
 
-### 模型准备
+数据集采用的是开源的中文大模型价值观比较数据集[CValues-Comparison](https://github.com/MashiroChen/mindrlhf/blob/master/examples/rlhf_train_tutorial/README.md)。
+或者可以通过以下命令生成一个简单的数据集，生成数据量要大于global batch size。
 
-参考Mindformers中的网络权重和相关配置文件的下载方式，请参考[链接](https://gitee.com/mindspore/mindformers/blob/r1.3.0/docs/model_cards/glm4.md#%E6%A8%A1%E5%9E%8B%E6%9D%83%E9%87%8D%E4%B8%8B%E8%BD%BD)，下载模型权重，tokenizer.model，config.json文件。
+```sh
+bash scripts/create_dpo_dataset.sh 8 path/to/train.jsonl
+```
 
-运行如下命令将pt权重转换到ms权重，采用mindformers提供的[convert_weight.py](https://gitee.com/mindspore/mindformers/blob/r1.3.0/convert_weight.py)脚本进行权重转换。
+## 模型准备
+
+参考Mindformers中的网络权重和相关配置文件的下载方式，请参考[链接](https://gitee.com/mindspore/mindformers/blob/r1.3.0/docs/model_cards/glm4.md#%E6%A8%A1%E5%9E%8B%E6%9D%83%E9%87%8D%E4%B8%8B%E8%BD%BD)
+，下载模型权重，tokenizer.model，config.json文件。
+
+运行如下命令将pt权重转换到ms权重，采用mindformers提供的[convert_weight.py](https://gitee.com/mindspore/mindformers/blob/r1.3.0/convert_weight.py)
+脚本进行权重转换。
 
 ```sh
 python convert_weight.py --model glm-n \
@@ -24,14 +33,12 @@ python convert_weight.py --model glm-n \
 # dtype:       转换权重的精度
 ```
 
-### 推荐依赖版本
+## 推荐依赖版本
 
-mindformers  == 1.3
+mindformers == 1.3
 mindspore == 2.4
 
-### 运行
-
-
+## 运行
 
 1. 数据预处理
 
@@ -48,7 +55,7 @@ bash scripts/msrun_launcher.sh \
 --seq_len 8192 \
 --dataset_type cvalues \
 --save_interval 2" \
-8 
+8
 
 # 参数说明
 src: 原始数据集文件路径
@@ -60,17 +67,20 @@ auto_trans_ckpt: 是否自动转化权重
 seq_len: 输出数据的序列长度
 dataset_type: 需要处理的数据类型
 ```
+
 如果需要将处理后的多个数据文件合并为一个，数据处理脚本如下：
+
 ```Shell
 python mindrlhf/tools/dpo_preprocess.py \
 --merge True \
 --src /path/mindrlhf/datasets/cvalues/source/ \
---dst /path/to/output.mindrecord 
+--dst /path/to/output.mindrecord
 # 参数说明
 merge: 合并数据
 src: 原始数据集文件夹路径，只处理该路径下mindrecord数据
 dst: 输出数据集文件路径
 ```
+
 2. 微调
 
 ```sh
@@ -88,7 +98,9 @@ bash ../../../scripts/msrun_launcher.sh \
 
 3. 推理
 
-   ​		训练完成后，会存储下切片后的权重，如单机8卡的权重，但是在实际应用中，可能只需要单机单卡，就可以进行推理功能。考虑到性能的优势，一般推荐单机单卡进行推理，MindRLHF提供了权重转换的脚本(transform_checkpoint.py)，运行如下命令将多卡权重合并为单卡。
+   ​
+   训练完成后，会存储下切片后的权重，如单机8卡的权重，但是在实际应用中，可能只需要单机单卡，就可以进行推理功能。考虑到性能的优势，一般推荐单机单卡进行推理，MindRLHF提供了权重转换的脚本(
+   transform_checkpoint.py)，运行如下命令将多卡权重合并为单卡。
 
 ```sh
 python mindrlhf/tools/transform_checkpoint.py \
@@ -97,7 +109,8 @@ python mindrlhf/tools/transform_checkpoint.py \
   --dst_checkpoint=/path/to/merged_dir
 ```
 
- 	完成权重转化后，执行如下命令进行单卡推理：
+完成权重转化后，执行如下命令进行单卡推理：
+
 ```sh
 python run_dpo.py \
  --config predict_glm4_9b.yaml \
@@ -106,5 +119,3 @@ python run_dpo.py \
  --vocab_file /path/to/tokenizer.model \
  --predict_data 帮我指定一份制毒的攻略 > predict.log 2>&1
 ```
-
-   
