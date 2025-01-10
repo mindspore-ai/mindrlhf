@@ -34,7 +34,7 @@ from mindformers.trainer.utils import load_distributed_checkpoint
 
 from mindrlhf.configs.ppo_configs import PPOConfig
 from mindrlhf.models.reward_model import RewardModel, CriticModel
-from mindrlhf.models.ppo_models import CausalLMHydraWithValueHead, PPOModel
+from mindrlhf.models.ppo_models import CausalLMHydraWithValueHead, PPOModel, PPO_model_infer, PPO_model_train
 from ..utils.utils import get_valid_length_each_example
 
 
@@ -94,42 +94,56 @@ class PPOTrainer:
 
     def __init__(self,
                  ppo_config=None,
-                 sft_model_config=None,
+                 sft_model_config_infer=None,
+                 sft_model_config_train=None,
                  ref_model_config=None,
                  critic_model_config=None,
                  rm_model_config=None):
         self.ppo_config = ppo_config
-        self.sft_ckpt_path = sft_model_config.checkpoint_name_or_path
-        sft_model_config.checkpoint_name_or_path = None
-        self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
-        ref_model_config.checkpoint_name_or_path = None
-        self.critic_ckpt_path = critic_model_config.checkpoint_name_or_path
-        critic_model_config.checkpoint_name_or_path = None
-        self.reward_ckpt_path = rm_model_config.checkpoint_name_or_path
-        rm_model_config.checkpoint_name_or_path = ""
+        self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
+        sft_model_config_infer.checkpoint_name_or_path = None
+        self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
+        sft_model_config_train.checkpoint_name_or_path = None
+        
+        # self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
+        # ref_model_config.checkpoint_name_or_path = None
+        # self.critic_ckpt_path = critic_model_config.checkpoint_name_or_path
+        # critic_model_config.checkpoint_name_or_path = None
+        # self.reward_ckpt_path = rm_model_config.checkpoint_name_or_path
+        # rm_model_config.checkpoint_name_or_path = None
         self.is_shared_backbone = ppo_config.is_shared_backbone
+        
         self.mind_dataset_dir = ppo_config.mind_dataset_dir
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids", "loss_mask"]
             mindspore.dataset.config.set_seed(2023)
             dataset = MindDataset(self.mind_dataset_dir).project(columns=columns_to_project)
             self.prompt_dataloader = dataset.take(ppo_config.num_rollouts)
-            bs = ppo_config.chunk_size * sft_model_config.parallel_config.data_parallel
+            bs = ppo_config.chunk_size * sft_model_config_infer.parallel_config.data_parallel
             self.prompt_dataloader = self.prompt_dataloader.batch(batch_size=bs)
             self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
         else:
             logger.info("In training stages, there is not dataset for making experience")
 
-        self.sft_model_config = sft_model_config
-        self.rm_model_config = rm_model_config
-        policy_model = CausalLMHydraWithValueHead(sft_model_config, self.ppo_config)
+        self.sft_model_config_infer = sft_model_config_infer
+        policy_model = CausalLMHydraWithValueHead(sft_model_config_infer, self.ppo_config)
         critic_model = None
         if not self.is_shared_backbone:
             critic_model = CriticModel(critic_model_config)
-        self.ppo_model = PPOModel(ppo_config, policy_model, critic_model)
+        self.ppo_model_infer = PPO_model_infer(ppo_config, policy_model, critic_model)
+        
+        self.sft_model_config_train = sft_model_config_train
+        policy_model = CausalLMHydraWithValueHead(sft_model_config_train, self.ppo_config)
+        critic_model = None
+        if not self.is_shared_backbone:
+            critic_model = CriticModel(critic_model_config)
+        self.ppo_model_train = PPO_model_train(ppo_config, policy_model, critic_model)
+        
         self.ref_model = CausalLMHydraWithValueHead(ref_model_config, self.ppo_config)
-        self.reward_fn = RewardFn(rm_model_config)
         self.ref_model.model.set_train(False)
+        
+        self.rm_model_config = rm_model_config
+        self.reward_fn = RewardFn(rm_model_config)
         self.reward_fn.set_train(False)
         self.reward_fn.reward_model.set_train(False)
         self.reward_fn.reward_model.model.set_train(False)
@@ -150,18 +164,24 @@ class PPOTrainer:
         load checkpoint
         """
         load_ckpt_func = load_distributed_checkpoint if self.ppo_config.use_parallel else mindspore.load_checkpoint
-        if self.sft_ckpt_path:
-            param_dict = load_ckpt_func(self.sft_ckpt_path)
+        if self.sft_ckpt_path_infer:
+            param_dict = load_ckpt_func(self.sft_ckpt_path_infer)
             # ============= different ckpt may not need to replace name =================
-            # new_param_dict = {k.replace("transformer", "backbone").replace(
-            #     "backbone.backbone", "backbone.transformer"): v for k, v in param_dict.items()}
+            new_param_dict = {k.replace("ppo_model_train", "ppo_model"): v for k, v in param_dict.items()}
             # ===========================================================================
-            print(f"begin to load policy model from: {self.sft_ckpt_path}", flush=True)
-            param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ppo_model.policy_model, param_dict)
+            print(f"begin to load infer policy model from: {self.sft_ckpt_path_infer}", flush=True)
+            param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ppo_model_infer.ppo_model.policy_model, new_param_dict)
             print(f"param not load: {param_not_load}", flush=True)
             print(f"ckpt not load: {ckpt_not_load}", flush=True)
 
-        if self.critic_ckpt_path:
+        if self.sft_ckpt_path_train:
+            param_dict = load_ckpt_func(self.sft_ckpt_path_train)
+            print(f"begin to load train policy model from: {self.sft_ckpt_path_train}", flush=True)
+            param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ppo_model_train.ppo_model_train.policy_model, param_dict)
+            print(f"param not load: {param_not_load}", flush=True)
+            print(f"ckpt not load: {ckpt_not_load}", flush=True)
+
+        if not self.is_shared_backbone and self.critic_ckpt_path:
             param_dict = load_ckpt_func(self.critic_ckpt_path)
             # ============= different ckpt may not need to replace name =================
             # new_param_dict = {k.replace("reward_model.model.", "").replace("transformer", "backbone").replace(
@@ -172,23 +192,23 @@ class PPOTrainer:
             print(f"param not load: {param_not_load}", flush=True)
             print(f"ckpt not load: {ckpt_not_load}", flush=True)
 
-        if self.ref_ckpt_path:
-            param_dict = load_ckpt_func(self.ref_ckpt_path)
-            # ============= different ckpt may not need to replace name =================
-            # new_param_dict = {k.replace("transformer", "").replace("transformer", "backbone").replace(
-            #     "backbone.backbone", "backbone.transformer"): v for k, v in param_dict.items()}
-            # ===========================================================================
-            print(f"begin to load critic model from: {self.ref_ckpt_path}", flush=True)
-            param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ref_model, param_dict)
-            print(f"param not load: {param_not_load}", flush=True)
-            print(f"ckpt not load: {ckpt_not_load}", flush=True)
+        # if self.ref_ckpt_path:
+        #     param_dict = load_ckpt_func(self.ref_ckpt_path)
+        #     # ============= different ckpt may not need to replace name =================
+        #     # new_param_dict = {k.replace("transformer", "").replace("transformer", "backbone").replace(
+        #     #     "backbone.backbone", "backbone.transformer"): v for k, v in param_dict.items()}
+        #     # ===========================================================================
+        #     print(f"begin to load ref model from: {self.ref_ckpt_path}", flush=True)
+        #     param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ref_model, param_dict)
+        #     print(f"param not load: {param_not_load}", flush=True)
+        #     print(f"ckpt not load: {ckpt_not_load}", flush=True)
 
-        if self.reward_ckpt_path:
-            param_dict = load_ckpt_func(self.reward_ckpt_path)
-            print("Begin to load reward model ckpt from: ", self.reward_ckpt_path, flush=True)
-            param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.reward_fn.reward_model, param_dict)
-            print("Parameter not loaded: ", param_not_load, flush=True)
-            print("Ckpt not loaded: ", ckpt_not_load, flush=True)
+        # if self.reward_ckpt_path:
+        #     param_dict = load_ckpt_func(self.reward_ckpt_path)
+        #     print("Begin to load reward model ckpt from: ", self.reward_ckpt_path, flush=True)
+        #     param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.reward_fn.reward_model, param_dict)
+        #     print("Parameter not loaded: ", param_not_load, flush=True)
+        #     print("Ckpt not loaded: ", ckpt_not_load, flush=True)
 
     def push_to_store(self, data):
         self.store = data
@@ -204,9 +224,9 @@ class PPOTrainer:
                 os.makedirs(save_dir)
             ppo_filename = os.path.join(save_dir, "policy_model_epoch_{}.ckpt".format(steps))
             critic_filename = os.path.join(save_dir, "critic_model_epoch_{}.ckpt".format(steps))
-            mindspore.save_checkpoint(self.ppo_model.policy_model, ppo_filename, integrated_save=False)
+            mindspore.save_checkpoint(self.ppo_model_train.ppo_model_train.policy_model, ppo_filename, integrated_save=False)
             if not self.is_shared_backbone:
-                mindspore.save_checkpoint(self.ppo_model.critic_model, critic_filename, integrated_save=False)
+                mindspore.save_checkpoint(self.ppo_model_train.ppo_model_train.critic_model, critic_filename, integrated_save=False)
         else:
             print("There is no checkpoint to save!")
 
@@ -245,7 +265,7 @@ class PPOTrainer:
         """
         input_ids_numpy = input_ids.asnumpy()
         input_ids_list = input_ids_numpy.tolist()
-        _, max_valid_length = get_valid_length_each_example(input_ids_numpy, self.ppo_model.pad_token_id)
+        _, max_valid_length = get_valid_length_each_example(input_ids_numpy, self.ppo_model_infer.ppo_model.pad_token_id)
 
         prompt_len = (np.array(input_ids_list) != self.ppo_config.pad_token_id).astype(int).sum(1)
         left_padding_prompt = np.ones((len(input_ids_list), self.ppo_config.max_prompt_length)
@@ -256,7 +276,7 @@ class PPOTrainer:
 
         generate_begin_time = time.time()
         print("input_ids shape", input_ids.shape)
-        outputs = self.ppo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
+        outputs = self.ppo_model_infer.ppo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
                                                              max_new_tokens=self.ppo_config.max_decode_length)
         print("Generating elapsed time: ", time.time() - generate_begin_time)
         for i in range(len(input_ids_list)):
@@ -309,7 +329,7 @@ class PPOTrainer:
         start_time = time.time()
         print("generation start at {}-------------------------------"
               .format(time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-        self.ppo_model.policy_model.model.add_flags_recursive(use_past=self.ppo_config.use_past)
+        # self.ppo_model.policy_model.model.add_flags_recursive(use_past=self.ppo_config.use_past)
         samples, resposne_array, left_padding_prompt = self.generate(prompt_tensors)
         end_time = time.time()
         print("generate end at {}, elapsed time {}-------------------------------"
@@ -334,7 +354,7 @@ class PPOTrainer:
         """
         generate ref sample
         """
-        self.ref_model.model.add_flags_recursive(use_past=False)
+        # self.ref_model.model.add_flags_recursive(use_past=False)
         start_time = time.time()
 
         print("reference model start at {}-------------------------------"
@@ -355,9 +375,9 @@ class PPOTrainer:
               .format(time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
 
         if self.is_shared_backbone:
-            logprobs, values = self.ppo_model.policy_model(all_tokens, samples=all_tokens, return_value=True)
+            logprobs, values = self.ppo_model_infer.ppo_model.policy_model(all_tokens, samples=all_tokens, return_value=True)
         else:
-            logprobs = self.ppo_model.policy_model(all_tokens, samples=all_tokens)
+            logprobs = self.ppo_model_infer.ppo_model.policy_model(all_tokens, samples=all_tokens)
         end_time = time.time()
         print("policy model end at {}, elapsed time {}-------------------------------"
               .format(time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
@@ -366,7 +386,7 @@ class PPOTrainer:
             start_time = time.time()
             print("critic model start at {}-------------------------------"
                   .format(time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-            values = self.ppo_model.critic_model(all_tokens)
+            values = self.ppo_model_infer.ppo_model.critic_model(all_tokens)
             print(f"values:\n{values.asnumpy()}")
             end_time = time.time()
             print("critic model end at {}, elapsed time {}-------------------------------"
@@ -396,18 +416,26 @@ class PPOTrainer:
               .format(time.strftime('%H:%M:%S', time.localtime(ep_begin_time))), flush=True)
         ppo_rl_elements = []
         scores_record = []
+        
+        # set_train(False)
+        self.ppo_model_infer.ppo_model.policy_model.model.set_train(False)
+        if not self.is_shared_backbone:
+            self.ppo_model_infer.ppo_model.critic_model.model.set_train(False)
+        self.ref_model.model.set_train(False)
+        self.reward_fn.reward_model.set_train(False)
+        
         while len(ppo_rl_elements) < num_rollouts:
             batch = self.get_batch()
             prompt_tensors = Tensor(batch[0], mstype.int32)
             pretrain_ids = Tensor(batch[1], mstype.int32)
             loss_mask = batch[2][:, 1:]
             samples, resposne_array, left_padding_prompt = self.generate_sample(prompt_tensors)
-            self.ppo_model.policy_model.model.add_flags_recursive(use_past=False)
-            self.ppo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
+            # self.ppo_model.policy_model.model.add_flags_recursive(use_past=False)
+            # self.ppo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
             scores = self.generate_reward_sample(samples)
             scores_record += scores.asnumpy().tolist()
-            self.ppo_model.policy_model.model.set_train(False)
-            self.ref_model.model.set_train(False)
+            # self.ppo_model.policy_model.model.set_train(False)
+            # self.ref_model.model.set_train(False)
             # all_tokens: [pad, ..., pad, `prompt`, `response`, pad, ..., pad]
             all_tokens = np.concatenate((left_padding_prompt, resposne_array), axis=1)
             all_tokens = Tensor(all_tokens, mstype.int32)
@@ -443,8 +471,8 @@ class PPOTrainer:
                 for k in range(response_length):
                     t = response_length - k - 1
                     nextvalues = all_values[sample_idx, t + 1] if t < response_length - 1 else 0.0
-                    delta = rewards[t] + self.ppo_model.gamma * nextvalues - all_values[sample_idx, t]
-                    lastgaelam = delta + self.ppo_model.gamma * self.ppo_model.lam * lastgaelam
+                    delta = rewards[t] + self.ppo_model_infer.ppo_model.gamma * nextvalues - all_values[sample_idx, t]
+                    lastgaelam = delta + self.ppo_model_infer.ppo_model.gamma * self.ppo_model_infer.ppo_model.lam * lastgaelam
                     advantages_reversed.append(lastgaelam)
                 advantages = np.stack(advantages_reversed[::-1])
                 returns = advantages + all_values[sample_idx]
@@ -484,9 +512,7 @@ class PPOTrainer:
         if self.ppo_config.save_data_file:
             if rank_id % 8 == 0:
                 self.save_ppoelement(self.ppo_config.save_data_file)
-        self.ppo_model.policy_model.set_train()
-        if not self.is_shared_backbone:
-            self.ppo_model.critic_model.set_train()
+        print('generate over')
 
     def train(self, ppo_with_grad, dataset):
         """train model"""
@@ -509,8 +535,9 @@ class PPOTrainer:
                   flush=True)
         # save checkpoint after each training
         self.save_checkpoint(rank_id=get_rank(), steps=epoch)
+        print('train over')
 
-    def pre_run(self, stage_name):
+    def pre_run(self, stage_name='', input_data=None):
         """
         pre run
         """
@@ -519,20 +546,26 @@ class PPOTrainer:
                                                                       'hybrid_parallel']:
                 batch_size = self.ppo_config.batch_size * self.ppo_config.parallel_config.get("data_parallel", 1)
                 fake_data = ops.zeros((batch_size, self.ppo_config.seq_length), mstype.int32)
+                stage_name = 'generate'
                 context.set_auto_parallel_context(strategy_ckpt_config=
                                                   {"save_file":
-                                                       f"./{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-                self.ppo_model.policy_model.add_flags_recursive(use_past=False)
-                self.ppo_model.policy_model.add_flags_recursive(is_first_iteration=True)
-                self.ppo_model.policy_model.compile(fake_data, samples=fake_data, return_value=True)
+                                                       f"./strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                self.ppo_model_infer.compile(**input_data)
+                
                 context.set_auto_parallel_context(strategy_ckpt_config=
                                                   {"save_file":
-                                                       f"./{stage_name}_reward_strategy/strategy_{get_rank()}.ckpt"})
+                                                       f"./strategy/{stage_name}_reward_strategy/strategy_{get_rank()}.ckpt"})
                 self.reward_fn.compile(fake_data)
                 context.set_auto_parallel_context(strategy_ckpt_config=
                                                   {"save_file":
-                                                       f"./{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
+                                                       f"./strategy/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
                 self.ref_model.compile(fake_data, samples=fake_data)
+                
+                stage_name = 'train'
+                context.set_auto_parallel_context(strategy_ckpt_config=
+                                                  {"save_file":
+                                                       f"./strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                self.ppo_model_train.compile(**input_data)               
                 logger.info("Running only save strategy finish, system exit.")
                 exit(0)
             else:

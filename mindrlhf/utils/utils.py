@@ -43,7 +43,7 @@ from mindformers.tools.ckpt_transform import TransformCkpt
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_two_stages"]
+           "ckpt_transfer_for_generate"]
 
 
 def set_pipeline_parallel_context(ppo_config):
@@ -422,12 +422,11 @@ def get_strategy(startegy_path, rank_id=None):
     return None
 
 
-def ckpt_transfer_for_two_stages(load_sft_checkpoint):
+def ckpt_transfer_for_generate(load_sft_checkpoint):
     transform_ckpt = TransformCkpt(
         rank_id=get_rank(),
         world_size=get_group_size(),
-        transform_process_num=8,
-        transform_by_rank=False
+        transform_process_num=get_group_size()
     )
 
     generate_ckpt = "./generate_ckpt"

@@ -117,7 +117,7 @@ class RewardModel(BaseModel):
                 tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1))
             else:
                 tokens = input_ids
-            output_states = self.backbone(tokens, input_position, init_reset, batch_valid_length)
+            output_states = self.backbone(tokens)
         elif self.model_type == 'glm4':
             tokens = input_ids
             output_states = self.backbone(tokens)

@@ -132,16 +132,16 @@ def init_configs(args=None):
 
 def init_network_and_optimizer(trainer):
     '''init network and optimizer'''
-    sft_model_config = trainer.sft_model_config
+    sft_model_config = trainer.sft_model_config_train
     ppo_config = trainer.ppo_config
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
-        ppo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.ppo_model,
+        ppo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.ppo_model_train,
                                                                ppo_config.micro_batch_interleaved),
                                          sft_model_config.parallel_config.micro_batch_num)
     else:
         print("non-pipeline cell")
-        ppo_with_loss_net = trainer.ppo_model
+        ppo_with_loss_net = trainer.ppo_model_train
     ppo_with_loss = _VirtualDatasetCell(ppo_with_loss_net)
     lr = LearningRate(learning_rate=ppo_config.start_lr, end_learning_rate=ppo_config.end_lr,
                       warmup_steps=ppo_config.warmup_step, decay_steps=ppo_config.decay_steps)
@@ -177,7 +177,7 @@ def init_ppo_dataset(trainer):
     init ppo dataset
     """
     ppo_config = trainer.ppo_config
-    sft_model_config = trainer.sft_model_config
+    sft_model_config = trainer.sft_model_config_train
     column_names = ["query_tensors", "response_tensors", "logprobs",
                     "values", "rewards", "advantages", "returns",
                     "pretrain_ids", "loss_mask", "attention_mask"]

@@ -30,7 +30,7 @@ class BaseModel(nn.Cell):
                    'glm4']
 
     def __init__(self):
-        pass
+        super(BaseModel, self).__init__()
 
     def select_actor_model(self, model_config):
         """
