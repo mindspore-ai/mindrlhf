@@ -206,6 +206,7 @@ class CausalLMHydraWithValueHead(BaseModel):
                   attention_mask=None,
                   init_reset=True,
                   batch_valid_length=None,
+                  slot_mapping=None,
                   # inputs for `process_logits`
                   is_first_iteration=False,
                   use_past=False,
@@ -260,7 +261,6 @@ class CausalLMHydraWithValueHead(BaseModel):
             attention_mask = self.model.get_attention_mask(attention_mask)
             if not self.model.is_first_iteration:
                 attention_mask = self.model.tile(self.model.all_ones_attention_mask, (batch_size, 1, 1))
-            #
             # # [batch_size, seq_length, vocab_size]
             output_states, embedding_table = self.backbone(
                 tokens, attention_mask, input_position=input_position,
@@ -268,10 +268,11 @@ class CausalLMHydraWithValueHead(BaseModel):
             logits_2d = self.lm_head(output_states, embedding_table)
         elif self.model_type == 'llama':
             if self.model.phase == "train":
-                tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1))
+                # tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1))
+                tokens = input_ids
             else:
                 tokens = input_ids
-            output_states = self.backbone(tokens, input_position, init_reset, batch_valid_length)
+            output_states = self.backbone(tokens)
             logits_2d = self.lm_head(output_states)
         elif self.model_type == "glm4":
             tokens = input_ids
@@ -299,7 +300,7 @@ class CausalLMHydraWithValueHead(BaseModel):
         logits = self.reshape(logits_2d, (batch_size, seq_length, -1))
 
         # used in inference of make_experience and ppo
-        if samples:
+        if samples is not None:
             logprobs_labels = self.logprobs_of_labels(logits, samples)
             if return_value:
                 value = self.v_head1(self.v_head0(output_states))
@@ -502,3 +503,19 @@ class PPOModel(nn.Cell, GeneratorMixin):
         pg_loss = self.reduce_sum(self.max(pg_loss1, pg_loss2) * mask) / n
 
         return vf_loss, pg_loss, approx_kl
+
+class PPO_model_infer(nn.Cell):
+    def __init__(self, ppo_config, policy_model, critic_model=None):
+        super(PPO_model_infer, self).__init__()
+        self.ppo_model = PPOModel(ppo_config, policy_model, critic_model=None)
+    
+    def construct(self, *args, **kwargs):
+        return self.ppo_model(*args, **kwargs)
+
+class PPO_model_train(nn.Cell):
+    def __init__(self, ppo_config, policy_model, critic_model=None):
+        super(PPO_model_train, self).__init__()
+        self.ppo_model_train = PPOModel(ppo_config, policy_model, critic_model=None)
+    
+    def construct(self, *args, **kwargs):
+        return self.ppo_model_train(*args, **kwargs)
