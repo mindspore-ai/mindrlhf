@@ -29,8 +29,14 @@ from mindformers.modules.layers import Linear
 from mindrlhf.utils.generator import GeneratorMixin
 from .base_model import BaseModel
 
-__all__ = ['PPOModel', 'LogprobsOfLabels', 'ProcessLogits', 'FixedKLController',
-           'CausalLMHydraWithValueHead', 'Sampler']
+__all__ = [
+    "PPOModel",
+    "LogprobsOfLabels",
+    "ProcessLogits",
+    "FixedKLController",
+    "CausalLMHydraWithValueHead",
+    "Sampler",
+]
 
 
 class LogprobsOfLabels(nn.Cell):
@@ -49,7 +55,8 @@ class LogprobsOfLabels(nn.Cell):
     def construct(self, logits, labels):
         labels = self.cast(labels, mindspore.int32)
         logprobs = self.log_softmax(logits)
-        logprobs_labels = self.gatherd(logprobs, -1, self.unsqueeze(labels, -1))
+        logprobs_labels = self.gatherd(
+            logprobs, -1, self.unsqueeze(labels, -1))
         return self.squeeze(logprobs_labels)
 
 
@@ -66,10 +73,16 @@ class ProcessLogits(nn.Cell):
         self.reshape = P.Reshape()
 
     def construct(self, logits, current_index=None):
+        r"""
+        Process the logits construct
+        """
         if current_index is not None:
-            index = current_index.view(-1,)
+            index = current_index.view(
+                -1,
+            )
             if len(logits.shape) == 3:
-                logits = self.reshape(logits, (logits.shape[0] * logits.shape[1], -1))
+                logits = self.reshape(
+                    logits, (logits.shape[0] * logits.shape[1], -1))
             logits = self.gather(logits, index, 0)
         outputs = self.logsoftmax(logits)
         outputs = F.tensor_pow(self.e, outputs)
@@ -77,19 +90,25 @@ class ProcessLogits(nn.Cell):
 
 
 class AdaptiveKLController(nn.Cell):
-    """Adaptive KL Controller as described in Ziegler et al. "Fine-Tuning Language Models from Human Preferences"
-    """
+    """Adaptive KL Controller as described in Ziegler et al. "Fine-Tuning Language Models from Human Preferences" """
 
     def __init__(self, init_kl_coef: float, target: float, horizon: int):
         super(AdaptiveKLController, self).__init__()
-        self.value = Parameter([init_kl_coef,], requires_grad=False)
+        self.value = Parameter(
+            [
+                init_kl_coef,
+            ],
+            requires_grad=False,
+        )
         self.target = Tensor(target)
         self.horizon = Tensor(horizon)
         self.div = P.Div()
         self.add = P.Add()
 
     def construct(self, current, n_steps):
-        proportional_error = self.add(self.div(current, self.target), Tensor(-1, mstype.float32))
+        proportional_error = self.add(
+            self.div(current, self.target), Tensor(-1, mstype.float32)
+        )
         proportional_error = proportional_error.clip(-0.2, -0.2)
         mult = 1 + proportional_error * n_steps / self.horizon
         self.value *= mult
@@ -101,11 +120,14 @@ class FixedKLController(nn.Cell):
 
     def __init__(self, kl_coef):
         super(FixedKLController, self).__init__()
-        self.value = Tensor([kl_coef,])
+        self.value = Tensor(
+            [
+                kl_coef,
+            ]
+        )
 
     def construct(self):
-        """Returns updated KL coefficient, βₜ₊₁.
-        """
+        """Returns updated KL coefficient, βₜ₊₁."""
         return Tensor(0.0, mstype.float16)
 
 
@@ -130,15 +152,21 @@ class CausalLMHydraWithValueHead(BaseModel):
         self.seq_length = ppo_config.seq_length
         self.cast = P.Cast()
         self.shape = P.Shape()
-        self.all_ones_attention_mask = Tensor(np.ones((1, 1, self.seq_length)), mstype.float32)
+        self.all_ones_attention_mask = Tensor(
+            np.ones((1, 1, self.seq_length)), mstype.float32
+        )
 
         self.squeeze = P.Squeeze(axis=-1).shard(((dp, 1, 1),))
         self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1, 1),))
         self.unsqueeze = P.ExpandDims()
         self.reshape = P.Reshape()
         self.e = Tensor(np.e)
-        self.gather = P.Gather().shard(((dp, mp),
-                                        (1,),))
+        self.gather = P.Gather().shard(
+            (
+                (dp, mp),
+                (1,),
+            )
+        )
         self.strided_slice_1 = P.StridedSlice().shard(((dp, 1, mp),))
         self.strided_slice_2 = P.StridedSlice().shard(((dp, 1),))
         self.gatherd = P.GatherD()
@@ -148,7 +176,8 @@ class CausalLMHydraWithValueHead(BaseModel):
         self.on_value = Tensor(1.0, mstype.float32)
         self.off_value = Tensor(0.0, mstype.float32)
         self.sum = P.ReduceSum().shard(((dp, mp),))
-        self.max = P.ArgMaxWithValue(axis=-1, keep_dims=True).shard(((dp, mp),))
+        self.max = P.ArgMaxWithValue(
+            axis=-1, keep_dims=True).shard(((dp, mp),))
         self.sub = P.Sub().shard(((dp, mp), (dp, 1)))
         self.exp = P.Exp().shard(((dp, mp),))
         self.div = P.RealDiv().shard(((dp, mp), (dp, 1)))
@@ -162,27 +191,46 @@ class CausalLMHydraWithValueHead(BaseModel):
         self.add_shard = P.Add().shard(((1, 1, 1), ()))
 
         self.minus_one = Tensor([-1], mstype.int32)
-        self.v_head0 = Linear(self.ppo_config.hidden_size, 2 * self.ppo_config.hidden_size,
-                              activation='relu', has_bias=True)
-        self.v_head1 = Linear(2 * self.ppo_config.hidden_size, 1, has_bias=True)
+        self.v_head0 = Linear(
+            self.ppo_config.hidden_size,
+            2 * self.ppo_config.hidden_size,
+            activation="relu",
+            has_bias=True,
+        )
+        self.v_head1 = Linear(
+            2 * self.ppo_config.hidden_size, 1, has_bias=True)
 
-    def process_logits(self, logits, current_index=None, is_first_iteration=False, use_past=False):
+    def process_logits(
+            self, logits, current_index=None, is_first_iteration=False, use_past=False
+    ):
+        r"""
+        process_logits
+        """
         logits = logits.reshape(-1, logits.shape[-1])
         if use_past and not is_first_iteration:
             logits = logits
         elif current_index is not None:
-            index = current_index.view(-1,)
+            index = current_index.view(
+                -1,
+            )
             logits = self.gather(logits, index, 0)
         outputs = self.logsoftmax_2(logits)
         outputs = self.pow(outputs, Tensor(np.e, mstype.float32))
         return outputs
 
-    def process_logits2(self, logits, current_index=None, is_first_iteration=False, use_past=False):
+    def process_logits2(
+            self, logits, current_index=None, is_first_iteration=False, use_past=False
+    ):
+        r"""
+        process_logits2
+        """
         logits = logits.reshape(-1, logits.shape[-1])
         if use_past and not is_first_iteration:
             logits = logits
         elif current_index is not None:
-            index = current_index.view(-1,)
+            index = current_index.view(
+                -1,
+            )
             logits = self.gather(logits, index, 0)
         top_token_id = self.argmax_no_shard(logits)
         top_token_id = top_token_id.view(-1, 1)
@@ -195,40 +243,49 @@ class CausalLMHydraWithValueHead(BaseModel):
         logits = logits[:, :-1, :]
         samples = samples[:, 1:]
         logprobs = self.logsoftmax_1(logits)
-        logprobs = self.squeeze_no_shard(self.gatherd(logprobs, -1, self.unsqueeze(samples, -1)))
+        logprobs = self.squeeze_no_shard(
+            self.gatherd(logprobs, -1, self.unsqueeze(samples, -1))
+        )
 
         return logprobs
 
-    def construct(self,
-                  # inputs for the llm
-                  input_ids,
-                  input_position=None,
-                  attention_mask=None,
-                  init_reset=True,
-                  batch_valid_length=None,
-                  slot_mapping=None,
-                  # inputs for `process_logits`
-                  is_first_iteration=False,
-                  use_past=False,
-                  # inputs for choosing the output branch
-                  samples=None,
-                  return_full_logit=False,
-                  return_value=False):
+    def construct(
+            self,
+            # inputs for the llm
+            input_ids,
+            input_position=None,
+            attention_mask=None,
+            init_reset=True,
+            batch_valid_length=None,
+            # inputs for `process_logits`
+            is_first_iteration=False,
+            use_past=False,
+            # inputs for choosing the output branch
+            samples=None,
+            return_full_logit=False,
+            return_value=False,
+    ):
         """
         construct function for CausalLMHydraWithValueHead
         """
         batch_size, seq_length = input_ids.shape
-        if self.model_type == 'pangu':
+        if self.model_type == "pangu":
             tokens = input_ids
-            input_mask = F.cast(self.model.not_equal(tokens, self.model.pad_token_id),
-                                mstype.float32)
+            input_mask = F.cast(
+                self.model.not_equal(
+                    tokens, self.model.pad_token_id), mstype.float32
+            )
             if attention_mask is None:
                 attention_mask = self.model.get_attention_mask(input_mask)
             else:
-                attention_mask = self.model.cast(attention_mask, mstype.float32)
-                attention_mask = self.model.slice2(attention_mask, (0, 0, 0),
-                                                   (batch_size, seq_length, seq_length),
-                                                   (1, 1, 1))
+                attention_mask = self.model.cast(
+                    attention_mask, mstype.float32)
+                attention_mask = self.model.slice2(
+                    attention_mask,
+                    (0, 0, 0),
+                    (batch_size, seq_length, seq_length),
+                    (1, 1, 1),
+                )
 
             if input_position is None:
                 input_position = F.tuple_to_array(F.make_range(seq_length))
@@ -236,37 +293,50 @@ class CausalLMHydraWithValueHead(BaseModel):
                 if batch_size == 1:
                     input_position = F.reshape(input_position, (1, seq_length))
                 else:
-                    input_position = self.model.tile(input_position, (batch_size, 1))
+                    input_position = self.model.tile(
+                        input_position, (batch_size, 1))
             else:
-                if self.model.phase == 'train':
-                    input_position = self.model.slice(input_position, (0, 0), (batch_size, seq_length), (1, 1))
+                if self.model.phase == "train":
+                    input_position = self.model.slice(
+                        input_position, (0, 0), (batch_size,
+                                                 seq_length), (1, 1)
+                    )
 
             # [batch_size, seq_length, vocab_size]
-            output_states, embedding_table = self.backbone(tokens, input_position, attention_mask,
-                                                           init_reset, batch_valid_length)
+            output_states, embedding_table = self.backbone(
+                tokens, input_position, attention_mask, init_reset, batch_valid_length
+            )
             logits_2d = self.lm_head(output_states, embedding_table)
-        elif self.model_type == 'baichuan2_7b':
+        elif self.model_type == "baichuan2_7b":
             tokens = input_ids
             output_states = self.backbone(tokens, batch_valid_length)
             logits_2d = self.lm_head(output_states)
-        elif self.model_type == 'baichuan2_13b':
+        elif self.model_type == "baichuan2_13b":
             tokens = input_ids
             output_states = self.backbone(tokens, batch_valid_length)
             logits_2d = self.lm_head(output_states)
-        elif self.model_type == 'gpt2':
+        elif self.model_type == "gpt2":
             tokens = input_ids
             if attention_mask is None:
-                attention_mask = self.model.not_equal(input_ids, self.model.eos_token_id)
+                attention_mask = self.model.not_equal(
+                    input_ids, self.model.eos_token_id
+                )
             attention_mask = self.cast(attention_mask, mstype.float32)
             attention_mask = self.model.get_attention_mask(attention_mask)
             if not self.model.is_first_iteration:
-                attention_mask = self.model.tile(self.model.all_ones_attention_mask, (batch_size, 1, 1))
+                attention_mask = self.model.tile(
+                    self.model.all_ones_attention_mask, (batch_size, 1, 1)
+                )
             # # [batch_size, seq_length, vocab_size]
             output_states, embedding_table = self.backbone(
-                tokens, attention_mask, input_position=input_position,
-                init_reset=init_reset, batch_valid_length=batch_valid_length)
+                tokens,
+                attention_mask,
+                input_position=input_position,
+                init_reset=init_reset,
+                batch_valid_length=batch_valid_length,
+            )
             logits_2d = self.lm_head(output_states, embedding_table)
-        elif self.model_type == 'llama':
+        elif self.model_type == "llama":
             if self.model.phase == "train":
                 # tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1))
                 tokens = input_ids
@@ -280,16 +350,22 @@ class CausalLMHydraWithValueHead(BaseModel):
             logits_2d = self.lm_head(output_states)
         else:
             if self.model.phase == "train":
-                tokens = self.model.stridedslice(input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1))
+                tokens = self.model.stridedslice(
+                    input_ids, (0, 0), (batch_size, seq_length - 1), (1, 1)
+                )
             else:
                 tokens = input_ids
 
             if self.model.use_past:
                 input_mask = self.model.input_mask_all_ones
             else:
-                input_mask = self.model.not_equal(tokens, self.model.pad_token_id).astype(mstype.float32)
+                input_mask = self.model.not_equal(
+                    tokens, self.model.pad_token_id
+                ).astype(mstype.float32)
 
-            output_states, embedding_table = self.backbone(tokens, input_mask, init_reset, batch_valid_length)
+            output_states, embedding_table = self.backbone(
+                tokens, input_mask, init_reset, batch_valid_length
+            )
             logits_2d = self.lm_head(output_states, embedding_table)
 
         # if self.model_type == 'baichuan' or self.model_type == 'llama':
@@ -309,7 +385,9 @@ class CausalLMHydraWithValueHead(BaseModel):
             return logprobs_labels
         # used in generate
         if not return_full_logit:
-            outputs = self.process_logits2(logits, input_position, is_first_iteration, use_past)
+            outputs = self.process_logits2(
+                logits, input_position, is_first_iteration, use_past
+            )
             return outputs
         # used in pretrain loss
         logits = self.add_shard(logits, 0)
@@ -327,7 +405,9 @@ class Sampler(nn.Cell):
         self.zeros = P.Zeros()
         self.top_k = P.TopK(sorted=True)
 
-    def construct(self, log_probs, batch_size, top_k, repetition_penalty, frequency_list):
+    def construct(
+            self, log_probs, batch_size, top_k, repetition_penalty, frequency_list
+    ):
         """
         construct function for sampler model
         """
@@ -336,8 +416,10 @@ class Sampler(nn.Cell):
             frequency_list = self.zeros((vocab_size,), mindspore.float32)
         log_probs_revised = log_probs.reshape(batch_size, vocab_size)
         if repetition_penalty != 1:
-            log_probs_revised = log_probs - frequency_list * repetition_penalty - \
-                                (frequency_list > 0) * repetition_penalty
+            log_probs_revised = (
+                log_probs - frequency_list * repetition_penalty
+                - (frequency_list > 0) * repetition_penalty
+            )
         logits = F.pow(Tensor(np.e), log_probs_revised)
         probs, p_args = self.top_k(logits, top_k)
 
@@ -386,34 +468,49 @@ class PPOModel(nn.Cell, GeneratorMixin):
         self.lam = 0.95
         self.size = P.Size()
         self.sum_and_count = Tensor([[1, 1]])
-        self.approx_kl = Parameter([0.0,], requires_grad=False)
+        self.approx_kl = Parameter(
+            [
+                0.0,
+            ],
+            requires_grad=False,
+        )
         self.get_attention_mask = AttentionMask(ppo_config.seq_length)
 
         if ppo_config.target is not None:
-            self.kl_ctl = AdaptiveKLController(ppo_config.init_kl_coef, ppo_config.target, ppo_config.horizon)
+            self.kl_ctl = AdaptiveKLController(
+                ppo_config.init_kl_coef, ppo_config.target, ppo_config.horizon
+            )
         else:
             self.kl_ctl = FixedKLController(ppo_config.init_kl_coef)
 
         self.logprobs_of_labels = LogprobsOfLabels()
         self.process_logits = ProcessLogits()
         self.sampler = Sampler()
-        self.slice = P.StridedSlice().shard(((self.policy_model.model_config.parallel_config.data_parallel, 1),))
-        self.pretrain_loss = CrossEntropyLoss(self.policy_model.model_config.parallel_config.dp_mp_config)
-        self.not_equal = P.NotEqual().shard(((self.policy_model.model_config.parallel_config.data_parallel, 1), ()))
+        self.slice = P.StridedSlice().shard(
+            ((self.policy_model.model_config.parallel_config.data_parallel, 1),)
+        )
+        self.pretrain_loss = CrossEntropyLoss(
+            self.policy_model.model_config.parallel_config.dp_mp_config
+        )
+        self.not_equal = P.NotEqual().shard(
+            ((self.policy_model.model_config.parallel_config.data_parallel, 1), ())
+        )
         self.reduce_mean = P.ReduceMean()
         self.depend = P.Depend()
 
-    def construct(self,
-                  query_tensors,
-                  response_tensors,
-                  logprobs,
-                  values,
-                  rewards,
-                  advantages,
-                  returns,
-                  pretrain_ids,
-                  loss_mask,
-                  attention_mask):
+    def construct(
+            self,
+            query_tensors,
+            response_tensors,
+            logprobs,
+            values,
+            rewards,
+            advantages,
+            returns,
+            pretrain_ids,
+            loss_mask,
+            attention_mask,
+    ):
         """
         construct function for ppo model
         """
@@ -423,7 +520,9 @@ class PPOModel(nn.Cell, GeneratorMixin):
         response_length = F.shape(old_rewards)[1]
         tokens = response_tensors
         if self.is_shared_backbone:
-            logprobs, values_pred = self.policy_model(tokens, samples=tokens, return_value=True)
+            logprobs, values_pred = self.policy_model(
+                tokens, samples=tokens, return_value=True
+            )
         else:
             logprobs = self.policy_model(tokens, samples=tokens)
             tokens = self.depend(tokens, logprobs)
@@ -438,10 +537,12 @@ class PPOModel(nn.Cell, GeneratorMixin):
 
         # calculate pretrain loss
         batch_size, seq_length = response_tensors.shape
-        pretrain_tokens = self.slice(pretrain_ids, (0, 0), (batch_size, -1), (1, 1))
+        pretrain_tokens = self.slice(
+            pretrain_ids, (0, 0), (batch_size, -1), (1, 1))
         logits = self.policy_model(pretrain_tokens, return_full_logit=True)
         logits = P.Reshape()(logits, (batch_size * seq_length, -1))
-        labels = self.slice(pretrain_ids, (0, 1), (batch_size, seq_length + 1), (1, 1))
+        labels = self.slice(pretrain_ids, (0, 1),
+                            (batch_size, seq_length + 1), (1, 1))
         labels = P.Reshape()(labels, (-1,))
         pretrain_loss = self.pretrain_loss(logits, labels, loss_mask)
 
@@ -458,11 +559,21 @@ class PPOModel(nn.Cell, GeneratorMixin):
         approx_kl = ops.Reshape()(approx_kl, (1,))
         self.approx_kl = approx_kl
 
-        loss = self.pretrain_coef * pretrain_loss + (1 - self.pretrain_coef) * pg_loss + self.vf_coef * vf_loss
+        loss = (
+            self.pretrain_coef * pretrain_loss + (1 - self.pretrain_coef) * pg_loss
+            + self.vf_coef * vf_loss
+        )
         return loss
 
     def post_backward_callback(self):
-        return self.kl_ctl(self.approx_kl, Tensor([self.ppo_config.batch_size,]))
+        return self.kl_ctl(
+            self.approx_kl,
+            Tensor(
+                [
+                    self.ppo_config.batch_size,
+                ]
+            ),
+        )
 
     def get_vfloss_and_pgloss(
             self,
@@ -474,8 +585,7 @@ class PPOModel(nn.Cell, GeneratorMixin):
             returns,
             mask,
     ):
-        """PPO objective function.
-        """
+        """PPO objective function."""
         values_clipped = ops.clip_by_value(
             values,
             old_values - self.cliprange_value,
@@ -486,7 +596,8 @@ class PPOModel(nn.Cell, GeneratorMixin):
         vf_loss1 = (values - returns) ** 2
         vf_loss2 = (values_clipped - returns) ** 2
 
-        vf_loss = 0.5 * self.reduce_sum(self.max(vf_loss1, vf_loss2) * mask) / n
+        vf_loss = 0.5 * \
+                  self.reduce_sum(self.max(vf_loss1, vf_loss2) * mask) / n
 
         log_ratio = (logprobs - old_logprobs) * mask
 
@@ -504,18 +615,22 @@ class PPOModel(nn.Cell, GeneratorMixin):
 
         return vf_loss, pg_loss, approx_kl
 
-class PPO_model_infer(nn.Cell):
+
+class PPOModelInfer(nn.Cell):
     def __init__(self, ppo_config, policy_model, critic_model=None):
-        super(PPO_model_infer, self).__init__()
-        self.ppo_model = PPOModel(ppo_config, policy_model, critic_model=None)
-    
+        super(PPOModelInfer, self).__init__()
+        self.ppo_model = PPOModel(
+            ppo_config, policy_model, critic_model=critic_model)
+
     def construct(self, *args, **kwargs):
         return self.ppo_model(*args, **kwargs)
 
-class PPO_model_train(nn.Cell):
+
+class PPOModelTrain(nn.Cell):
     def __init__(self, ppo_config, policy_model, critic_model=None):
-        super(PPO_model_train, self).__init__()
-        self.ppo_model_train = PPOModel(ppo_config, policy_model, critic_model=None)
-    
+        super(PPOModelTrain, self).__init__()
+        self.ppo_model_train = PPOModel(
+            ppo_config, policy_model, critic_model=critic_model)
+
     def construct(self, *args, **kwargs):
         return self.ppo_model_train(*args, **kwargs)
