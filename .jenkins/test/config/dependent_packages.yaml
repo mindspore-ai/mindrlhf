@@ -1,0 +1,5 @@
+mindspore:
+  'https://repo.mindspore.cn/mindspore/mindspore/version/202412/20241225/master_20241225010018_58cfca5a2c28f7b38d65dc7a631afd158869a6ac_newest/'
+mindformers:
+  'https://repo.mindspore.cn/mindspore/mindformers/version/202412/20241223/r1.3.0_20241223010009_ed70c2c1804a6db6f3ab78d338838b3db24b45c3_newest/'
+  

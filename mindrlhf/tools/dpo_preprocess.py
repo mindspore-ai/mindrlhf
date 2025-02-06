@@ -12,30 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
+"""dpo dataset preprocess"""
 import argparse
+import json
+import os
 import numpy as np
 from tqdm import tqdm
-import json
-from mindspore.mindrecord import FileWriter, FileReader
-import os
 import mindspore as ms
+from mindspore import ops as P
+from mindspore.mindrecord import FileWriter, FileReader
 from mindformers import AutoModel
 from mindformers.tools.utils import str2bool
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
-from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
-from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.tools import logger
 from mindformers.tools.register import MindFormerConfig
 from mindformers.core.context import build_context
-from mindspore import ops as P
-from mindspore.communication.management import get_rank
-import mindspore.communication.management as D
-
+from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
+from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
 from mindrlhf.models.glm4.glm4_tokenizer import ChatGLM4Tokenizer
-from mindrlhf.models.glm4.glm_dpo import Glm4DPO
 
 ROLE_MAPPING = {
     "human": "<|user|>",
@@ -45,6 +40,7 @@ ROLE_MAPPING = {
 
 
 def build_message(tokenizer, messages, metadata=""):
+    """build message"""
     encoded_messages = []
     for i, msg in enumerate(messages):
         role = ROLE_MAPPING.get(msg['from'], "")
@@ -62,8 +58,13 @@ def build_message(tokenizer, messages, metadata=""):
     return prompt_ids, answer_ids
 
 
-def build_message_cvalues(tokenizer, prompt, ans, metadata=""):
-    msg = f"<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+def build_message_cvalues(tokenizer, prompt, ans):
+    """build message_cvalues"""
+    msg = (
+        f"<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        f"<|im_start|>user\n{prompt}<|im_end|>\n"
+        f"<|im_start|>assistant\n"
+    )
     prompt_ids = tokenizer.encode(msg)
     msg = f"{ans}<|im_end|>"
     answer_ids = tokenizer.encode(msg)
@@ -71,12 +72,12 @@ def build_message_cvalues(tokenizer, prompt, ans, metadata=""):
 
 
 def divide_data_equal_first(data_nums, interval_nums):
+    """divide data equal first"""
     nums_per_interval, nums_of_data_remaining = divmod(data_nums, interval_nums)
     if nums_of_data_remaining == 0:
         return {i: nums_per_interval for i in range(interval_nums)}
-    else:
-        return {i: nums_per_interval if i < interval_nums - 1 else nums_per_interval + nums_of_data_remaining for i in
-                range(interval_nums)}
+    return {i: nums_per_interval if i < interval_nums - 1 else nums_per_interval + nums_of_data_remaining for i in
+            range(interval_nums)}
 
 
 def get_logps(model_name, model, input_ids, labels, attention_mask, loss_mask):
@@ -84,10 +85,12 @@ def get_logps(model_name, model, input_ids, labels, attention_mask, loss_mask):
 
         Args:
             logits: Logits of the model (unnormalized). Shape: (batch_size, seq_len, vocab_size)
-            labels: Labels for which to compute the log probabilities. Label tokens with value of label_pad_token_id are ignored. Shape: (batch_size, seq_len)
+            labels: Labels for which to compute the log probabilities.
+                    Label tokens with value of label_pad_token_id are ignored. Shape: (batch_size, seq_len)
 
         Returns:
-            A tensor of shape (batch_size,) containing the average/sum log probabilities of the given labels under the given logits.
+            A tensor of shape (batch_size,) containing the average/sum
+            log probabilities of the given labels under the given logits.
         """
     valid_length = np.array(attention_mask).sum(axis=-1)
     batch_length = int(max(valid_length))
@@ -130,6 +133,7 @@ def get_logps(model_name, model, input_ids, labels, attention_mask, loss_mask):
 def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: str,
                load_checkpoint_path: str, src_strategy_path: str, auto_trans_ckpt: bool, merges_file: str, seq_len: int,
                dataset_type: str, save_interval: int):
+    """dpo data preprocess"""
     dst_file_path = os.path.dirname(dst_file)
     if not os.path.exists(dst_file_path):
         os.makedirs(dst_file_path)
@@ -164,8 +168,9 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
 
     model = AutoModel.from_config(config)
     model.set_train(False)
-    dynamic_input_ids = ms.Tensor(shape=[None, None], dtype=ms.int32)
-    model.set_inputs(dynamic_input_ids)
+    if config.model.model_config.is_dynamic:
+        dynamic_input_ids = ms.Tensor(shape=[None, None], dtype=ms.int32)
+        model.set_inputs(dynamic_input_ids)
     if dataset_type == 'dpo':
         with open(data_path, "r", encoding='utf-8') as file:
             pairs = json.load(file)
@@ -201,7 +206,6 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
         writer = FileWriter(file_name=file_name, shard_num=1, overwrite=True)
         writer.add_schema(schema)
 
-    import math
     nums = 0
     batch_chosen_input_ids = []
     batch_chosen_labels = []
@@ -310,6 +314,7 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
 
 
 def merge(src_dir, dst_file):
+    """merge file"""
     schema = {
         "chosen_input_ids": {"type": "int32", "shape": [-1]},
         "chosen_labels": {"type": "int32", "shape": [-1]},
