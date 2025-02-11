@@ -34,8 +34,8 @@ python convert_weight.py --model glm-n \
 
 ## 版本依赖
 
-mindformers == 1.2
-mindspore == 2.3
+mindformers == 1.3
+mindspore == 2.4
 
 ## 运行
 
