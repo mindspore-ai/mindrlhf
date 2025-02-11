@@ -20,7 +20,8 @@ from .utils import *
 from .adam import AdamWeightDecayOp
 from .dpo_dataset import *
 from .loss import *
-__all__ = ['AdamWeightDecayOp',]
+from .transform_param import TransformParametersD2D
+__all__ = ['AdamWeightDecayOp', 'TransformParametersD2D']
 __all__.extend(configs.__all__)
 __all__.extend(dataset.__all__)
 __all__.extend(generator.__all__)
