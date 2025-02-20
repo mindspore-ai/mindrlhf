@@ -12,21 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""dpo dataset preprocess"""
+
 import argparse
-import json
-import os
 import numpy as np
 from tqdm import tqdm
-import mindspore as ms
+import json
 from mindspore import ops as P
 from mindspore.mindrecord import FileWriter, FileReader
+import os
+import mindspore as ms
 from mindformers import AutoModel
 from mindformers.tools.utils import str2bool
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.tools import logger
 from mindformers.tools.register import MindFormerConfig
 from mindformers.core.context import build_context
+
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
@@ -72,7 +73,6 @@ def build_message_cvalues(tokenizer, prompt, ans):
 
 
 def divide_data_equal_first(data_nums, interval_nums):
-    """divide data equal first"""
     nums_per_interval, nums_of_data_remaining = divmod(data_nums, interval_nums)
     if nums_of_data_remaining == 0:
         return {i: nums_per_interval for i in range(interval_nums)}
@@ -85,12 +85,10 @@ def get_logps(model_name, model, input_ids, labels, attention_mask, loss_mask):
 
         Args:
             logits: Logits of the model (unnormalized). Shape: (batch_size, seq_len, vocab_size)
-            labels: Labels for which to compute the log probabilities.
-                    Label tokens with value of label_pad_token_id are ignored. Shape: (batch_size, seq_len)
+            labels: Labels for which to compute the log probabilities. Label tokens with value of label_pad_token_id are ignored. Shape: (batch_size, seq_len)
 
         Returns:
-            A tensor of shape (batch_size,) containing the average/sum
-            log probabilities of the given labels under the given logits.
+            A tensor of shape (batch_size,) containing the average/sum log probabilities of the given labels under the given logits.
         """
     valid_length = np.array(attention_mask).sum(axis=-1)
     batch_length = int(max(valid_length))
@@ -171,6 +169,7 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
     if config.model.model_config.is_dynamic:
         dynamic_input_ids = ms.Tensor(shape=[None, None], dtype=ms.int32)
         model.set_inputs(dynamic_input_ids)
+
     if dataset_type == 'dpo':
         with open(data_path, "r", encoding='utf-8') as file:
             pairs = json.load(file)
@@ -206,6 +205,7 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
         writer = FileWriter(file_name=file_name, shard_num=1, overwrite=True)
         writer.add_schema(schema)
 
+    import math
     nums = 0
     batch_chosen_input_ids = []
     batch_chosen_labels = []
@@ -314,7 +314,6 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
 
 
 def merge(src_dir, dst_file):
-    """merge file"""
     schema = {
         "chosen_input_ids": {"type": "int32", "shape": [-1]},
         "chosen_labels": {"type": "int32", "shape": [-1]},

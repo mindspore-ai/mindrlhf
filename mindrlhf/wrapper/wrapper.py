@@ -285,3 +285,202 @@ class TrainPipelineWithLossScaleCell(nn.Cell):
             else:
                 self.optimizer(grads)
         return loss, lr, overflow, scaling_sens.value()
+    
+
+
+class TrainOneStepWithLossScale_GRPO(TrainOneStepWithLossScaleCell):
+    """
+    Encapsulation class of PanguAlpha network training.
+
+    Append an optimizer to the training network after that the construct
+    function can be called to create the backward graph.
+
+    Args:
+        network (Cell): The training network. Note that loss function should have been added.
+        optimizer (Optimizer): Optimizer for updating the weights.
+        scale_update_cell (Cell): Cell to do the loss scale. Default: None.
+    """
+
+    def __init__(self,
+                 network,
+                 optimizer,
+                 scale_update_cell=None,
+                 enable_global_norm=False,
+                 config=None):
+        super(TrainOneStepWithLossScale_GRPO,
+              self).__init__(network, optimizer, scale_update_cell)
+        self.network = network
+        self.config = config
+        self.weights = optimizer.parameters
+        self.optimizer = optimizer
+        self.learning_rate = self.optimizer.learning_rate
+        self.global_step = self.optimizer.global_step
+        self.default_lr = Tensor([0.0], dtype=mstype.float32)
+        self.enable_global_norm = enable_global_norm
+        # this config seems deleted
+        self.enable_offload = False
+        self.clip_value = Tensor([1.0], dtype=mstype.float32)
+        if self.enable_offload:
+            self.clip = GlobalNorm(self.weights, config)
+        else:
+            self.clip = ClipByGlobalNorm(self.weights, config, clip_norm=10.0)
+        self.cast = P.Cast()
+
+    def construct(self,
+                  prompt_completion_ids, prompts_mask, responses_mask,
+                  ref_per_token_logps, advantages):
+        """Defines the computation performed."""
+        lr = self.learning_rate(self.global_step)
+        weights = self.weights
+        # Forward process
+        loss = self.network(prompt_completion_ids, prompts_mask, responses_mask,
+                            ref_per_token_logps, advantages)
+        scaling_sens = self.scale_sense
+
+        # alloc status and clear should be right before gradoperation
+        status, scaling_sens = self.start_overflow_check(loss, scaling_sens)
+        scaling_sens_filled = C.ones_like(loss) * F.cast(scaling_sens, F.dtype(loss))
+        # Backward process using loss scale
+        grads = self.grad(self.network,
+                          weights)(prompt_completion_ids, prompts_mask, responses_mask,
+                                   ref_per_token_logps, advantages, scaling_sens_filled)
+        # apply grad reducer on grads
+        grads = self.grad_reducer(grads)
+        grads = self.hyper_map(
+            F.partial(grad_scale, scaling_sens), grads)
+        clip_value = self.clip_value
+        if self.enable_global_norm:
+            grads, clip_value = self.clip(grads)
+        else:
+            grads = self.hyper_map(
+                F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE),
+                grads)
+        # Check whether overflow
+        cond = self.get_overflow_status(status, grads)
+        overflow = self.process_loss_scale(cond)
+        # If overflow, surpass weights update
+        # if not, update weights
+        if not overflow:
+            if self.enable_offload:
+                self.optimizer(grads, clip_value)
+            else:
+                self.optimizer(grads)
+        return loss, lr, cond, scaling_sens.value()
+
+
+class TrainPipelineWithLossScaleCell_GRPO(nn.Cell):
+    """
+    Encapsulation class of network training.
+
+    Append an optimizer to the training network after that the construct
+    function can be called to create the backward graph.
+
+    Args:
+        network (Cell): The training network. Note that loss function should have been added.
+        optimizer (Optimizer): Optimizer for updating the weights.
+        scale_update_cell (Cell): Cell to do the loss scale. Default: None.
+    """
+
+    def __init__(self, network, optimizer, config, scale_update_cell=None, enable_global_norm=True):
+        super(TrainPipelineWithLossScaleCell_GRPO, self).__init__(auto_prefix=False)
+        self.config = config
+        self.network = network
+        self.network.add_flags(defer_inline=True)
+        self.weights = optimizer.parameters
+        self.accu_grads = self.weights.clone(prefix="accu_grads", init="zeros")
+        self.optimizer = optimizer
+        self.enable_global_norm = enable_global_norm
+        self.grad = C.GradOperation(get_by_list=True,
+                                    sens_param=True)
+        self.reducer_flag = False
+        self.allreduce = P.AllReduce()
+        self.learning_rate = self.optimizer.learning_rate
+        self.global_step = self.optimizer.global_step
+        self.parallel_mode = context.get_auto_parallel_context("parallel_mode")
+        if self.parallel_mode in [ParallelMode.DATA_PARALLEL, ParallelMode.HYBRID_PARALLEL]:
+            self.reducer_flag = True
+        self.grad_reducer = F.identity
+        self.degree = 1
+        if self.reducer_flag:
+            self.degree = get_group_size()
+            self.grad_reducer = DistributedGradReducer(optimizer.parameters, False, self.degree)
+        self.is_distributed = (self.parallel_mode != ParallelMode.STAND_ALONE)
+        self.cast = P.Cast()
+        self.alloc_status = P.NPUAllocFloatStatus()
+        self.get_status = P.NPUGetFloatStatus()
+        self.clear_before_grad = P.NPUClearFloatStatus()
+        self.reduce_sum = P.ReduceSum(keep_dims=False)
+        self.base = Tensor(1, mstype.float32)
+        self.less_equal = P.LessEqual()
+        self.hyper_map = C.HyperMap()
+        self.loss_scale = None
+        self.reshape = P.Reshape()
+        self.loss_scaling_manager = scale_update_cell
+        if scale_update_cell:
+            self.loss_scale = Parameter(Tensor(scale_update_cell.get_loss_scale(), dtype=mstype.float32),
+                                        name="loss_scale")
+        self.clip = ClipByGlobalNorm(self.weights, self.config)
+        self.micro_size = config.parallel_config.micro_batch_num
+        self.opt_shard = _get_enable_parallel_optimizer()
+        self.enable_offload = False
+        self.clip_value = Tensor([1.0], dtype=mstype.float32)
+        if self.enable_offload:
+            self.clip = GlobalNorm(self.weights, config)
+        else:
+            self.clip = ClipByGlobalNorm(self.weights, config)
+
+    @C.add_flags(has_effect=True)
+    def construct(self,
+                  prompt_completion_ids, prompts_mask, responses_mask,
+                  ref_per_token_logps, advantages, sens=None):
+        """Defines the computation performed."""
+        lr = self.learning_rate(self.global_step)
+        weights = self.weights
+        loss = self.network(prompt_completion_ids, prompts_mask, responses_mask,
+                            ref_per_token_logps, advantages,)
+        if sens is None:
+            scaling_sens = self.loss_scale
+            scaling_sens = self.reshape(scaling_sens, (1,))
+        else:
+            scaling_sens = sens
+        # alloc status and clear should be right before gradoperation
+        init = self.alloc_status()
+        status_clear = self.clear_before_grad(init)
+        grads = self.grad(self.network, weights)(prompt_completion_ids, prompts_mask, responses_mask,
+                                                 ref_per_token_logps, advantages,
+                                                 self.cast(scaling_sens / self.micro_size, mstype.float32))
+        init = F.depend(init, grads)
+        get_status = self.get_status(init)
+        init = F.depend(init, get_status)
+        flag_sum = self.reduce_sum(init, (0,))
+        loss = F.depend(loss, status_clear)
+        if self.is_distributed:
+            # sum overflow flag over devices
+            flag_reduce = self.allreduce(flag_sum)
+            cond = self.less_equal(self.base, flag_reduce)
+        else:
+            cond = self.less_equal(self.base, flag_sum)
+        grads = F.depend(grads, cond)
+        # apply grad reducer on grads
+        if self.opt_shard:
+            grads = self.grad_reducer(grads)
+            grads = self.hyper_map(F.partial(shard_grad_scale, scaling_sens * self.degree), grads, self.accu_grads)
+        else:
+            accu_grads = self.grad_reducer(self.accu_grads)
+            grads = self.hyper_map(F.partial(grad_scale, scaling_sens * self.degree), grads, accu_grads)
+        clip_value = self.clip_value
+        if self.enable_global_norm:
+            grads, _ = self.clip(grads)
+        else:
+            grads = self.hyper_map(
+                F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE),
+                grads)
+        overflow = cond
+        if sens is None:
+            overflow = self.loss_scaling_manager(self.loss_scale, cond)
+        if not overflow:
+            if self.enable_offload:
+                self.optimizer(grads, clip_value)
+            else:
+                self.optimizer(grads)
+        return loss, lr, overflow, scaling_sens.value()

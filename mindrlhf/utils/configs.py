@@ -28,10 +28,11 @@ from mindformers.tools.register import MindFormerConfig
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers import AutoConfig
 from mindrlhf.configs.ppo_configs import PPOConfig
+from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
-from mindrlhf.utils.dataset import IteratorStore
-from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell
+from mindrlhf.utils.dataset import GRPOIteratorStore
+from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
 
 __all__ = ['combine_config', 'init_configs']
 
@@ -181,7 +182,8 @@ def init_ppo_dataset(trainer):
     column_names = ["query_tensors", "response_tensors", "logprobs",
                     "values", "rewards", "advantages", "returns",
                     "pretrain_ids", "loss_mask", "attention_mask"]
-    if ppo_config.save_data_file and 'stages' in ppo_config.align_type:
+    # if ppo_config.save_data_file and 'stages' in ppo_config.align_type:
+    if not trainer.store:
         dataset = MindDataset(dataset_files=ppo_config.save_data_file, shuffle=False)
         dataset = dataset.project(columns=column_names)
     else:
@@ -205,3 +207,86 @@ def init_ppo_dataset(trainer):
     dataset = dataset.batch(
         batch_size=ppo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num)
     return dataset
+
+
+def combine_grpo_config(grpo_config, model_config):
+    config_temp = asdict(grpo_config)
+    for k, v in model_config.to_dict().items():
+        if k not in config_temp:
+            config_temp[k] = v
+    config_temp['max_prompt_length'] = config_temp['seq_length'] - config_temp['max_decode_length']
+    grpo_config_ = make_dataclass("GRPOConfig", [(key, type(value)) for key, value in config_temp.items()])
+    return grpo_config_(**config_temp)
+
+
+def init_grpo_dataset(trainer):
+    """
+    init grpo dataset
+    """
+    grpo_config = trainer.grpo_config
+    sft_model_config = trainer.sft_model_config_train
+    column_names = ["prompt_completion_ids", "prompts_mask", "responses_mask",
+                    "ref_per_token_logps", "advantages"]
+    # if grpo_config.save_data_file and 'stages' in grpo_config.align_type:
+    if not trainer.store:
+        dataset = MindDataset(dataset_files=grpo_config.save_data_file, shuffle=False)
+        dataset = dataset.project(columns=column_names)
+    else:
+        pipeline = GRPOIteratorStore(trainer.store)
+        dataset = GeneratorDataset(pipeline, column_names=column_names)
+    type_cast_op_int32 = TypeCast(mindspore.int32)
+    type_cast_op_fp16 = TypeCast(mindspore.float16)
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompt_completion_ids")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompts_mask")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="responses_mask")
+    dataset = dataset.map(operations=type_cast_op_fp16, input_columns="ref_per_token_logps")
+    dataset = dataset.map(operations=type_cast_op_fp16, input_columns="advantages")
+    micro_batch_num = 1
+    if sft_model_config.parallel_config.pipeline_stage > 1:
+        micro_batch_num = sft_model_config.parallel_config.micro_batch_num
+
+    print(f"##################### bs:{grpo_config.batch_size}, dp:{sft_model_config.parallel_config.data_parallel}, micro_batch_num:{micro_batch_num}")
+    dataset = dataset.batch(
+        batch_size=grpo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num)
+    return dataset
+
+def init_grpo_network_and_optimizer(trainer):
+    '''init grpo network and optimizer'''
+    sft_model_config = trainer.sft_model_config_train
+    grpo_config = trainer.grpo_config
+    if sft_model_config.parallel_config.pipeline_stage > 1:
+        print("pipeline cell")
+        grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.grpo_model_train,
+                                                               grpo_config.micro_batch_interleaved),
+                                         sft_model_config.parallel_config.micro_batch_num)
+    else:
+        print("non-pipeline cell")
+        grpo_with_loss_net = trainer.grpo_model_train
+    grpo_with_loss = _VirtualDatasetCell(grpo_with_loss_net)
+    lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
+                      warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
+    params = grpo_with_loss.trainable_params()
+    group_params = set_weight_decay(params)
+
+    if grpo_config.optimizer == "lamb":
+        optimizer = nn.Lamb(group_params, learning_rate=lr)
+    elif grpo_config.opt_offload:
+        optimizer = AdamWeightDecayOp(group_params, learning_rate=lr, eps=grpo_config.eps, beta1=grpo_config.beta1,
+                                      beta2=grpo_config.beta2, param_init_type=sft_model_config.param_init_type)
+    else:
+        optimizer = FP32StateAdamWeightDecay(group_params, learning_rate=lr, beta1=grpo_config.beta1,
+                                             beta2=grpo_config.beta2, eps=grpo_config.eps)
+
+    loss_scale_value = math.pow(2, 12)
+    update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value,
+                                             scale_factor=2, scale_window=1000)
+
+    if sft_model_config.parallel_config.pipeline_stage > 1:
+        print("pipeline cell")
+        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
+                                                       scale_update_cell=update_cell)
+    else:
+        print("non-pipeline cell")
+        grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
+                                                  scale_update_cell=update_cell, enable_global_norm=True)
+    return grpo_with_grad
