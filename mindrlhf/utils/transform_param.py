@@ -332,6 +332,7 @@ class _ReshardParameters(Cell):
         for i in range(len(self.from_identity_list)):
             src_param_identity = self.from_identity_list[i](self.src_net_param_list[i])
             src_param_identity = self.to_identity_list[i](src_param_identity)
+            src_param_identity = ops.cast(src_param_identity, self.dst_net_param_list[i].dtype)
             bool_value = F.depend(bool_value, self.to_assign_list[i](self.dst_net_param_list[i], src_param_identity))
         return bool_value
 
@@ -382,6 +383,7 @@ class _ReshardParametersPP(Cell):
         bool_value = True
         for i in range(len(self.from_identity_list)):
             src_param_identity = self.to_identity_list[i](param_list[i])
+            src_param_identity = ops.cast(src_param_identity, self.dst_net_param_list[i].dtype)
             bool_value = F.depend(bool_value, self.to_assign_list[i](self.dst_net_param_list[i], src_param_identity))
         return bool_value
 

@@ -1,4 +1,4 @@
-# Copyright 2023 Huawei Technologies Co., Ltd
+# Copyright 2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,4 +14,6 @@
 # ============================================================================
 """MindRLHF configs."""
 from .ppo_configs import PPOConfig
-__all__ = ['PPOConfig',]
+from .grpo_configs import GRPOConfig
+__all__ = ['PPOConfig',
+           'GRPOConfig']
