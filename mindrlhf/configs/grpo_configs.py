@@ -20,13 +20,13 @@ class GRPOConfig:
     """
     GRPO config class which defines the model size
     """
-    beta: float = 0.04 # KL coefficient
+    beta: float = 0.01 # KL coefficient
     num_generations: int = 4
     grpo_epochs: int = 2
 
     model_name: str = ''
     align_type: str = ''
-    epochs: int = 2
+    epochs: int = 3
     total_steps: int = 100000
     batch_size: int = 2
     checkpoint_interval = 10000
@@ -44,7 +44,7 @@ class GRPOConfig:
     eta_min: float = 5.0e-6
 
     num_rollouts: int = 8
-    chunk_size: int = 2
+    chunk_size: int = 1
     ppo_epochs: int = 1
     init_kl_coef: float = 0.1
     kl_coef: float = 0.02
@@ -61,15 +61,15 @@ class GRPOConfig:
     ref_std: bool = False
     gen_experience_kwargs: bool = False
 
-    sink_size: int = 1
+    sink_size: int = 2
     device_target: str = 'Ascend'
     parallel_mode: str = 'semi_auto_parallel'
     full_batch: bool = True
     enable_alltoall: bool = False
     micro_batch_interleaved: int = 1
-    start_lr: float = 9e-6
+    start_lr: float = 5e-7
     end_lr: float = 1e-10
-    warmup_step: int = 3200
+    warmup_step: int = 10
     decay_steps: int = 200000
     opt_offload: bool = False
     mind_dataset_dir: str = "/path/train.mindrecord"
@@ -85,5 +85,3 @@ class GRPOConfig:
     sync_ref_model: bool = True
     # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
     ref_model_sync_steps: int = 1
-
-

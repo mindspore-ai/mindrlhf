@@ -62,11 +62,6 @@ def main(sft_path_infer, sft_path_train, reward_path, critic_path, use_parallel,
     sft_config_infer.model.model_config.parallel_config = (
         sft_config_infer.parallel_config
     )
-    # todo: just use offline ckpt transfer now
-    # if load_sft_checkpoint == "None":
-    # load_sft_checkpoint = None
-    # else:
-    # load_sft_checkpoint = ckpt_transfer_for_generate(load_sft_checkpoint)
     sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
     sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
     sft_model_config_infer.model_name = "llama"

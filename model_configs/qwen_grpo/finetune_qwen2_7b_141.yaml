@@ -101,7 +101,7 @@ parallel:
 parallel_config:
   data_parallel: 1
   model_parallel: 4
-  pipeline_stage: 2
+  pipeline_stage: 1
   use_seq_parallel: True
   micro_batch_num: 4
   vocab_emb_dp: False
@@ -150,7 +150,7 @@ model:
     batch_size: 1 # add for increase predict
     seq_length: 8192
     hidden_size: 3584
-    num_layers: 28
+    num_layers: 4
     num_heads: 28
     n_kv_heads: 4
     vocab_size: 152064
@@ -171,7 +171,7 @@ model:
     extend_method: "None" # support "None", "PI", "NTK"
     use_flash_attention: True
     fine_grain_interleave: 1
-    qkv_concat: False
+    qkv_concat: True
     block_size: 32
     num_blocks: 128
     offset: 0

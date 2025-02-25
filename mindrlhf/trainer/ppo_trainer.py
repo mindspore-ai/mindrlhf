@@ -87,6 +87,20 @@ class RewardFn(nn.Cell):
         return scores - ori_scores
 
 
+def assign_gpu_clusters(n, dp, mp):
+    """
+	assign_gpu_clusters
+    """
+    if n != dp * mp:
+        raise ValueError("Total GPUs must be equal to dp * mp")
+
+    labels = []
+    for cluster_id in range(dp):
+        labels.extend([cluster_id] * mp)
+
+    return labels
+
+
 class PPOTrainer:
     """
     ppo trainer
@@ -100,6 +114,8 @@ class PPOTrainer:
                  critic_model_config=None,
                  rm_model_config=None):
         self.ppo_config = ppo_config
+        self.infer_dp = sft_model_config_infer.parallel_config.data_parallel
+        self.infer_mp = sft_model_config_infer.parallel_config.model_parallel
         self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
         sft_model_config_infer.checkpoint_name_or_path = None
         self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
@@ -117,9 +133,15 @@ class PPOTrainer:
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids", "loss_mask"]
             mindspore.dataset.config.set_seed(2023)
-            dataset = MindDataset(self.mind_dataset_dir).project(columns=columns_to_project)
+            if self.infer_dp == 1:
+                dataset = MindDataset(self.mind_dataset_dir).project(columns=columns_to_project)
+            else:
+                dataset = MindDataset(self.mind_dataset_dir, num_shards=self.infer_dp,
+                                      shard_id=assign_gpu_clusters(get_group_size(), self.infer_dp,
+                                                                   self.infer_mp)[get_rank()]).project(
+                    columns=columns_to_project)
             self.prompt_dataloader = dataset.take(ppo_config.num_rollouts)
-            bs = ppo_config.chunk_size * sft_model_config_infer.parallel_config.data_parallel
+            bs = ppo_config.chunk_size * self.infer_dp
             self.prompt_dataloader = self.prompt_dataloader.batch(batch_size=bs)
             self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
         else:
@@ -476,7 +498,7 @@ class PPOTrainer:
                     nextvalues = all_values[sample_idx, t + 1] if t < response_length - 1 else 0.0
                     delta = rewards[t] + self.ppo_model_infer.ppo_model.gamma * nextvalues - all_values[sample_idx, t]
                     lastgaelam = delta + self.ppo_model_infer.ppo_model.gamma * self.ppo_model_infer.ppo_model.lam \
-                                * lastgaelam
+                                 * lastgaelam
                     advantages_reversed.append(lastgaelam)
                 advantages = np.stack(advantages_reversed[::-1])
                 returns = advantages + all_values[sample_idx]

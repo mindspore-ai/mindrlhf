@@ -1093,7 +1093,6 @@ class DPOLossV2(nn.Cell):
         Returns:
             A tensor of shape (batch_size,) containing the average/sum log probabilities of the given labels under the given logits.
         """
-        # TODO: For glm2, the loss mask might be passed in
         if loss_mask is None:
             loss_mask = self.not_equal(labels, self.label_pad_token_id)
         # [bs, seq_len] -> [bs, seq_len]

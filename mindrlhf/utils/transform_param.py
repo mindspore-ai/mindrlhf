@@ -18,8 +18,10 @@ import numpy as np
 import mindspore.log as logger
 from mindspore import ops
 from mindspore.ops import operations as P
+from mindspore.ops.function.reshard_func import _redistribute
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
+from mindspore.parallel.shard import _DistributedTensorInfo
 from mindspore.parallel.shard import Layout
 from mindspore.parallel._parallel_serialization import _build_searched_strategy, _convert_to_list
 
@@ -163,7 +165,6 @@ class TransformParametersD2D:
 
     def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None,
                  offload_src=False, load_dst=False):
-        from mindspore.parallel.shard import _DistributedTensorInfo
         self._offload_src = offload_src
         self._load_dst = load_dst
         if src_strategy_path is not None:
@@ -246,7 +247,6 @@ class TransformParametersD2D:
     def transform(self):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        from mindspore.ops.function.reshard_func import _redistribute
         for i, src_param in enumerate(self._src_param_name_intersection):
             redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
             redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
