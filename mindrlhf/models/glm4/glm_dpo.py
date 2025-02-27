@@ -94,6 +94,9 @@ class DPOLoss(nn.Cell):
             return self.reduce_sum(per_token_logps * loss_mask, -1)
 
     def dpo_loss(self, policy_chosen_logps, policy_rejected_logps, chosen_ref_logps, rejected_ref_logps):
+        """
+        get dpo loss
+        """
         policy_log_ratios = policy_chosen_logps - policy_rejected_logps
         ref_log_ratios = chosen_ref_logps - rejected_ref_logps
         if self.reference_free:
@@ -105,12 +108,9 @@ class DPOLoss(nn.Cell):
         return losses, chosen_rewards, rejected_rewards
 
     def construct(self, policy_logits, policy_labels, loss_mask, chosen_ref_logps, rejected_ref_logps):
-        # policy_logits: [bs, seq_len, vocab_size]
-        # policy_labels: [bs, seq_len]
-        # loss_mask: [bs, seq_len]
-        # chosen_ref_logps: [bs,]
-        # rejected_ref_logps: [bs,]
-        # [bs,]
+        """
+        construct function for dpo_loss
+        """
         all_logps = self._get_batch_logps(policy_logits, policy_labels, loss_mask)
         bs = all_logps.shape[0] // 2    # a sample has two bs responses (chosen and rejected)
         policy_chosen_logps = self.slice_ind(all_logps, (0,), (bs,), (1,))
@@ -199,6 +199,9 @@ class DPOLossV2(nn.Cell):
         return self.reduce_sum(per_token_logps * loss_mask, -1)
 
     def dpo_loss(self, policy_chosen_logps, policy_rejected_logps, ref_chosen_logps, ref_rejected_logps, loss_mask):
+        """
+        calculate dpo_loss
+        """
         bs, seq_len = loss_mask.shape
         if self.average_log_prob:
             # already computed, just use
@@ -221,12 +224,9 @@ class DPOLossV2(nn.Cell):
         return losses, chosen_rewards, rejected_rewards, policy_chosen_logps_avg
 
     def construct(self, policy_logits, policy_labels, chosen_loss_mask, rejected_loss_mask, ref_chosen_logps, ref_rejected_logps):
-        # policy_logits: [bs, seq_len, vocab_size]
-        # policy_labels: [bs, seq_len]
-        # loss_mask: [bs, seq_len]
-        # ref_chosen_logps: [bs,]
-        # ref_rejected_logps: [bs,]
-        # [bs,]
+        """
+        construct function for glm
+        """
         loss_mask = ops.concat((chosen_loss_mask, rejected_loss_mask), axis=0)
         all_logps = self._get_batch_logps(policy_logits, policy_labels, loss_mask)
         bs = all_logps.shape[0] // 2    # a sample has two bs responses (chosen and rejected)

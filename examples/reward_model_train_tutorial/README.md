@@ -6,7 +6,6 @@ Reward Model是一个对大语言模型生成的句子进行判断和打分，�
 
 当前支持模型：
 * llama2 7B
-* baichuan2 7B/13B
 
 奖励模型的适配教程：
 * [llama2 7B](https://github.com/mindspore-lab/mindrlhf/blob/master/examples/reward_model_train_tutorial/llama_reward_model_tutorial.md)

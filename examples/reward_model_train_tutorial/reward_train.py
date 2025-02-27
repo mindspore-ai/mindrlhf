@@ -28,7 +28,6 @@ from mindformers.mindformer_book import MindFormerBook
 
 sys.path.append(os.path.abspath('../../../'))
 from mindrlhf.models.llama.llama_reward import LlamaRewardModel
-from mindrlhf.models.baichuan2 import Baichuan7BReward
 
 
 def run(config='run_llama_2_7b_rm.yaml',

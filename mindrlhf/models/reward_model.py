@@ -94,12 +94,6 @@ class RewardModel(BaseModel):
             # [batch_size, seq_length, vocab_size]
             output_states, _ = self.backbone(tokens, input_position, attention_mask,
                                              init_reset, batch_valid_length)
-        elif self.model_type == 'baichuan2_7b':
-            tokens = input_ids
-            output_states = self.backbone(tokens, batch_valid_length)
-        elif self.model_type == 'baichuan2_13b':
-            tokens = input_ids
-            output_states = self.backbone(tokens, batch_valid_length)
         elif self.model_type == 'gpt2':
             tokens = input_ids
             if attention_mask is None:
@@ -194,20 +188,6 @@ class CriticModel(BaseModel):
             init_reset = True
             batch_valid_length = None
             output_states, _ = self.backbone(tokens, input_position, attention_mask)
-        elif self.model_type == 'baichuan2_7b':
-            if self.model.phase == "train":
-                seq_length = seq_length - 1
-                tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length), (1, 1))
-            else:
-                tokens = input_ids
-            output_states = self.backbone(tokens)
-        elif self.model_type == 'baichuan2_13b':
-            if self.model.phase == "train":
-                seq_length = seq_length - 1
-                tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length), (1, 1))
-            else:
-                tokens = input_ids
-            output_states = self.backbone(tokens)
         elif self.model_type == 'gpt2':
             tokens = input_ids
             if attention_mask is None:

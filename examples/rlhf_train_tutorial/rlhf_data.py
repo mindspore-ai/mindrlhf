@@ -4,7 +4,6 @@ import jsonlines
 from tqdm import tqdm
 from mindspore.mindrecord import FileWriter
 from mindformers import AutoTokenizer
-from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
 
 
 def load_json_file(file_path):

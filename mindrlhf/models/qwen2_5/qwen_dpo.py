@@ -13,27 +13,18 @@
 # limitations under the License.
 # ============================================================================
 """qwen2_5_7b_dpo models' APIs."""
-from typing import Optional
-import math
 import copy
-import numpy as np
 import mindspore.common.dtype as mstype
-
-try:
-    from mindspore._checkparam import Validator
-except ImportError:
-    import mindspore._checkparam as Validator
-from mindspore import Tensor, nn, ops
-from mindspore.context import ParallelMode
-from mindspore.ops import operations as P
-from mindspore.parallel._utils import _get_parallel_mode
-import mindspore as ms
-
+from mindformers import LlamaConfig, LlamaForCausalLM
 from mindformers.core.loss.loss import CrossEntropyLoss
 from mindformers.models.utils import lazy_inline
 from mindformers.modules.transformer.op_parallel_config import _check_config
 from mindformers.tools.register.register import MindFormerModuleType, MindFormerRegister
-from mindformers import LlamaConfig, LlamaForCausalLM
+from mindspore import Tensor, nn, ops
+from mindspore.context import ParallelMode
+from mindspore.ops import operations as P
+from mindspore.parallel._utils import _get_parallel_mode
+from typing import Optional
 
 __all__ = ['Qwen2_5_7BDPO']
 
@@ -252,7 +243,7 @@ class DPOLossV2(nn.Cell):
 @MindFormerRegister.register(MindFormerModuleType.MODELS)
 class Qwen2_5_7BDPO(LlamaForCausalLM):
     r"""
-        Provide qwen1.5_7B training loss or logits through network.
+        Provide qwen2.5_7B training loss or logits through network.
         Args:
             config (LlamaConfig): The config of qwen1.5_7B model.
 
@@ -272,9 +263,9 @@ class Qwen2_5_7BDPO(LlamaForCausalLM):
 
         Examples:
             >>> from mindformers.models.llama import LlamaConfig
-            >>> from research.baichuan2.baichuan2_13b import Baichuan13BV2ForCausalLM
+            >>> from mindrlhf.models.qwen2_5.qwen_dpo import Qwen2_5_7BDPO
             >>> config = LlamaConfig(batch_size=2)
-            >>> network = Baichuan13BV2ForCausalLM(config=config)
+            >>> network = Qwen2_5_7BDPO(config=config)
         """
 
     @lazy_inline
@@ -336,6 +327,9 @@ class Qwen2_5_7BDPO(LlamaForCausalLM):
                   input_position=None, position_ids=None,
                   input_embeds=None, init_reset=True, batch_valid_length=None, batch_index=None, zactivate_len=None,
                   block_tables=None, slot_mapping=None):
+        """
+        construct function for qwen2_5
+        """
         if self.training:
             input_ids = ops.concat((chosen_input_ids, rejected_input_ids), axis=0)
             labels = ops.concat((chosen_labels, rejected_labels), axis=0)
