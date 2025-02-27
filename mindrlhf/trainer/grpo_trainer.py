@@ -503,7 +503,7 @@ class GRPOTrainer:
             print("prompts: \n", prompts)
             print("completions: \n", completions)
             print("completions.length: \n", len(completions))
-            mean_len = np.array(completions).mean()
+            mean_len = np.array([len(com) for com in completions]).mean()
             print("mean completions.length: \n", mean_len)
 
             rewards_per_func = np.zeros((n_questions, len(self.reward_funcs)), dtype=np.float32)
