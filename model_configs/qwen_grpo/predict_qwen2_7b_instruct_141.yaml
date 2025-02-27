@@ -69,7 +69,7 @@ model:
     top_p: 1.0
     do_sample: False
     is_dynamic: True
-    qkv_concat: False
+    qkv_concat: True
     auto_map:
       AutoTokenizer: [qwen2_tokenizer.Qwen2Tokenizer, null]
   arch:
@@ -96,7 +96,7 @@ context:
   ascend_config:
     precision_mode: "must_keep_origin_dtype"
   max_call_depth: 10000
-  max_device_memory: "58GB"
+  max_device_memory: "59GB"
   save_graphs: False
   save_graphs_path: "./graph"
   device_id: 0

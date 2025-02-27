@@ -53,16 +53,11 @@ class CausalLMHybrid(BaseModel):
 
         self.squeeze = P.Squeeze(axis=-1).shard(((dp, 1, 1),))
         self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1, 1),))
-        self.unsqueeze = P.ExpandDims()
+        self.unsqueeze = P.ExpandDims().shard(((dp, 1),))
         self.reshape = P.Reshape()
-        self.gather = P.Gather().shard(
-            (
-                (dp, mp),
-                (1,),
-            )
-        )
-        self.gatherd = P.GatherD()
-        self.logsoftmax_1 = P.LogSoftmax().shard(((1, 1, 1),))
+        self.gather = P.Gather().shard(((dp, mp), (1,),))
+        self.gatherd = P.GatherD().shard(((dp, 1, 1), (dp, 1, 1)))
+        self.logsoftmax_1 = P.LogSoftmax().shard(((dp, 1, 1),))
         self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1),))
 
         self.pow = P.Pow().shard(((dp, 1), ()))
@@ -129,9 +124,8 @@ class CausalLMHybrid(BaseModel):
                 tokens = input_ids
                 if batch_valid_length is None or slot_mapping is None:
                     bsz, seqlen = tokens.shape
-                    batch_valid_length = ops.ones((bsz, ), mstype.int32).reshape(-1)
+                    batch_valid_length = ops.ones((bsz,), mstype.int32).reshape(-1)
                     slot_mapping = Tensor(np.ones(shape=tuple([bsz * seqlen])), mstype.int32)
-                
             output_states = self.backbone(tokens, batch_valid_length=batch_valid_length,
                                           slot_mapping=slot_mapping)
             logits_2d = self.lm_head(output_states)
@@ -145,14 +139,12 @@ class CausalLMHybrid(BaseModel):
                 return logits
             logprobs_labels = self.logprobs_of_labels(logits, samples)
             return logprobs_labels
-        
         # used in generate
         if not return_full_logit:
             outputs = self.process_logits2(
                 logits, input_position, is_first_iteration, use_past
             )
             return outputs
-        
         # used in pretrain loss
         logits = self.add_shard(logits, 0)
         return logits
@@ -173,28 +165,24 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.gamma = 1
         self.lam = 0.95
         self.depend = P.Depend()
-
-    def construct(
-        self,
-        prompt_completion_ids, # [bs, seq_len]
-        prompts_mask, # [bs, seq_len]
-        responses_mask,  # [bs, seq_len]
-        ref_per_token_logps, # [bs, seq_len-1]
-        advantages # [bs, 1]
-    ):
-        attention_mask = prompts_mask + responses_mask
-        per_token_logps = self.policy_model(prompt_completion_ids, attention_mask, samples=prompt_completion_ids) # [bs, seq_len-1]
-
+    # pylint: disable=W0613
+    def construct(self,
+                  prompt_completion_ids,
+                  prompts_mask,
+                  responses_mask,
+                  ref_per_token_logps,
+                  advantages):
+        """
+        GRPOModel
+        """
+        per_token_logps = self.policy_model(prompt_completion_ids, samples=prompt_completion_ids) # [bs, seq_len-1]
         per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len-1]
-        #TODO: assign更靠谱
         per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len-1]
         per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len-1]
         masked_per_token_loss = per_token_loss * responses_mask[:, 1:]  # [bs, seq_len-1]
-
         deno = masked_per_token_loss.sum(axis=-1)  #  [bs]
         nume = responses_mask.sum(axis=-1)  #  [bs]
         loss = (deno/nume).mean()
-
         return loss
 
 

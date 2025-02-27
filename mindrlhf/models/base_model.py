@@ -21,7 +21,7 @@ from mindformers import LlamaForCausalLM
 from mindformers.models.gpt2 import GPT2LMHeadModel
 from mindformers.models.pangualpha import PanguAlphaHeadModel
 from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
-# from mindrlhf.models.baichuan2.baichuan2_7b import Baichuan7BV2ForCausalLM
+from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
 
 
 class BaseModel(nn.Cell):
@@ -61,20 +61,15 @@ class BaseModel(nn.Cell):
             self.model = BloomLMHeadModel(model_config)
             self.backbone = self.model.transformer
             self.lm_head = self.model.head
-        # elif self.model_type == "baichuan2_7b":
-        #     self.model = Baichuan7BV2ForCausalLM(model_config)
-        #     self.backbone = self.model.model
-        #     self.lm_head = self.model.lm_head
-        # elif self.model_type == "baichuan2_13b":
-        #     self.model = Baichuan13BV2ForCausalLM(model_config)
-        #     self.backbone = self.model.model
-        #     self.lm_head = self.model.lm_head
         elif self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
             self.lm_head = self.model.head
         elif self.model_type == "llama":
-            self.model = LlamaForCausalLM(model_config)
+            if model_config.use_past:
+                self.model = ParallelQwenForCausalLM(model_config)
+            else:
+                self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
         elif self.model_type == "glm4":
@@ -112,7 +107,10 @@ class BaseModel(nn.Cell):
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
         elif self.model_type == "llama":
-            self.model = LlamaForCausalLM(model_config)
+            if model_config.use_past:
+                self.model = ParallelQwenForCausalLM(model_config)
+            else:
+                self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
         elif self.model_type == "glm4":
             self.model = ChatGLM2ForConditionalGeneration(model_config)
@@ -138,17 +136,14 @@ class BaseModel(nn.Cell):
         elif self.model_type == "bloom":
             self.model = BloomLMHeadModel(model_config)
             self.backbone = self.model.transformer
-        # elif self.model_type == "baichuan2_7b":
-        #     self.model = Baichuan7BV2ForCausalLM(model_config)
-        #     self.backbone = self.model.model
-        # elif self.model_type == "baichuan2_13b":
-        #     self.model = Baichuan13BV2ForCausalLM(model_config)
-        #     self.backbone = self.model.model
         elif self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
         elif self.model_type == "llama":
-            self.model = LlamaForCausalLM(model_config)
+            if model_config.use_past:
+                self.model = ParallelQwenForCausalLM(model_config)
+            else:
+                self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
         elif self.model_type == "glm4":
             self.model = ChatGLM2ForConditionalGeneration(model_config)
