@@ -307,14 +307,6 @@ class CausalLMHydraWithValueHead(BaseModel):
                 tokens, input_position, attention_mask, init_reset, batch_valid_length
             )
             logits_2d = self.lm_head(output_states, embedding_table)
-        elif self.model_type == "baichuan2_7b":
-            tokens = input_ids
-            output_states = self.backbone(tokens, batch_valid_length)
-            logits_2d = self.lm_head(output_states)
-        elif self.model_type == "baichuan2_13b":
-            tokens = input_ids
-            output_states = self.backbone(tokens, batch_valid_length)
-            logits_2d = self.lm_head(output_states)
         elif self.model_type == "gpt2":
             tokens = input_ids
             if attention_mask is None:
@@ -368,7 +360,7 @@ class CausalLMHydraWithValueHead(BaseModel):
             )
             logits_2d = self.lm_head(output_states, embedding_table)
 
-        # if self.model_type == 'baichuan' or self.model_type == 'llama':
+        # if self.model_type == 'llama':
         #     logits_2d = self.lm_head(output_states)
         # else:
         #     logits_2d = self.lm_head(output_states, embedding_table)

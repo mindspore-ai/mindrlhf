@@ -14,24 +14,23 @@
 # ============================================================================
 
 import argparse
-import numpy as np
-from tqdm import tqdm
 import json
-from mindspore import ops as P
-from mindspore.mindrecord import FileWriter, FileReader
 import os
 import mindspore as ms
+import numpy as np
 from mindformers import AutoModel
-from mindformers.tools.utils import str2bool
+from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.tools import logger
 from mindformers.tools.register import MindFormerConfig
-from mindformers.core.context import build_context
+from mindformers.tools.utils import str2bool
+from mindspore import ops as P
+from mindspore.mindrecord import FileWriter, FileReader
+from tqdm import tqdm
 
+from mindrlhf.models.glm4.glm4_tokenizer import ChatGLM4Tokenizer
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
-from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
-from mindrlhf.models.glm4.glm4_tokenizer import ChatGLM4Tokenizer
 
 ROLE_MAPPING = {
     "human": "<|user|>",
@@ -154,15 +153,13 @@ def preprocess(data_path: str, dst_file: str, config_path: str, tokenizer_path: 
 
     if model_name == "qwen2_7b":
         tokenizer = Qwen2Tokenizer(tokenizer_path, merges_file, add_bos_token=False, add_eos_token=False)
-    elif model_name == "baichuan2_13b":
-        tokenizer = Baichuan2Tokenizer(tokenizer_path, merges_file, add_bos_token=False, add_eos_token=False)
     elif model_name == "glm4_9b":
         tokenizer = ChatGLM4Tokenizer(tokenizer_path)
     elif model_name == "qwen2_5_7b":
         tokenizer = Qwen2_5Tokenizer(tokenizer_path, merges_file, add_bos_token=False, add_eos_token=False)
     else:
         raise ValueError(
-            f"model_name should in ['qwen2_7b', 'baichuan2_13b', 'qwen2_5_7b','glm4_9b'], but get {model_name}")
+            f"model_name should in ['qwen2_7b', 'qwen2_5_7b','glm4_9b'], but get {model_name}")
 
     model = AutoModel.from_config(config)
     model.set_train(False)

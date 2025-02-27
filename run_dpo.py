@@ -13,31 +13,28 @@
 # limitations under the License.
 # ============================================================================
 """run dpo"""
-import os
 import argparse
-
+import os
 # pylint: disable=W0611
 from mindformers import Trainer, MindFormerConfig
 from mindformers import init_context, ContextConfig, ParallelContextConfig
-from mindformers.tools.utils import str2bool
-from mindformers.tools.logger import logger
-from mindformers.tools.cloud_adapter import cloud_monitor
 from mindformers.core.context import build_context
+from mindformers.tools.cloud_adapter import cloud_monitor
+from mindformers.tools.logger import logger
+from mindformers.tools.utils import str2bool
 
-from mindrlhf.models.baichuan2.baichuan2_13b import Baichuan13BDPO
-from mindrlhf.models.baichuan2.baichuan2_tokenizer import Baichuan2Tokenizer
-from mindrlhf.models.qwen2.qwen_dpo import Qwen7BDPO
-from mindrlhf.models.qwen2_5.qwen_dpo import Qwen2_5_7BDPO
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
-from mindrlhf.models.glm4.glm_dpo import Glm4DPO
 from mindrlhf.models.glm4.glm4_tokenizer import ChatGLM4Tokenizer
+from mindrlhf.models.glm4.glm_dpo import Glm4DPO
+from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
+from mindrlhf.models.qwen2.qwen_dpo import Qwen7BDPO
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
+from mindrlhf.models.qwen2_5.qwen_dpo import Qwen2_5_7BDPO
 from mindrlhf.utils import DPODataset
 
 
 @cloud_monitor()
 def main(task='text_generation',
-         config='run_baichuan2_7b.yaml',
+         config=None,
          run_mode=None,
          seq_length=None,
          mode=None,
@@ -128,7 +125,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', default='text_generation', type=str,
                         help='set task type.')
-    parser.add_argument('--config', default='baichuan2/run_baichuan2_7b.yaml', type=str,
+    parser.add_argument('--config', default=None, type=str,
                         help='set task type.')
     parser.add_argument('--run_mode', default='train', type=str,
                         help='set run mode for model.')

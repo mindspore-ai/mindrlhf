@@ -105,7 +105,7 @@ transform_checkpoint.py)，参考示例如下：
 python mindrlhf/tools/transform_checkpoint.py \
    --src_checkpoint=/path/output/checkpoint_network \
    --src_strategy=/path/output/strategy \
-   --dst_checkpoint=/path/mindrlhf/examples/dpo/baichuan2
+   --dst_checkpoint=/path/mindrlhf/examples/dpo/qwen2
 ```
 
 完成权重转化后，执行如下命令进行单卡推理：

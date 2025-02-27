@@ -24,6 +24,7 @@
 OPENAI的[ChatGPT](https://openai.com/blog/chatgpt)在自然语言方面表现出了令人震惊的效果，开启了通用人工智能的序幕,它的优秀表现，与 RLHF（[Reinforcement Learning from Human Feedback](https://openai.com/research/learning-from-human-preferences)）算法密不可分。在ChatGPT的前身[InstructGPT](https://openai.com/research/instruction-following)中，利用RLHF算法，通过收集人类反馈的信息，可以生成更加符合人类认知和价值观的内容，从而弥补了大模型中潜在的认知偏差。
 
 `MindSpore RLHF`（简称 `MindRLHF`）以[MindSpore](https://gitee.com/mindspore/mindspore)作为基础框架，利用框架具备的大模型并行训练、推理、部署等能力，助力客户快速训练及部署带有百亿、千亿级别基础模型的RLHF算法流程。MindRLHF包含3个阶段的学习流程：
+
 * 阶段1： 预训练模型训练
 * 阶段2： 奖励模型训练
 * 阶段3： 强化学习训练
@@ -37,12 +38,13 @@ MindRLHF架构图如下：
 ![framework](https://github.com/mindspore-lab/mindrlhf/blob/master/images/framework.jpg)
 
 ## 安装
+
 当前版本`0.3.0`无需安装，用户下载即可使用。
 当前版本所依赖框架:
 |  依赖   | 版本|
 |  ----   | ----        |
-| MindSpore    | r2.3   |
-| Mindformers | r1.2    |
+| MindSpore    | r2.5   |
+| Mindformers | dev    |
 
 ## 支持列表
 
@@ -51,32 +53,32 @@ MindRLHF架构图如下：
 当前版本集成了Pangu-alpha(13B)、GPT2、Baichuan2(7B/13B) 模型，用户可以基于这两个模型进行探索。未来，我们将提供更多模型如LLAMA、BLOOM、GLM等，帮助用户快速实现自己的应用。具体支持列表如下所示：
 
 表 1： 当前MindSpore RLHF支持的模型和规模
-|  模型   | Pangu-alpha |  GPT2   | Baichuan2 | Qwen2 | 
-|  ----   | ----        |  ----   |  ----   |  ----   |
-| 规模    | 2.6B/13B    | 124M    | 7B/13B    | 7B    |
-| 支持并行 | Y          | Y       | Y       | Y       |
-| 硬件    | NPU         | NPU     | NPU     | NPU     |
+|  模型   | Pangu-alpha |  GPT2   | Qwen2_5 | Qwen2 | Glm4 |
+|  ----   | ----        |  ----   |  ----   |  ----   |----   |
+| 规模    | 2.6B/13B    | 124M    | 7B    | 7B    |9B    |
+| 支持并行 | Y          | Y       | Y       | Y       |Y       |
+| 硬件    | NPU         | NPU     | NPU     | NPU     |NPU     |
 
 当前流程下，不同模型对不同训练阶段的支持情况如下表所示：
 
 表 2： 当前MindSpore RLHF支持的模型和阶段
-|  训练阶段     | Pangu-alpha    |  GPT2   |  Baichuan2   |
-|  ----        | ----           |  ----   |  ----   |
-| 预训练模型训练| Y              | Y       | Y       |
-| 奖励模型训练  | Y              | Y       | Y       |
-| 强化学习训练  | Y              | Y       | Y       |
+|  训练阶段     | Pangu-alpha    |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
+|  ----        | ----           |  ----   | ----   |  ----   |----   |
+| 预训练模型训练| Y              | Y       | Y       |Y              | Y       | Y       |
+| 奖励模型训练  | Y              | Y       | Y       |Y              | Y       | Y       |
+| 强化学习训练  | Y              | Y       | Y       |Y              | Y       | Y       |
 
-未来，我们将打通更多的模型，如`LLAMA`、`GLM`、`BLOOM`等，敬请期待。
+未来，我们将打通更多的模型，如`LLAMA`、`BLOOM`等，敬请期待。
 
 现在我们支持了 `DPO`算法, 对应的基础模型如下表所示:
 
 Table 3： 支持DPO的模型
-|  类型     |  Baichuan2   |  Qwen2   |  Qwen2_5   |
+|  类型     |  Glm4   |  Qwen2   |  Qwen2_5   |
 |  ----       |  ----        |  ----        |  ----        |
 | offline     | Y            | Y            | Y            |
 | online      |             |             |             |
 
-未来我们将支持 LLAMA、GLM等模型。
+未来我们将支持 LLAMA等模型。
 
 ## 快速入门
 
@@ -99,7 +101,6 @@ for epoch in range(ppo_config.epochs):
     trainer.train(ppo_with_grad, dataset, epoch)
     trainer.save_checkpoint(rank_id, epoch)
 ```
-
 
 ## 贡献
 

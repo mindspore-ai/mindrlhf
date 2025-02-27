@@ -41,14 +41,15 @@ MindRLHF architecture diagram is as follows:
 ![framework](https://github.com/mindspore-lab/mindrlhf/blob/master/images/framework.jpg)
 
 ## Installation
+
 Current version `0.3.0` can be used directly.
 
 There are some requirements for MindRLHF:
 
 |  requirements   | version |
 |  ----   |---------|
-| MindSpore    | r2.3.1    |
-| Mindformers | r1.2.0    |
+| MindSpore    | r2.5    |
+| Mindformers | dev     |
 
 ## Supported Models
 
@@ -57,32 +58,32 @@ Current version of MindRLHF: `0.3.0`
 The current version integrates Pangu-alpha(13B), GPT2, Baichuan2(7B/13B) models, and users can explore these two models. In the future, we will provide more models such as LLAMA, BLOOM, GLM, etc. To help users quickly implement their own applications. The specific supported list is shown below:
 
 Table 1： The models and scales supported in MindRLHF
-|  Models   | Pangu-alpha |  GPT2   |  Baichuan2   | Baichuan2 |
-|  ----     | ----        |  ----   |  ----        |  ----     |
-| Scales    | 2.6B/13B    | 124M    | 7B/13B       |  7B       |
-| Parallel  | Y           | Y       | Y            |   Y       |
-| Device    | NPU         | NPU     | NPU          |   NPU     | 
+|  Models   | Pangu-alpha |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
+|  ----     | ----        |  ----   |  ----   |  ----   |----   |
+| Scales    | 2.6B/13B    | 124M    | 7B    | 7B    |9B    |
+| Parallel  | Y           | Y       | Y            |   Y       |Y       |
+| Device    | NPU         | NPU     | NPU          |   NPU     | NPU     |
 
 The support of models for different training stages is shown in the following table:
 
 Table 2： The models and stages supported in MindRLHF
-|  Stages     | Pangu-alpha    |  GPT2   |  Baichuan2   |
-|  ----       | ----           |  ----   |  ----        |
-| SFT         | Y              | Y       | Y            |
-| RM          | Y              | Y       | Y            |
-| RLHF        | Y              | Y       | Y            |
+|  Stages     | Pangu-alpha    |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
+|  ----       | ----           |  ----   |  ----        |----        |
+| SFT         | Y              | Y       | Y            |Y            |
+| RM          | Y              | Y       | Y            |Y            |
+| RLHF        | Y              | Y       | Y            |Y            |
 
 In the future, we will integrate more models such as LLAMA, GLM, BLOOM, etc.
 
 Now we support `DPO`, and models supported are shown in the following table:
 
 Table 3： The models for DPO
-|  Type     |  Baichuan2   |  Qwen2       |Qwen2_5       |
+|  Type     |  Glm4   |  Qwen2       |Qwen2_5       |
 |  ----     |  ----        |  ----        |----        |
 | offline   | Y            | Y            |Y            |
 | online    |              |              |             |
 
-In the future, we will integrate more models such as LLAMA, GLM, Qwen, etc.
+In the future, we will integrate more models such as LLAMA etc.
 
 ## Get Started
 
