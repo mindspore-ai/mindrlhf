@@ -8,7 +8,7 @@ def accuracy_reward(completions, solution):
     Reward function that checks if the completion is the same as the ground truth.
     """
     rewards = []
-    for content, sol in zip(completions, solution):
+    for content, sol in zip(completions, solution, **kwargs):
         gold_parsed = parse(
             sol,
             extraction_mode="first_match",
@@ -44,7 +44,7 @@ def accuracy_reward(completions, solution):
         rewards.append(reward)
     return rewards
 
-def format_reward(completions):
+def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
     pattern = r"^<think>.*?</think>\s*<answer>.*?</answer>$"
     matches = [re.match(pattern, content, re.DOTALL | re.MULTILINE) for content in completions]
