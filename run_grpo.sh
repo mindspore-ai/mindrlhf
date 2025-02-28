@@ -9,6 +9,8 @@ export GLOG_v=3
 root_path="$(realpath "$(dirname "$0")")"
 cd $root_path
 
+export PYTHONPATH=/path/to/mindformers:$PYTHONPATH
+
 msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=False --log_dir=./qwen2_one_log \
 examples/qwen_grpo_tutorial/grpo_one_stage.py \
