@@ -18,8 +18,9 @@ MindRLHF grpo trainer
 import time
 import os
 from dataclasses import dataclass, asdict
-from typing import Callable
 import numpy as np
+from typing import Callable
+
 import mindspore
 import mindspore.common.dtype as mstype
 from mindspore import Tensor, context
@@ -27,7 +28,7 @@ from mindspore.ops import operations as P
 from mindspore import communication as D
 from mindspore.dataset import MindDataset
 from mindspore.mindrecord import FileWriter
-from mindspore.communication.management import get_rank
+from mindspore.communication.management import get_rank, get_group_size
 
 from mindformers import logger
 from mindformers.trainer.utils import load_distributed_checkpoint
@@ -59,29 +60,30 @@ def get_first_diverge_indices(preferred_comp_ids, disfavored_comp_ids):
 
 
 def remove_left_padding(token_ids, padding_token=0):
-    """
-    remove_left_padding
-
-    """
+    """ remove_left_padding """
     trimmed_sequences = []
     for seq in token_ids:
+        # 将序列转换为列表以处理不同输入类型（如numpy数组）
         seq_list = list(seq)
+        # 顺查找第一个非填充标记的位置
         last_non_pad = next((i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
+        # 截断左侧填充
         if last_non_pad is not None:
             trimmed_sequences.append(seq_list[last_non_pad:])
         else:
-            trimmed_sequences.append([])
+            trimmed_sequences.append([])  # 全为填充时返回空列表
     return trimmed_sequences
 
 
 def remove_right_padding(token_ids, padding_token=0):
-    """
-	remove_right_padding
-    """
+    """ remove_right_padding """
     trimmed_sequences = []
     for seq in token_ids:
+        # 将序列转换为列表以处理不同输入类型（如numpy数组）
         seq_list = list(seq)
+        # 逆序查找第一个非填充标记的位置
         last_non_pad = next((i for i in reversed(range(len(seq_list))) if seq_list[i] != padding_token), None)
+        # 截断右侧填充
         if last_non_pad is not None:
             trimmed_sequences.append(seq_list[:last_non_pad + 1])
         else:
@@ -90,10 +92,7 @@ def remove_right_padding(token_ids, padding_token=0):
 
 
 def assign_gpu_clusters(n, dp, mp):
-    """
-    assign_gpu_clusters
-
-    """
+    """ assign_gpu_clusters """
     if n != dp * mp:
         raise ValueError("Total GPUs must be equal to dp * mp")
 
@@ -104,10 +103,7 @@ def assign_gpu_clusters(n, dp, mp):
     return labels
 
 
-def allgather_data(batch_input, data_parallel_size, padding_length=128):
-    """
-    allgather data after dataset
-    """
+def allgather_data(batch_input, data_parallel_size, padding_length=128, pad_val=-10000):
     lengths = []
     padded_arrays = []
     local_bs = len(batch_input)
@@ -134,19 +130,20 @@ def allgather_data(batch_input, data_parallel_size, padding_length=128):
 
     return output_batch
 
+
 def split_for_data_parallel(batch_inputs, data_parallel_size):
-    """
-    split data for generation
-    """
     world_size = D.get_group_size()
     rank_id = D.get_rank()
     split_size = (batch_inputs.shape[0] // data_parallel_size)
     all_other_group_size = world_size // data_parallel_size
+
     dp_rank_id = rank_id // all_other_group_size
+
     start = dp_rank_id * split_size
     stop = (dp_rank_id + 1) * split_size
     batch_inputs_for_this_rank = batch_inputs[start:stop]
     return batch_inputs_for_this_rank
+
 
 class GRPOTrainer:
     """
@@ -184,10 +181,12 @@ class GRPOTrainer:
             self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
         else:
             logger.info("In training stages, there is not dataset for making experience")
+
         self.sft_model_config_infer = sft_model_config_infer
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         policy_model = CausalLMHybrid(sft_model_config_infer, self.grpo_config)
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
+        p = policy_model.parameters_dict()
         self.grpo_model_infer = GRPOModelInfer(grpo_config, policy_model)
         self.grpo_model_infer.set_train(False)
 
@@ -247,6 +246,10 @@ class GRPOTrainer:
 
             # ===========================================================================
             print(f"begin to load infer policy model from: {self.sft_ckpt_path_infer}", flush=True)
+            print("self.grpo_config.use_parallel:   ", self.grpo_config.use_parallel)
+            print(new_param_dict.keys())
+            for _, param in self.grpo_model_infer.grpo_model.policy_model.parameters_and_names():
+                print(f"infer model para names:   {param.name}")
             param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.grpo_model_infer.grpo_model.policy_model,
                                                                           new_param_dict)
             print(f"param not load: {param_not_load}", flush=True)
@@ -256,6 +259,8 @@ class GRPOTrainer:
             param_dict = load_ckpt_func(self.sft_ckpt_path_train)
             new_param_dict = {'grpo_model_train.policy_model.model.' + k: v for k, v in param_dict.items()}
             print(f"begin to load train policy model from: {self.sft_ckpt_path_train}", flush=True)
+            for _, param in self.grpo_model_train.grpo_model_train.policy_model.parameters_and_names():
+                print(f"train model para names:   {param.name}")
             param_not_load, ckpt_not_load = mindspore.load_param_into_net(
                 self.grpo_model_train.grpo_model_train.policy_model, new_param_dict)
             print(f"param not load: {param_not_load}", flush=True)
@@ -266,6 +271,8 @@ class GRPOTrainer:
             new_param_dict = {'model.' + k: v for k, v in param_dict.items()}
             # ===========================================================================
             print(f"begin to load ref model from: {self.ref_ckpt_path}", flush=True)
+            for _, param in self.ref_model.parameters_and_names():
+                print(f"ref model para names:   {param.name}")
             param_not_load, ckpt_not_load = mindspore.load_param_into_net(self.ref_model, new_param_dict)
             print(f"param not load: {param_not_load}", flush=True)
             print(f"ckpt not load: {ckpt_not_load}", flush=True)
@@ -274,7 +281,6 @@ class GRPOTrainer:
         """ save checkpoint """
         if self.grpo_config.save_ckpt_dir:
             print("Save checkpoints in {}".format(self.grpo_config.save_ckpt_dir))
-            # 保存train model
             train_save_dir = os.path.join(self.grpo_config.save_ckpt_dir, 'train', f"rank_{rank_id}")
             if not os.path.exists(train_save_dir):
                 os.makedirs(train_save_dir)
@@ -317,7 +323,8 @@ class GRPOTrainer:
 
         generate_begin_time = time.time()
         outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
-            input_ids_numpy[:, :max_valid_length], max_new_tokens=self.grpo_config.max_decode_length, temperature=1.2)
+            input_ids_numpy[:, :max_valid_length], max_new_tokens=self.grpo_config.max_decode_length, do_sample=True)
+
         print("Generating elapsed time: ", time.time() - generate_begin_time)
 
         input_ids_list = input_ids_numpy.tolist()
@@ -331,13 +338,14 @@ class GRPOTrainer:
         for i in range(num_sample):
             response = outputs[i][prompt_len[i]: prompt_len[i] + self.grpo_config.max_decode_length]
             right_padding_responses[i, :len(response)] = response
-            left_padding_prompts[i, self.grpo_config.max_prompt_length - prompt_len[i]:] = \
-                input_ids_list[i][:prompt_len[i]]
+
+            left_padding_prompts[i, self.grpo_config.max_prompt_length - prompt_len[i]:] = input_ids_list[i][:prompt_len[i]]
 
         responses_mask = (right_padding_responses != self.grpo_config.pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
-        return right_padding_responses.astype(np.int32), responses_mask, \
-            left_padding_prompts.astype(np.int32), prompts_mask
+
+        return right_padding_responses.astype(np.int32), responses_mask, left_padding_prompts.astype(
+            np.int32), prompts_mask
 
     def get_batch(self):
         """ get batch """
@@ -363,7 +371,6 @@ class GRPOTrainer:
 
         return logprobs  # [bs, seq_len-1]
 
-    # pylint: disable=W0212
     def make_experience(self, num_generations: int = 16, rank_id: int = 0, pre_run_flag=False):
         """
         make experience
@@ -381,9 +388,12 @@ class GRPOTrainer:
         prompt_tensors_full = Tensor(batch[0], mstype.int32)
         prompt_tensors = split_for_data_parallel(prompt_tensors_full, self.infer_dp)
         solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
-        solution = remove_right_padding(solution_ids, padding_token=self.grpo_config.pad_token_id)
+        solution_ids = remove_right_padding(solution_ids, padding_token=self.grpo_config.pad_token_id)
         solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
+        for i in range(len(solution)):
+            solution[i] = "$" + solution[i] + "$"
         reward_kwargs = {"solution": solution}
+        print("solution: ", solution)
 
         n_questions = batch[0].shape[0]
         all_rewards = np.zeros((num_generations, n_questions), dtype=np.float32)
@@ -395,19 +405,16 @@ class GRPOTrainer:
                                            dtype=np.float32)
         for idx in range(num_generations):
             if (not pre_run_flag) and idx != 0:
-                #  load generate weight
                 for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
                     param._load()
 
             start_time = time.time()
             print("generation start at {}-------------------------------".format(
                 time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-
             stage_name = 'infer'
             context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
             right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = self.generate(prompt_tensors)
 
-            # generate完，卸载权重
             if not pre_run_flag:
                 for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
                     param._offload()
@@ -418,13 +425,13 @@ class GRPOTrainer:
                     param._load()
                 print("ref_model load")
 
+            # allgather data
             right_padding_responses_batch = allgather_data(right_padding_responses, self.infer_dp,
                                                            padding_length=self.grpo_config.max_decode_length)
             responses_mask_batch = allgather_data(responses_mask, self.infer_dp,
                                                   padding_length=self.grpo_config.max_decode_length)
             left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp,
-                                                        padding_length=self.grpo_config.seq_length - \
-                                                            self.grpo_config.max_decode_length)
+                                                        padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
             prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp,
                                                 padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
 
@@ -467,7 +474,6 @@ class GRPOTrainer:
             prompt_completion_ids_tensor = Tensor(prompt_completion_ids,
                                                   dtype=mindspore.int32)  # [n_questions, seq_length]
             attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)  # [n_questions, seq_length]
-
             stage_name = 'infer'
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
@@ -486,7 +492,6 @@ class GRPOTrainer:
                 strategy_ckpt_config={
                     "save_file":
                         f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-
             end_time = time.time()
             print("reference model end at {}, elapsed time {}-------------------------------".format(
                 time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
@@ -502,7 +507,6 @@ class GRPOTrainer:
 
             print("prompts: \n", prompts)
             print("completions: \n", completions)
-            print("completions.length: \n", len(completions))
             mean_len = np.array([len(com) for com in completions]).mean()
             print("mean completions.length: \n", mean_len)
 
@@ -532,10 +536,11 @@ class GRPOTrainer:
             (1, 0, 2))  # [n_questions, num_generations, seq_length-1]
         mean_grouped_rewards = all_rewards.mean(axis=1)  # [n_questions]
         std_grouped_rewards = all_rewards.std(axis=1, ddof=1)  # [n_questions]
-        advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / \
-            (std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
-
+        advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / (
+                std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
+        
         print("mean_grouped_rewards: \n", mean_grouped_rewards)
+
         grpo_rl_elements = []
         for i in range(n_questions):
             for j in range(num_generations):
@@ -547,6 +552,7 @@ class GRPOTrainer:
                     advantages=advantages[i, j:j + 1].astype(np.float32)
                 )
                 grpo_rl_elements.append(grpodata)
+        print(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
         self.push_to_store(grpo_rl_elements)
 
         print("Avg scores:\n", np.mean(np.array(mean_grouped_rewards)), flush=True)
@@ -575,10 +581,12 @@ class GRPOTrainer:
                   flush=True)
             print(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                   .format(out[0], out[1], out[2], out[3]), flush=True)
+
         print('train over')
 
 
 if __name__ == "__main__":
     context.set_context(device_target='Ascend', device_id=1, mode=mindspore.GRAPH_MODE)
+
     trainer = GRPOTrainer(grpo_config=GRPOConfig)
     trainer.make_experience(num_generations=2)
