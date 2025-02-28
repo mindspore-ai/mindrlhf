@@ -154,6 +154,8 @@ class TransformParametersD2D:
         match_func (function): Check whether two input parameters are matched. It takes source param and dest param
             as input and return boolean. Default value is None, which means that the parameters name must equal.
             Default: None.
+        offload_src (bool): Whether offload the source parameter after transformation. Default: False.
+        load_dst (bool): Whether load the destination parameter before assignment. Default: False.
 
     Raises:
         TypeError: The output of `match_func` is not a boolean.
