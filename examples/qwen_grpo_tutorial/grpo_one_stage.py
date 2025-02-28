@@ -198,8 +198,9 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
                     param._load()
                 for param in grpo_with_grad.optimizer.moments2:
                     param._load()
-                for param in grpo_with_grad.accu_grads:
-                    param._load()
+                if sft_model_config_train.parallel_config.pipeline_stage > 1:
+                    for param in grpo_with_grad.accu_grads:
+                        param._load()
             print("model_train and optimizer load")
 
             # do train
@@ -211,8 +212,9 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
                 param._offload()
             for param in grpo_with_grad.optimizer.moments2:
                 param._offload()
-            for param in grpo_with_grad.accu_grads:
-                param._offload() #load_to("CPU")
+            if sft_model_config_train.parallel_config.pipeline_stage > 1:
+                for param in grpo_with_grad.accu_grads:
+                    param._offload() #load_to("CPU")
             print("optimizer offload")
 
             # 加载generate权重
