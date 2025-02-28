@@ -1,33 +1,13 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-"""
-MindRLHF strategy_utils
-"""
 import os
 import stat
 from mindspore import nn
 from mindspore.train.node_strategy_pb2 import ParallelStrategyMap as ckpt_strategy
-from mindspore.communication.management import get_group_size
+from mindspore.communication.management import get_rank, get_group_size
 from mindformers.experimental.infer.core import ColumnParallelLinear, RowParallelLinear, VocabParallelEmbedding
-from mindformers.tools.logger import logger
+
 
 
 def _update_sharded_state_dict(network: nn.Cell, dict_: dict):
-    """
-    _update_sharded_state_dict
-    """
     cells = network.name_cells()
     for _, subcell in cells.items():
         if subcell == network:
@@ -38,9 +18,6 @@ def _update_sharded_state_dict(network: nn.Cell, dict_: dict):
             _update_sharded_state_dict(subcell, dict_)
 
 def generate_state_dict(network):
-    """
-    generate_state_dict
-    """
     state_dict = {
         "total_rank": get_group_size(),
         "stage_rank_size": get_group_size(),
@@ -52,11 +29,11 @@ def generate_state_dict(network):
     return state_dict
 
 def save_strategy_file(state_dict, strategy_file_name):
-    """
-    save_strategy_file
-    """
     print(f"----------------start save front parallel strategy---------------")
+    
     stra = ckpt_strategy()
+
+    total_rank = state_dict["total_rank"]
     stage_rank_size = state_dict["stage_rank_size"]
     stage = state_dict["stage"]
     model_param = state_dict["model"]

@@ -21,7 +21,7 @@ import os
 import argparse
 
 import mindspore as ms
-from mindspore import context
+from mindspore import context, ops
 from mindspore.communication.management import get_rank, get_group_size
 
 from mindformers import MindFormerConfig
@@ -39,18 +39,15 @@ from mindrlhf.utils.configs import (
 )
 from mindrlhf.utils import transfer_from_str_to_bool
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-from mindrlhf.reward.reward_fn import accuracy_reward, format_reward
+from mindrlhf.reward.reward_fn import reward_func_from_jiaoda, accuracy_reward, format_reward
 
 
 def format_time_delta(seconds):
-    """
-    compute time delta
-    """
+    "计算时间差"
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{int(hours):02}:{int(minutes):02}:{seconds:.4f}"
 
-# pylint: disable=W0212
 def main(sft_path_infer, sft_path_train, use_parallel, args):
     """
     grpo one stage
@@ -119,6 +116,8 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
         reward_funcs=[accuracy_reward, format_reward],
         tokenizer=tokenizer,
     )
+    print("trainer.sft_model_config_infer:", trainer.sft_model_config_infer)
+
     trainer.grpo_model_infer.grpo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
     trainer.make_experience(num_generations=args.pre_num_generations, rank_id=rank_id, pre_run_flag=True)
     sample = trainer.store[0]
@@ -136,16 +135,18 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     stage_name = 'train'
     context.set_auto_parallel_context(
         strategy_ckpt_config={
-        "save_file": f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"},
-        pipeline_stages=trainer.train_pp_stage)
+            "save_file":
+                f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"},
+        pipeline_stages=trainer.train_pp_stage         
+    )
     grpo_with_grad.compile(**data)
+
     stage_name = 'other'
     context.set_auto_parallel_context(
         strategy_ckpt_config={
             "save_file":
                 f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-    print(f"grpo_with_grad 编译耗时：{format_time_delta(time.time() - start_time)}")
-
+    print(f"grpo_with_grad time: {format_time_delta(time.time() - start_time)}")
 
     trainer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
     trainer.ref_model.model.set_train(False)
@@ -168,20 +169,18 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     src_merged_stra = "../merge_strategy/train_policy_merged_strategy.ckpt"
     dst_merged_stra = "../merge_strategy/infer_policy_merged_strategy.ckpt"
     ref_merged_stra = "../merge_strategy/infer_ref_merged_strategy.ckpt"
-    pipeline_stages = context.get_auto_parallel_context("pipeline_stages")
-    if get_rank() in list(range(0, get_group_size(), get_group_size() // pipeline_stages)):
+
+    if get_rank() in list(range(0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages"))):
         ms.merge_pipeline_strategys("../strategy/train_policy_strategy/", src_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_policy_strategy/", dst_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_ref_strategy/", ref_merged_stra)
     ms.mint.distributed.barrier()
     reshard_param = TransformParametersD2D(trainer.grpo_model_train, trainer.grpo_model_infer,
-                                           src_merged_stra, dst_merged_stra, match_func)
+                                          src_merged_stra, dst_merged_stra, match_func)
     ms.communication.comm_func.barrier()
     reshard_param_policy2ref = TransformParametersD2D(trainer.grpo_model_train, trainer.ref_model,
-                                                      src_merged_stra, ref_merged_stra,
-                                                      match_func=match_func_policy2ref)
+                                           src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
     ms.communication.comm_func.barrier()
-    print(f"权重倒换初始化：{format_time_delta(time.time() - start_time)}")
 
     for n in range(grpo_config.epochs):
         # do generate
@@ -190,15 +189,15 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
         for i in range(steps):
             print(f"--------- epoch:{n} step:{i} ---------")
             trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
-            if i != 0 or n != 0:  # 第0次不加载
-                # 加载train权重
+
+            if n != 0 or i != 0:
                 for param in grpo_with_grad.network.get_parameters(expand=True):
                     param._load()
                 for param in grpo_with_grad.optimizer.moments1:
                     param._load()
                 for param in grpo_with_grad.optimizer.moments2:
                     param._load()
-                if sft_model_config_train.parallel_config.pipeline_stage > 1:
+                if trainer.train_pp_stage > 1:
                     for param in grpo_with_grad.accu_grads:
                         param._load()
             print("model_train and optimizer load")
@@ -207,24 +206,21 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
             dataset = init_grpo_dataset(trainer)
             trainer.train(grpo_with_grad, dataset)
 
-            # train完，卸载optimizer权重
             for param in grpo_with_grad.optimizer.moments1:
                 param._offload()
             for param in grpo_with_grad.optimizer.moments2:
                 param._offload()
-            if sft_model_config_train.parallel_config.pipeline_stage > 1:
+            if trainer.train_pp_stage > 1:
                 for param in grpo_with_grad.accu_grads:
-                    param._offload() #load_to("CPU")
+                    param._offload()
             print("optimizer offload")
 
-            # 加载generate权重
             for param in trainer.grpo_model_infer.grpo_model.get_parameters(expand=True):
                 param._load()
             for param in trainer.ref_model.get_parameters(expand=True):
                 param._load()
             print("model_infer and ref_model load")
 
-            # 权重倒换，需要参数在相同的设备上
             start_time = time.time()
             reshard_param.transform()
             print(f"model_train to model_infer ckpt_transform: {format_time_delta(time.time() - start_time)}")
@@ -236,13 +232,15 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
                     print(f"model_train to ref ckpt_transform: {format_time_delta(time.time() - start_time)}")
 
             for param in grpo_with_grad.network.get_parameters(expand=True):
+                print("grpo with grad offload debug: ", param.name, flush=True)
                 param._offload()
             print("model_train offload")
+
     for param in grpo_with_grad.network.get_parameters(expand=True):
         param._load()
     trainer.save_checkpoint(rank_id=get_rank(), steps=grpo_config.epochs)
     print("save checkpoint done!")
-
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="qwen make experience")

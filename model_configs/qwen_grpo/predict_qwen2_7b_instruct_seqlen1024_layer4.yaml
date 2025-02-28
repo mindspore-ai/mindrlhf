@@ -35,9 +35,9 @@ model:
   model_config:
     type: LlamaConfig
     batch_size: 1
-    seq_length: 8192
+    seq_length: 1024
     hidden_size: 3584
-    num_layers: 28
+    num_layers: 4
     num_heads: 28
     n_kv_heads: 4
     vocab_size: 152064
@@ -63,11 +63,11 @@ model:
     offset: 0
     checkpoint_name_or_path: ""
     repetition_penalty: 1.0
-    max_decode_length: 2048
+    max_decode_length: 512
     temperature: 1.2
     top_k: 50
     top_p: 1.0
-    do_sample: True
+    do_sample: False
     is_dynamic: True
     qkv_concat: False
     auto_map:
@@ -96,8 +96,8 @@ context:
   ascend_config:
     precision_mode: "must_keep_origin_dtype"
   max_call_depth: 10000
-  max_device_memory: "58GB"
-  save_graphs: False
+  max_device_memory: "55GB"
+  save_graphs: True
   save_graphs_path: "./graph"
   device_id: 0
 
