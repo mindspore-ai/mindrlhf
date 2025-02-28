@@ -3,12 +3,12 @@ import re
 from latex2sympy2_extended import NormalizationConfig
 from math_verify import LatexExtractionConfig, parse, verify
 
-def accuracy_reward(completions, solution):
+def accuracy_reward(completions, solution, **kwargs):
     """
     Reward function that checks if the completion is the same as the ground truth.
     """
     rewards = []
-    for content, sol in zip(completions, solution, **kwargs):
+    for content, sol in zip(completions, solution):
         gold_parsed = parse(
             sol,
             extraction_mode="first_match",
