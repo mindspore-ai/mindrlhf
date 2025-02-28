@@ -190,7 +190,7 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
         for i in range(steps):
             print(f"--------- epoch:{n} step:{i} ---------")
             trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
-            if n*i != 0:  # 第0次不加载
+            if i != 0 or n != 0:  # 第0次不加载
                 # 加载train权重
                 for param in grpo_with_grad.network.get_parameters(expand=True):
                     param._load()
