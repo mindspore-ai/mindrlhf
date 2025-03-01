@@ -37,14 +37,23 @@ from mindspore.parallel import set_algo_parameters
 from mindspore.parallel._cost_model_context import _set_multi_subgraphs
 from mindspore import context
 import mindspore.common.dtype as mstype
+from mindrlhf.utils import TransformParametersD2D
 
 from mindformers.tools.ckpt_transform import TransformCkpt
 
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_generate"]
+           "ckpt_transfer_for_generate", "format_time_delta", "init_reshard"]
 
+
+def format_time_delta(seconds):
+    """
+    compute time delta
+    """
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{int(hours):02}:{int(minutes):02}:{seconds:.4f}"
 
 def set_pipeline_parallel_context(ppo_config):
     """Set pipeline parallel context."""
@@ -437,3 +446,34 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
         dst_strategy="./generate_policy_strategy/",
         prefix="./generate_policy_"
     )
+
+def init_reshard(trainer):
+        # 权重倒换
+    start_time = time.time()
+    def match_func(s1, s2):
+        s1 = s1[s1.find('.')+1: ]
+        s2 = s2[s2.find('.')+1: ]
+        return s1 == s2
+
+    def match_func_policy2ref(s1, s2):
+        s1 = s1[s1.find('.')+1: ]
+        s1 = s1[s1.find('.')+1: ]
+        return s1 == s2
+
+    src_merged_stra = "../merge_strategy/train_policy_merged_strategy.ckpt"
+    dst_merged_stra = "../merge_strategy/infer_policy_merged_strategy.ckpt"
+    ref_merged_stra = "../merge_strategy/infer_ref_merged_strategy.ckpt"
+    pipeline_stages = context.get_auto_parallel_context("pipeline_stages")
+    if get_rank() in list(range(0, get_group_size(), get_group_size() // pipeline_stages)):
+        ms.merge_pipeline_strategys("../strategy/train_policy_strategy/", src_merged_stra)
+        ms.merge_pipeline_strategys("../strategy/infer_policy_strategy/", dst_merged_stra)
+        ms.merge_pipeline_strategys("../strategy/infer_ref_strategy/", ref_merged_stra)
+    ms.mint.distributed.barrier()
+    reshard_param = TransformParametersD2D(trainer.grpo_model_train, trainer.grpo_model_infer,
+                                           src_merged_stra, dst_merged_stra, match_func)
+    ms.communication.comm_func.barrier()
+    reshard_param_policy2ref = TransformParametersD2D(trainer.grpo_model_train, trainer.ref_model,
+                                                      src_merged_stra, ref_merged_stra,
+                                                      match_func=match_func_policy2ref)
+    ms.communication.comm_func.barrier()
+    return reshard_param, reshard_param_policy2ref

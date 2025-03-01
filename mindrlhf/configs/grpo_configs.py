@@ -21,12 +21,12 @@ class GRPOConfig:
     GRPO config class which defines the model size
     """
     beta: float = 0.01 # KL coefficient
-    num_generations: int = 8
+    num_generations: int = 4
     grpo_epochs: int = 2
 
     model_name: str = ''
     align_type: str = ''
-    epochs: int = 10
+    epochs: int = 3
     total_steps: int = 100000
     batch_size: int = 2
     checkpoint_interval = 10000
@@ -67,9 +67,9 @@ class GRPOConfig:
     full_batch: bool = True
     enable_alltoall: bool = False
     micro_batch_interleaved: int = 1
-    start_lr: float = 5e-7  # 1e-12
-    end_lr: float = 1e-10  # 1e-13
-    warmup_step: int = 10 # 3200
+    start_lr: float = 5e-7
+    end_lr: float = 1e-10
+    warmup_step: int = 10
     decay_steps: int = 200000
     opt_offload: bool = False
     mind_dataset_dir: str = "/path/train.mindrecord"

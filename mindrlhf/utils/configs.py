@@ -15,11 +15,14 @@
 """
 MindRLHF config
 """
+import os
 import copy
 import math
+import time
 from dataclasses import asdict, make_dataclass
 import mindspore
 import mindspore.nn as nn
+from mindspore import context
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell, MicroBatchInterleaved
 from mindspore.dataset import GeneratorDataset, MindDataset
@@ -27,12 +30,15 @@ from mindspore.dataset.transforms import TypeCast
 from mindformers.tools.register import MindFormerConfig
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers import AutoConfig
+from mindformers import LlamaConfig
 from mindrlhf.configs.ppo_configs import PPOConfig
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
+from mindrlhf.utils import transfer_from_str_to_bool, format_time_delta
+
 
 __all__ = ['combine_config', 'init_configs']
 
@@ -68,6 +74,58 @@ def combine_config(ppo_config, model_config):
     ppo_config_ = make_dataclass("PPOConfig", [(key, type(value)) for key, value in config_temp.items()])
     return ppo_config_(**config_temp)
 
+
+def init_grpo_configs(args=None):
+    """
+    init grpo configs
+    """
+    use_parallel = transfer_from_str_to_bool(use_parallel)
+
+    # init config with yaml
+    sft_config_infer = MindFormerConfig(args.sft_path_infer)
+    sft_config_infer.use_parallel = use_parallel
+    os.environ["RUN_MODE"] = sft_config_infer.run_mode
+
+    # init sft infer model
+    sft_config_infer.model.model_config.parallel_config = (
+        sft_config_infer.parallel_config
+    )
+
+    sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+    sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
+    sft_model_config_infer.model_name = "llama"
+
+    # init sft train config
+    sft_config_train = MindFormerConfig(args.sft_path_train)
+    sft_config_train.use_parallel = use_parallel
+    sft_config_train.model.model_config.parallel_config = (
+        sft_config_train.parallel_config
+    )
+    sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
+    sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+    sft_model_config_train.checkpoint_name_or_path = args.load_sft_checkpoint_train
+    sft_model_config_train.model_name = "llama"
+
+    # init grpo config
+    grpo_config = GRPOConfig()
+    grpo_config.mind_dataset_dir = args.mind_dataset_dir
+    grpo_config.save_data_file = args.save_data_file
+    grpo_config.save_ckpt_dir = args.save_ckpt_dir
+    grpo_config.align_type = "rlhf_stages"
+    grpo_config.use_parallel = use_parallel
+    grpo_config = combine_grpo_config(grpo_config, sft_model_config_infer)  # grpo_config infer 和 train 共用
+
+    # init ref model
+    ref_config = MindFormerConfig(args.sft_path_infer)
+    ref_config.use_parallel = use_parallel
+    ref_config.model.model_config.parallel_config = ref_config.parallel_config
+    ref_config.model.model_config.use_past = False
+    ref_model_config = LlamaConfig(**ref_config.model.model_config)
+    ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
+    ref_model_config.model_name = "llama"
+
+
+    return grpo_config, sft_config_infer, sft_model_config_infer, sft_model_config_train, ref_model_config
 
 def init_configs(args=None):
     """
@@ -250,7 +308,7 @@ def init_grpo_dataset(trainer):
         batch_size=grpo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num)
     return dataset
 
-def init_grpo_network_and_optimizer(trainer):
+def init_grpo_network_and_optimizer(trainer, dataset):
     '''init grpo network and optimizer'''
     sft_model_config = trainer.sft_model_config_train
     grpo_config = trainer.grpo_config
@@ -289,4 +347,26 @@ def init_grpo_network_and_optimizer(trainer):
         print("non-pipeline cell")
         grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
                                                   scale_update_cell=update_cell, enable_global_norm=True)
+    # set context
+    data = next(dataset.create_dict_iterator())
+    print("data:\n", data)
+    start_time = time.time()
+    grpo_with_grad.set_train(True)
+    trainer.grpo_model_train.grpo_model_train.policy_model.model.set_train(True)
+    stage_name = 'train'
+    context.set_auto_parallel_context(
+        strategy_ckpt_config={
+            "save_file": f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"},
+        pipeline_stages=trainer.train_pp_stage)
+    grpo_with_grad.compile(**data)
+
+    stage_name = 'other'
+    context.set_auto_parallel_context(
+        strategy_ckpt_config={
+            "save_file":
+                f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+    print(f"grpo_with_grad time: {format_time_delta(time.time() - start_time)}")
+
+    trainer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
+    trainer.ref_model.model.set_train(False)
     return grpo_with_grad
