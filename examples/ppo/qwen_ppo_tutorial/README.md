@@ -12,7 +12,7 @@
 
 ## 推理模型权重转换
 
-用户可以从[HuggingFace官方](https://huggingface.co/Qwen/Qwen2-7B-Instruct)或[魔塔社区](https://modelscope.cn/models/Qwen/Qwen2-7B)下载完整预训练权重，`vocab.json`和`merges.txt`文件也可在上述链接中下载。
+用户可以从[HuggingFace官方](https://huggingface.co/Qwen/Qwen2-7B-Instruct)或[魔搭社区](https://modelscope.cn/models/Qwen/Qwen2-7B)下载完整预训练权重，`vocab.json`和`merges.txt`文件也可在上述链接中下载。
 下载完成后，运行如下[转换脚本](https://gitee.com/mindspore/mindformers/blob/dev/research/qwen2/convert_weight.py)，将权重转换为完整的ckpt权重。
 
 ```shell
