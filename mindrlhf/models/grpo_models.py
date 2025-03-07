@@ -14,10 +14,9 @@
 # ============================================================================
 """GRPO model"""
 import numpy as np
-
-from mindspore import Tensor, ops
-import mindspore.nn as nn
 import mindspore.common.dtype as mstype
+import mindspore.nn as nn
+from mindspore import Tensor, ops
 from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
 from .base_model import BaseModel
@@ -101,7 +100,6 @@ class CausalLMHybrid(BaseModel):
             # inputs for the llm
             input_ids,
             input_position=None,
-            attention_mask=None,
             batch_valid_length=None,
             slot_mapping=None,
             # inputs for `process_logits`
@@ -128,6 +126,20 @@ class CausalLMHybrid(BaseModel):
                     slot_mapping = Tensor(np.ones(shape=tuple([bsz * seqlen])), mstype.int32)
             output_states = self.backbone(tokens, batch_valid_length=batch_valid_length,
                                           slot_mapping=slot_mapping)
+            logits_2d = self.lm_head(output_states)
+        elif self.model_type == "deepseek_infer":
+            tokens = input_ids
+            if batch_valid_length is None or slot_mapping is None:
+                bsz, seqlen = tokens.shape
+                batch_valid_length = ops.ones((bsz,), mstype.int32).reshape(-1)
+                slot_mapping = Tensor(np.ones(shape=tuple([bsz * seqlen])), mstype.int32)
+            output_states = self.backbone(tokens, batch_valid_length=batch_valid_length,
+                                          slot_mapping=slot_mapping)
+            logits_2d = self.lm_head(output_states)
+        elif self.model_type == "deepseek_training":
+            tokens = input_ids
+            # TODO: extra_loss=0.是否合理
+            output_states, _ = self.backbone(tokens, extra_loss=0.)
             logits_2d = self.lm_head(output_states)
         else:
             raise NotImplementedError("only support {}".format(" ".join(self.model_type)))

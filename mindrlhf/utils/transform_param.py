@@ -16,11 +16,11 @@
 import numpy as np
 
 import mindspore.log as logger
-from mindspore import ops
+from mindspore import ops, Tensor
 from mindspore.ops import operations as P
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
-from mindspore.parallel.shard import Layout
+from mindspore.parallel.shard import Layout, _DistributedTensorInfo
 from mindspore.parallel._parallel_serialization import _build_searched_strategy, _convert_to_list
 
 
@@ -165,7 +165,6 @@ class TransformParametersD2D:
 
     def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None,
                  offload_src=False, load_dst=False):
-        from mindspore.parallel.shard import _DistributedTensorInfo
         self._offload_src = offload_src
         self._load_dst = load_dst
         if src_strategy_path is not None:
@@ -277,3 +276,134 @@ class TransformParametersD2D:
         if src_dev_num != dst_dev_num:
             raise ValueError(f"src network device number must equal to dest network device number,"
                              f"but got src {src_dev_num}, dst {dst_dev_num}")
+
+
+class TransformParametersD2DForDSv3(TransformParametersD2D):
+    """
+    Transform parameter from source network's layout to destination network's layout. All the parameters will do
+    transformation from device to device.
+    """
+    def __init__(self, src_network, dst_network, transform_args, src_strategy_path=None, dst_strategy_path=None, match_func=None,
+                 offload_src=False, load_dst=False):
+        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func, offload_src, load_dst)
+        if not isinstance(transform_args, dict):
+            raise TypeError("transform args must be dict")
+
+        self._n_head = transform_args.get("n_head")
+        self._qk_nope_head_dim = transform_args.get("qk_nope_head_dim")
+        self._qk_rope_head_dim = transform_args.get("qk_rope_head_dim")
+        self.l2q_nope_proj = None
+        self.l2q_pe_proj = None
+        self.kv2l_k_pe = None
+        self.kv2l_latent_kv = None
+        self._src_param_name_intersection = self._preprocess_for_train_param()
+        if len(self._src_param_name_intersection) != len(self._dst_param_name_intersection):
+            raise ValueError("The length of src_param_name_intersection and dst_param_name_intersection is not equal.")
+
+    def transform(self):
+        """transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network"""
+        from mindspore.ops.function.reshard_func import _redistribute
+        for i, src_param in enumerate(self._src_param_name_intersection):
+            if src_param != "skip":
+                redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
+                redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
+                if self._offload_src:
+                    src_param._offload()
+                if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
+                    if self._load_dst:
+                        self._dst_param_name_intersection[i]._load()
+                    _pynative_executor.sync()
+                    self.assign(self._dst_param_name_intersection[i], redist_src_param)
+                    _pynative_executor.sync()
+
+    def _preprocess_for_train_param(self):
+        """
+        preprocess for train param
+        """
+        new_src_param_intersection = []
+        dev_mat = Layout((get_group_size(),), ("all_dev",))
+        from mindspore.ops.function.reshard_func import _redistribute
+        for _, src_param in enumerate(self._src_param_name_intersection):
+            tensor_map = ["None"] * len(src_param.shape)
+            standalone_layout = dev_mat(*tensor_map)
+            standalone_dtensor_info = _DistributedTensorInfo(standalone_layout)
+            keywords = [
+                "feed_forward.routed_experts.ffn.w1",
+                "feed_forward.routed_experts.ffn.w2",
+                "feed_forward.routed_experts.ffn.w3"
+            ]
+
+            # 检查 src_param.name 是否包含任意一个关键字
+            if any(keyword in src_param.name for keyword in keywords):
+                redist_param = _redistribute(src_param, standalone_dtensor_info)
+                redist_param = redist_param.transpose(0, 2, 1)
+                redist_param._dtensor_info = standalone_dtensor_info
+                new_src_param_intersection.append(redist_param)
+                continue
+            elif "attention.l2q_nope_proj.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                if self.l2q_nope_proj is None:
+                    self.l2q_nope_proj = src_param_obj
+                else:
+                    raise ValueError("l2q_nope_proj has value")
+            elif "attention.l2q_pe_proj.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                if self.l2q_pe_proj is None:
+                    self.l2q_pe_proj = src_param_obj
+                else:
+                    raise ValueError("l2q_pe_proj has value")
+            elif "attention.kv2l_k_pe.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                if self.kv2l_k_pe is None:
+                    self.kv2l_k_pe = src_param_obj
+                else:
+                    raise ValueError("kv2l_k_pe has value")
+            elif "attention.kv2l_latent_kv.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                if self.kv2l_latent_kv is None:
+                    self.kv2l_latent_kv = src_param_obj
+                else:
+                    raise ValueError("kv2l_latent_kv has value")
+            else:
+                new_src_param_intersection.append(src_param)
+                continue
+                
+            if ("attention.l2q_nope_proj.weight" in src_param.name or "attention.l2q_pe_proj.weight" in src_param.name) and self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
+                self.l2q_nope_proj = self.l2q_nope_proj.asnumpy()
+                self.l2q_pe_proj = self.l2q_pe_proj.asnumpy()
+                value_nope = self.l2q_nope_proj.reshape(self._n_head, self._qk_nope_head_dim, -1)
+                reshaped_l2q_pe_proj = self.l2q_pe_proj.reshape(
+                    self._n_head,
+                    2,
+                    self._qk_rope_head_dim // 2,
+                    -1
+                )
+                transposed_l2q_pe_proj = reshaped_l2q_pe_proj.transpose(0, 2, 1, 3)
+                value_pe = transposed_l2q_pe_proj.reshape(
+                    self._n_head,
+                    self._qk_rope_head_dim,
+                    -1
+                )
+                value_merged = np.concatenate([value_nope, value_pe], axis=1)
+                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
+                self.l2q_nope_proj = None
+                self.l2q_pe_proj = None
+            elif ("attention.kv2l_k_pe.weight" in src_param.name or "attention.kv2l_latent_kv.weight" in src_param.name) and \
+                     self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
+                # 转换为 numpy 数组
+                self.kv2l_k_pe = self.kv2l_k_pe.asnumpy()
+                self.kv2l_latent_kv = self.kv2l_latent_kv.asnumpy()
+                value_k_pe = self.kv2l_k_pe.reshape(2, self._qk_rope_head_dim // 2, -1)
+                value_k_pe = value_k_pe.transpose(1, 0, 2).reshape(-1, value_k_pe.shape[-1])
+                value_merged = np.concatenate([self.kv2l_latent_kv, value_k_pe], axis=0)
+                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
+                self.kv2l_k_pe = None
+                self.kv2l_latent_kv = None
+            else:
+                new_src_param_intersection.append("skip")
+                continue
+            value_merged = Tensor(value_merged)
+            value_merged._dtensor_info = standalone_dtensor_info
+            new_src_param_intersection.append(value_merged)
+        return new_src_param_intersection
