@@ -15,28 +15,28 @@
 """
 MindRLHF grpo trainer
 """
-import time
-import os
-from dataclasses import dataclass, asdict
-import numpy as np
-from typing import Callable
 
+import numpy as np
+import os
+import time
+from dataclasses import dataclass, asdict
+from typing import Callable
+from mindformers import logger
+from mindformers.core.callback.callback import TopkBiasBalanceCallback
+from mindformers.experimental.infer.core.utils import generate_state_dict
+from mindformers.experimental.parallel_core.pynative.utils import save_strategy_file
+from mindformers.trainer.utils import load_distributed_checkpoint
 import mindspore
+from mindspore.ops import operations as P
 import mindspore.common.dtype as mstype
 from mindspore import Tensor, context
-from mindspore.ops import operations as P
 from mindspore import communication as D
+from mindspore.communication.management import get_rank, get_group_size
 from mindspore.dataset import MindDataset
 from mindspore.mindrecord import FileWriter
-from mindspore.communication.management import get_rank, get_group_size
-
-from mindformers import logger
-from mindformers.trainer.utils import load_distributed_checkpoint
-
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer, GRPOModelTrain
 from ..utils.utils import get_valid_length_each_example
-from ..utils.strategy_utils import generate_state_dict, save_strategy_file
 
 RewardFunc = Callable[[list, list], list[float]]
 
@@ -103,7 +103,10 @@ def assign_gpu_clusters(n, dp, mp):
     return labels
 
 
-def allgather_data(batch_input, data_parallel_size, padding_length=128, pad_val=-10000):
+def allgather_data(batch_input, data_parallel_size, padding_length=128):
+    """
+    allgather_data
+    """
     lengths = []
     padded_arrays = []
     local_bs = len(batch_input)
@@ -132,6 +135,9 @@ def allgather_data(batch_input, data_parallel_size, padding_length=128, pad_val=
 
 
 def split_for_data_parallel(batch_inputs, data_parallel_size):
+    """
+    split batch_inputs for data parallel
+    """
     world_size = D.get_group_size()
     rank_id = D.get_rank()
     split_size = (batch_inputs.shape[0] // data_parallel_size)
@@ -186,7 +192,6 @@ class GRPOTrainer:
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         policy_model = CausalLMHybrid(sft_model_config_infer, self.grpo_config)
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
-        p = policy_model.parameters_dict()
         self.grpo_model_infer = GRPOModelInfer(grpo_config, policy_model)
         self.grpo_model_infer.set_train(False)
 
@@ -235,6 +240,15 @@ class GRPOTrainer:
         self.depend = P.Depend()
         self.logsoftmax_1 = P.LogSoftmax().shard(((1, 1, 1),))
         self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1, 1),))
+        # =============== TODO:需要放到公共方法里 ====================
+        if self.sft_model_config_train.model_name == "deepseek_training":
+            self.topk_bias_balance_callback = TopkBiasBalanceCallback(sft_model_config_train.moe_config.balance_via_topk_bias,
+                                                                      sft_model_config_train.moe_config.topk_bias_update_rate,
+                                                                      sft_model_config_train.num_layers,
+                                                                      sft_model_config_train.mtp_depth,
+                                                                      sft_model_config_train.moe_config.expert_num,
+                                                                      sft_model_config_train.parallel_config.micro_batch_num
+                                                                      )
 
     def load_checkpoint(self):
         """ load checkpoint """
@@ -338,8 +352,8 @@ class GRPOTrainer:
         for i in range(num_sample):
             response = outputs[i][prompt_len[i]: prompt_len[i] + self.grpo_config.max_decode_length]
             right_padding_responses[i, :len(response)] = response
-
-            left_padding_prompts[i, self.grpo_config.max_prompt_length - prompt_len[i]:] = input_ids_list[i][:prompt_len[i]]
+            start_index = self.grpo_config.max_prompt_length - prompt_len[i]
+            left_padding_prompts[i, start_index:] = input_ids_list[i][:prompt_len[i]]
 
         responses_mask = (right_padding_responses != self.grpo_config.pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
@@ -406,6 +420,7 @@ class GRPOTrainer:
         for idx in range(num_generations):
             if (not pre_run_flag) and idx != 0:
                 for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                    # pylint: disable=W0212
                     param._load()
 
             start_time = time.time()
@@ -417,11 +432,13 @@ class GRPOTrainer:
 
             if not pre_run_flag:
                 for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                    # pylint: disable=W0212
                     param._offload()
                 print("model_infer offload")
 
             if (not pre_run_flag) and idx != 0:
                 for param in self.ref_model.get_parameters(expand=True):
+                    # pylint: disable=W0212
                     param._load()
                 print("ref_model load")
 
@@ -430,11 +447,8 @@ class GRPOTrainer:
                                                            padding_length=self.grpo_config.max_decode_length)
             responses_mask_batch = allgather_data(responses_mask, self.infer_dp,
                                                   padding_length=self.grpo_config.max_decode_length)
-            left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp,
-                                                        padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
-            prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp,
-                                                padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
-
+            left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp, padding_length = padding_length)
+            prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp, padding_length = padding_length)
             right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
             responses_mask = np.array(responses_mask_batch).astype(np.int32)
             left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
@@ -484,6 +498,7 @@ class GRPOTrainer:
                                                  is_ref=False)  # [n_questions, seq_length-1]
             if not pre_run_flag:
                 for param in self.ref_model.get_parameters(expand=True):
+                    # pylint: disable=W0212
                     param._offload()
                 print("ref_model offload")
 
@@ -537,8 +552,7 @@ class GRPOTrainer:
         mean_grouped_rewards = all_rewards.mean(axis=1)  # [n_questions]
         std_grouped_rewards = all_rewards.std(axis=1, ddof=1)  # [n_questions]
         advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / (
-                std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
-        
+            std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
         print("mean_grouped_rewards: \n", mean_grouped_rewards)
 
         grpo_rl_elements = []
@@ -581,7 +595,10 @@ class GRPOTrainer:
                   flush=True)
             print(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                   .format(out[0], out[1], out[2], out[3]), flush=True)
-
+            if self.sft_model_config_train.model_name == "deepseek_training":
+                if self.topk_bias_balance_callback.update_topk_bias_flag:
+                    policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
+                    self.topk_bias_balance_callback._update_topk_bias(policy_model)
         print('train over')
 
 
