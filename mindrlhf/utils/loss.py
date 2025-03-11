@@ -1,13 +1,14 @@
-from mindspore.nn.cell import Cell
-from mindspore import nn
 import math
-from mindspore import Tensor, mint, ops
 import mindspore as ms
-from enum import Enum
 import numpy as np
+from enum import Enum
+from mindspore import Tensor, mint, ops
 from mindspore import dtype as mstype
+from mindspore import nn
+from mindspore import ops as P
+from mindspore.nn.cell import Cell
 
-__all__=['DPO_Loss']
+__all__ = ['DPO_Loss', 'CompareLoss']
 
 class FDivergenceType(Enum):
     REVERSE_KL = "reverse_kl"
@@ -205,4 +206,61 @@ class DPO_Loss(Cell):
         rejected_rewards = self.beta * (policy_rejected_logps - reference_rejected_logps)
         return logits, losses, chosen_rewards, rejected_rewards
 
+class CompareLoss(nn.Cell):
+    """
+    Calculate the compare loss for reward model.
 
+    Args:
+        config (OpParallelConfig): The parallel configure. Default `default_dpmp_config`,
+            an instance of `OpParallelConfig` with default args.
+
+    Inputs:
+        - **rewards** (Tensor) - Tensor of shape (B, S, 1). Data type must be float16 or float32. The output logits of
+          the backbone.
+
+        - **loss_mask** (Tensor) - Tensor of shape (B, S, 1). The loss mask of the rewards.
+
+        - **end_ind** (Tensor) - Tensor of shape (B, ). end index of all tensors.
+
+    Returns:
+        The corresponding loss.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        dp = config.data_parallel
+        mp = 1
+        self.gatherd = P.GatherD()
+        self.log = P.Log()
+        self.reduce_sum = P.ReduceSum(keep_dims=False)
+        self.slice = P.StridedSlice().shard(((1, 1),))
+        self.slice_ind = P.StridedSlice().shard(((1,),))
+        self.mul = P.Mul().shard(((dp, mp), (dp, mp)))
+        self.sub = P.Sub().shard(((dp, mp), (dp, mp)))
+
+    def construct(self, rewards, loss_mask, end_ind):
+        """Forward process"""
+        bs = rewards.shape[0] // 2  # a sample has two bs responses
+        seq_len = rewards.shape[-1]
+        chosen_rewards = self.slice(rewards, (0, 0), (bs, seq_len), (1, 1))
+        rejected_rewards = self.slice(rewards, (bs, 0), (2 * bs, seq_len), (1, 1))
+        end_ind_chosen = self.slice_ind(end_ind, (0,), (bs,), (1,))
+        end_ind_reject = self.slice_ind(end_ind, (bs,), (2 * bs,), (1,))
+        temp = P.Concat()((end_ind_chosen, end_ind_reject))
+        temp = temp.reshape((2, -1))
+        temp = P.Cast()(temp, mstype.float16)
+        end_ind_final, _ = P.max(temp, axis=0)
+        temp = P.Cast()(temp, mstype.float16)
+        end_ind_final = end_ind_final.reshape((-1, 1))
+        end_ind_final = P.Cast()(end_ind_final, mstype.int32)
+        loss_mask_final = loss_mask
+        c_truncated_reward = self.mul(chosen_rewards, loss_mask_final)
+        r_truncated_reward = self.mul(rejected_rewards, loss_mask_final)
+        chosen_end_scores = self.gatherd(chosen_rewards, 1, end_ind_final - 1)
+        reject_end_scores = self.gatherd(rejected_rewards, 1, end_ind_final - 1)
+        compare_len = self.reduce_sum(P.cast(loss_mask_final, mstype.float32), -1)
+        temp_loss = -self.log(P.sigmoid(self.sub(c_truncated_reward, r_truncated_reward)))
+        loss = self.reduce_sum(self.mul(temp_loss, loss_mask_final), -1) / compare_len
+        loss = loss.mean()
+        return loss, chosen_end_scores, reject_end_scores
+    
