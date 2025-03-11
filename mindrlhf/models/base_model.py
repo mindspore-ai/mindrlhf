@@ -16,7 +16,6 @@
 MindRLHF Base Model
 """
 import mindspore.nn as nn
-from mindformers.models.bloom import BloomLMHeadModel
 from mindformers import LlamaForCausalLM
 from mindformers.models.gpt2 import GPT2LMHeadModel
 from mindformers.models.pangualpha import PanguAlphaHeadModel
@@ -33,7 +32,6 @@ class BaseModel(nn.Cell):
         super(BaseModel, self).__init__()
         self._model_list = [
             "pangu",
-            "bloom",
             "gpt2",
             "llama",
             "glm4",
@@ -58,10 +56,6 @@ class BaseModel(nn.Cell):
         if self.model_type == "pangu":
             self.model = PanguAlphaHeadModel(model_config)
             self.backbone = self.model.backbone
-            self.lm_head = self.model.head
-        elif self.model_type == "bloom":
-            self.model = BloomLMHeadModel(model_config)
-            self.backbone = self.model.transformer
             self.lm_head = self.model.head
         elif self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
@@ -104,9 +98,6 @@ class BaseModel(nn.Cell):
         if self.model_type == "pangu":
             self.model = PanguAlphaHeadModel(model_config)
             self.backbone = self.model.backbone
-        elif self.model_type == "bloom":
-            self.model = BloomLMHeadModel(model_config)
-            self.backbone = self.model.transformer
         elif self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
@@ -144,9 +135,6 @@ class BaseModel(nn.Cell):
         if self.model_type == "pangu":
             self.model = PanguAlphaHeadModel(model_config)
             self.backbone = self.model.backbone
-        elif self.model_type == "bloom":
-            self.model = BloomLMHeadModel(model_config)
-            self.backbone = self.model.transformer
         elif self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone

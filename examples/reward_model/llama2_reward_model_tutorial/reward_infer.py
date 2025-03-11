@@ -13,26 +13,24 @@
 # limitations under the License.
 # ============================================================================
 """ Script for inference given text sample. """
-import os
-import json
 import argparse
+import json
 import jsonlines
-import numpy as np
-
-from mindspore import Tensor
 import mindspore.common.dtype as mstype
-from mindspore.train import Model
-from mindspore.communication.management import get_rank
-from mindspore import load_checkpoint, load_param_into_net
-
-from mindformers import BloomRewardModel
+import numpy as np
+import os
+import sys
 from mindformers import AutoConfig, AutoTokenizer
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
-from mindformers.trainer.utils import get_last_checkpoint
 from mindformers.tools import logger
 from mindformers.tools.register import MindFormerConfig
-import sys
+from mindformers.trainer.utils import get_last_checkpoint
+from mindspore import Tensor
+from mindspore import load_checkpoint, load_param_into_net
+from mindspore.communication.management import get_rank
+from mindspore.train import Model
+
 sys.path.append(os.path.abspath('../../../'))
 from mindrlhf.models.llama.llama_reward import LlamaRewardModel
 
@@ -68,10 +66,7 @@ def run(args):
     model_config = AutoConfig.from_pretrained(args.config)
     model_config.parallel_config = config.parallel_config
 
-    if config.model.arch.type == "BloomRewardModel":
-        model = BloomRewardModel(model_config)
-    elif config.model.arch.type == "LlamaRewardModel":
-        model = LlamaRewardModel(model_config)
+    model = LlamaRewardModel(model_config)
     model.set_train(False)
 
     infer_model = Model(model)
