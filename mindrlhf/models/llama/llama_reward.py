@@ -15,16 +15,17 @@
 """llama reward model"""
 
 import copy
-from mindspore import nn
 import mindspore.common.dtype as mstype
 from mindformers.models import BaseModel
+from mindformers.models.llama import LlamaModel, LlamaConfig
 from mindformers.modules.layers import Linear
+from mindformers.tools.logger import logger
 from mindformers.tools.register.register import MindFormerModuleType, MindFormerRegister
+from mindspore import nn
 from mindspore import ops as P
 from mindspore.ops import functional as F
-from mindformers.models.llama import LlamaModel, LlamaConfig
-from mindformers.core.loss import CompareLoss
-from mindformers.tools.logger import logger
+
+from mindrlhf.utils.loss import CompareLoss
 
 
 class VHead(nn.Cell):

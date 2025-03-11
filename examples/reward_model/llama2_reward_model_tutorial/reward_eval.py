@@ -13,28 +13,27 @@
 # limitations under the License.
 # ============================================================================
 """ Script for calculating accuracy on test dataset. """
-import os
 import argparse
-import numpy as np
-
-from mindspore import Tensor
 import mindspore.common.dtype as mstype
-from mindspore.train import Model
-from mindspore.communication.management import get_rank
-from mindspore import load_checkpoint, load_param_into_net
-
-from mindformers import BloomRewardModel
+import numpy as np
+import os
+import sys
 from mindformers import AutoConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
-from mindformers.trainer.utils import get_last_checkpoint
-from mindformers.tools import logger
-from mindformers.tools.register import MindFormerConfig
 from mindformers.dataset import RewardModelDataset
 from mindformers.dataset import check_dataset_config
-import sys
-sys.path.append(os.path.abspath('../../../'))
+from mindformers.tools import logger
+from mindformers.tools.register import MindFormerConfig
+from mindformers.trainer.utils import get_last_checkpoint
+from mindspore import Tensor
+from mindspore import load_checkpoint, load_param_into_net
+from mindspore.communication.management import get_rank
+from mindspore.train import Model
+
 from mindrlhf.models.llama.llama_reward import LlamaRewardModel
+
+sys.path.append(os.path.abspath('../../../'))
 
 
 def get_all_checkpoint(checkpoint_dir):
@@ -58,7 +57,7 @@ def run(args):
     if args.distributed_ckpt_path is None:
         logger.info("distributed_ckpt_path is None !!!")
         return
-    
+
     config = MindFormerConfig(args.config)
     # init context
     logger.info("..........Build Context Config..........")
@@ -70,10 +69,7 @@ def run(args):
     model_config = AutoConfig.from_pretrained(args.config)
     model_config.parallel_config = config.parallel_config
 
-    if config.model.arch.type == "BloomRewardModel":
-        model = BloomRewardModel(model_config)
-    elif config.model.arch.type == "LlamaRewardModel":
-        model = LlamaRewardModel(model_config)
+    model = LlamaRewardModel(model_config)
     model.set_train(False)
 
     batch_size = model_config.batch_size if model_config.batch_size else 1
