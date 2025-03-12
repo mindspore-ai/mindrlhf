@@ -447,8 +447,10 @@ class GRPOTrainer:
                                                            padding_length=self.grpo_config.max_decode_length)
             responses_mask_batch = allgather_data(responses_mask, self.infer_dp,
                                                   padding_length=self.grpo_config.max_decode_length)
-            left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp, padding_length = padding_length)
-            prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp, padding_length = padding_length)
+            left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp,
+                                                        padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
+            prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp,
+                                                padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
             right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
             responses_mask = np.array(responses_mask_batch).astype(np.int32)
             left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
