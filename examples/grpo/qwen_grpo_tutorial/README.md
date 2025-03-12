@@ -197,7 +197,7 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```shell
 msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=False --log_dir=./qwen2_5_one_log \
-examples/grpo/qwen_grpo_tutorial/grpo_one_stage.py \
+examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
 --sft_path_infer ./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
 --sft_path_train ./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
@@ -210,7 +210,9 @@ examples/grpo/qwen_grpo_tutorial/grpo_one_stage.py \
 --load_sft_checkpoint_infer /{path}/infer_ckpt \
 --load_sft_checkpoint_train /{path}/train_ckpt \
 --load_ref_checkpoint /{path}/ref_ckpt \
---enable_compile_cache False
+--enable_compile_cache False \
+--tensorboard_dir /{path}/tensorboard/ \
+--tensorboard_queue_size 10
 
 # 参数说明
 # msrun 参数
@@ -234,6 +236,8 @@ load_sft_checkpoint_infer:    推理模型(分布式)ckpt文件路径
 load_sft_checkpoint_train:    训练模型(分布式)ckpt文件路径
 load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
 enable_compile_cache:         是否使用编译缓存
+tensorboard_dir:              tensorboard落盘路径，仅在需要使用tensorboard记录时开启
+tensorboard_queue_size:       tensorboard缓存队列大小
 ```
 
 ### 4机32卡拉起Qwen2.5-32B
@@ -254,6 +258,16 @@ master_ip                     主机IP，一般以序列号为0的节点的IP作
 ```shell
 tail -f qwen2_5_one_log/worker_0.log
 ```
+
+如果设置了tensorboard落盘路径，执行以下命令
+
+```shell
+tensorboard --logdir /{path}/tensorboard/ --port 6006
+```
+
+并在浏览器中输入localhost:6006进行查看。tensorboard效果示例如下：
+
+![/tensorboard](https://gitee.com/mindspore/mindrlhf/blob/master/images/tensorboard.png)
 
 ## 四、开启vLLM推理功能
 

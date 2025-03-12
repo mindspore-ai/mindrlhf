@@ -15,6 +15,7 @@ datasets==2.18.0
 tiktoken
 jinja2
 jsonlines
+ruamel.yaml
 setproctitle
 safetensors
 tensorboardX

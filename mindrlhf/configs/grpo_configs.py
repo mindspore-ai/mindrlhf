@@ -47,7 +47,7 @@ class GRPOConfig:
     eps: float = 1.0e-8
     weight_decay: float = 0.01
 
-    sceduler_name: str = 'cosine_annealing'
+    scheduler_name: str = 'cosine_annealing'
     t_max: int = 100000
     eta_min: float = 5.0e-6
 
@@ -92,7 +92,7 @@ class GRPOConfig:
     only_save_strategy: bool = False
     use_parallel: bool = False
     sync_ref_model: bool = True
-    # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
+    # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`
     ref_model_sync_steps: int = 50
     ref_model_batch_size: int = 1
     performance_stats: bool = False
@@ -106,3 +106,6 @@ class GRPOConfig:
     num_scheduler_steps: int = 32
     gpu_memory_utilization: float = 0.8
     detokenize: bool = False
+
+    tensorboard_dir: str = ""
+    tensorboard_queue_size: int = 10

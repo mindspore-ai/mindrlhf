@@ -36,7 +36,7 @@ beta2: 0.95
 eps: 1.0e-8
 weight_decay: 0.01
 
-sceduler_name: 'cosine_annealing'
+scheduler_name: 'cosine_annealing'
 t_max: 100000
 eta_min: 5.0e-6
 
