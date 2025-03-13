@@ -42,9 +42,9 @@ def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_i
     for item in tqdm(raw_data):
         sample = {}
         prompt = template.format_map(
-            {"prompt": item["prompt"], "response": ""})
+            {"prompt": item["question"], "response": ""})
         response = template.format_map(
-            {"prompt": item["prompt"], "response": item["pos_resp"]}
+            {"prompt": item["question"], "response": item["answer"]}
         )
 
         prompt_dict = tokenizer(
@@ -99,8 +99,10 @@ def write_mindrecord(args):
 
     raw_data = load_json_file(args.file_path)
 
-    tokenizer = LlamaTokenizerFast(args.tokenizer_file, add_bos_token=False, add_eos_token=False)
-
+    tokenizer = LlamaTokenizerFast(
+        tokenizer_file=args.tokenizer_file, add_bos_token=False, add_eos_token=False
+    )
+    tokenizer.pad_token_id = 100001
     max_prompt_length = int(args.max_prompt_length)
     seq_length = int(args.seq_length)
     if args.pad_token_id is None:
