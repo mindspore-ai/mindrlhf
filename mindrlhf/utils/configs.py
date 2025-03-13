@@ -21,14 +21,14 @@ from dataclasses import asdict, make_dataclass
 import mindspore
 import mindspore.nn as nn
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
-from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell, MicroBatchInterleaved
+from mindspore.nn import PipelineCell, MicroBatchInterleaved
+from mindspore.nn.wrap.cell_wrapper import _VirtualDatasetCell
 from mindspore.dataset import GeneratorDataset, MindDataset
 from mindspore.dataset.transforms import TypeCast
 from mindformers.tools.register import MindFormerConfig
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers import AutoConfig
 from mindrlhf.configs.ppo_configs import PPOConfig
-from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.utils.dataset import GRPOIteratorStore
@@ -257,8 +257,8 @@ def init_grpo_network_and_optimizer(trainer):
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
         grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.grpo_model_train,
-                                                               grpo_config.micro_batch_interleaved),
-                                         sft_model_config.parallel_config.micro_batch_num)
+                                                                grpo_config.micro_batch_interleaved),
+                                          sft_model_config.parallel_config.micro_batch_num)
     else:
         print("non-pipeline cell")
         grpo_with_loss_net = trainer.grpo_model_train
@@ -283,10 +283,10 @@ def init_grpo_network_and_optimizer(trainer):
 
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
-        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                       scale_update_cell=update_cell)
+        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer,
+                                                             config=sft_model_config, scale_update_cell=update_cell)
     else:
         print("non-pipeline cell")
         grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                  scale_update_cell=update_cell, enable_global_norm=True)
+                                                        scale_update_cell=update_cell, enable_global_norm=True)
     return grpo_with_grad
