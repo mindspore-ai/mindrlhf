@@ -119,7 +119,7 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     print("trainer.sft_model_config_infer:", trainer.sft_model_config_infer)
 
     trainer.grpo_model_infer.grpo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
-    trainer.make_experience(num_generations=args.pre_num_generations, rank_id=rank_id, pre_run_flag=True)
+    trainer.make_experience(num_rollouts=1, num_generations=1, rank_id=rank_id, pre_run_flag=True)
     sample = trainer.store[0]
     trainer.store = [sample for _ in range(args.pre_store_data)]
 
@@ -184,11 +184,11 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
 
     for n in range(grpo_config.epochs):
         # do generate
-        steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
+        steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size() // grpo_config.num_rollouts
 
         for i in range(steps):
             print(f"--------- epoch:{n} step:{i} ---------")
-            trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
+            trainer.make_experience(num_rollouts=grpo_config.num_rollouts, num_generations=grpo_config.num_generations, rank_id=rank_id)
 
             if n != 0 or i != 0:
                 for param in grpo_with_grad.network.get_parameters(expand=True):
