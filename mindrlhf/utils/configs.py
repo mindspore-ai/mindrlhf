@@ -17,45 +17,53 @@ MindRLHF config
 """
 import copy
 import math
-from dataclasses import asdict, make_dataclass
 import mindspore
 import mindspore.nn as nn
-from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
-from mindspore.nn import PipelineCell, MicroBatchInterleaved
-from mindspore.nn.wrap.cell_wrapper import _VirtualDatasetCell
+from dataclasses import asdict, make_dataclass
+from mindformers import AutoConfig
+from mindformers.core.parallel_config import build_parallel_config
+from mindformers.tools.register import MindFormerConfig
 from mindspore.dataset import GeneratorDataset, MindDataset
 from mindspore.dataset.transforms import TypeCast
-from mindformers.tools.register import MindFormerConfig
-from mindformers.core.parallel_config import build_parallel_config
-from mindformers import AutoConfig
+from mindspore.nn import PipelineCell, MicroBatchInterleaved
+from mindspore.nn.wrap.cell_wrapper import _VirtualDatasetCell
+from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
+
 from mindrlhf.configs.ppo_configs import PPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
-from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.utils.dataset import GRPOIteratorStore
-from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
+from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
+from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, \
+    TrainPipelineWithLossScaleCell_GRPO
 
 __all__ = ['combine_config', 'init_configs']
 
 
-def set_weight_decay(params):
+def decay_filter(x):
+    return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
+
+def set_weight_decay(params, decay_params, other_params=None):
     """
     Set weight decay coefficient, zero for bias and layernorm, 1e-1 for rest
     """
-
-    def decay_filter(x):
-        return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
-
-    decay_params = list(filter(decay_filter, params))
-    other_params = list(filter(lambda x: not decay_filter(x), params))
-    group_params = [{
-        'params': decay_params,
-        'weight_decay': 1e-1
-    }, {
-        'params': other_params,
-        'weight_decay': 0.0
-    }, {
-        'order_params': params
-    }]
+    if other_params:
+        group_params = [{
+            'params': decay_params,
+            'weight_decay': 1e-1
+        }, {
+            'params': other_params,
+            'weight_decay': 0.0
+        }, {
+            'order_params': params
+        }]
+    else:
+        group_params = [{
+            'params': decay_params,
+            'weight_decay': 1e-1
+        }, {
+            'order_params': params
+        }]
+        return group_params
     return group_params
 
 
@@ -147,7 +155,9 @@ def init_network_and_optimizer(trainer):
     lr = LearningRate(learning_rate=ppo_config.start_lr, end_learning_rate=ppo_config.end_lr,
                       warmup_steps=ppo_config.warmup_step, decay_steps=ppo_config.decay_steps)
     params = ppo_with_loss.trainable_params()
-    group_params = set_weight_decay(params)
+    decay_params = list(filter(decay_filter, params))
+    other_params = list(filter(lambda x: not decay_filter(x), params))
+    group_params = set_weight_decay(params, decay_params, other_params)
 
     if ppo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)
@@ -266,7 +276,8 @@ def init_grpo_network_and_optimizer(trainer):
     lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
                       warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
     params = grpo_with_loss.trainable_params()
-    group_params = set_weight_decay(params)
+    decay_params = list(filter(decay_filter, params))
+    group_params = set_weight_decay(params, decay_params)
 
     if grpo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)
