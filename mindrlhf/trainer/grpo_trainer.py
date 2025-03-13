@@ -385,7 +385,7 @@ class GRPOTrainer:
 
         return logprobs  # [bs, seq_len-1]
 
-    def make_experience(self, num_generations: int = 16, rank_id: int = 0, pre_run_flag=False):
+    def make_experience(self, num_rollouts: int = 1, num_generations: int = 16, rank_id: int = 0, pre_run_flag=False):
         """
         make experience
         """
@@ -396,184 +396,187 @@ class GRPOTrainer:
 
         self.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
         self.ref_model.model.set_train(False)
+        grpo_rl_elements = []
+        all_mean_grouped_rewards = []
+        all_elements_compeltion_len = []
 
-        batch = self.get_batch()
+        for rollout in range(num_rollouts):
 
-        prompt_tensors_full = Tensor(batch[0], mstype.int32)
-        prompt_tensors = split_for_data_parallel(prompt_tensors_full, self.infer_dp)
-        solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
-        solution_ids = remove_right_padding(solution_ids, padding_token=self.grpo_config.pad_token_id)
-        solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
-        for i in range(len(solution)):
-            solution[i] = "$" + solution[i] + "$"
-        reward_kwargs = {"solution": solution}
-        print("solution: ", solution)
+            batch = self.get_batch()
 
-        n_questions = batch[0].shape[0]
-        all_rewards = np.zeros((num_generations, n_questions), dtype=np.float32)
-        all_prompt_completion_ids = np.zeros((num_generations, n_questions, self.grpo_config.seq_length),
+            prompt_tensors_full = Tensor(batch[0], mstype.int32)
+            prompt_tensors = split_for_data_parallel(prompt_tensors_full, self.infer_dp)
+            solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
+            solution_ids = remove_right_padding(solution_ids, padding_token=self.grpo_config.pad_token_id)
+            solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
+            for i in range(len(solution)):
+                solution[i] = "$" + solution[i] + "$"
+            reward_kwargs = {"solution": solution}
+            print("solution: ", solution)
+
+            n_questions = batch[0].shape[0]
+            all_rewards = np.zeros((num_generations, n_questions), dtype=np.float32)
+            all_prompt_completion_ids = np.zeros((num_generations, n_questions, self.grpo_config.seq_length),
                                              dtype=np.int32)
-        all_prompts_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
-        all_responses_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
-        all_ref_per_token_logps = np.zeros((num_generations, n_questions, self.grpo_config.seq_length - 1),
+            all_prompts_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
+            all_responses_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
+            all_ref_per_token_logps = np.zeros((num_generations, n_questions, self.grpo_config.seq_length - 1),
                                            dtype=np.float32)
-        for idx in range(num_generations):
-            if (not pre_run_flag) and idx != 0:
-                for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                    # pylint: disable=W0212
-                    param._load()
+            for idx in range(num_generations):
+                if (not pre_run_flag):
+                    if idx != 0 or (idx == 0 and rollout > 0):
+                        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                            param._load()
 
-            start_time = time.time()
-            print("generation start at {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-            stage_name = 'infer'
-            context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
-            right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = self.generate(prompt_tensors)
+                start_time = time.time()
+                print("generation start at {}-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
+                stage_name = 'infer'
+                context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
+                right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = self.generate(prompt_tensors)
 
-            if not pre_run_flag:
-                for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                    # pylint: disable=W0212
-                    param._offload()
+                if not pre_run_flag:
+                    for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                        param._offload()
                 print("model_infer offload")
 
-            if (not pre_run_flag) and idx != 0:
-                for param in self.ref_model.get_parameters(expand=True):
-                    # pylint: disable=W0212
-                    param._load()
-                print("ref_model load")
+                if (not pre_run_flag):
+                    if idx != 0 or (idx == 0 and rollout > 0):
+                        for param in self.ref_model.get_parameters(expand=True):
+                            param._load()
+                        print("ref_model load")
 
             # allgather data
-            right_padding_responses_batch = allgather_data(right_padding_responses, self.infer_dp,
+                right_padding_responses_batch = allgather_data(right_padding_responses, self.infer_dp,
                                                            padding_length=self.grpo_config.max_decode_length)
-            responses_mask_batch = allgather_data(responses_mask, self.infer_dp,
+                responses_mask_batch = allgather_data(responses_mask, self.infer_dp,
                                                   padding_length=self.grpo_config.max_decode_length)
-            left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp,
+                left_padding_prompts_batch = allgather_data(left_padding_prompts, self.infer_dp,
                                                         padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
-            prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp,
+                prompts_mask_batch = allgather_data(prompts_mask, self.infer_dp,
                                                 padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
-            right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
-            responses_mask = np.array(responses_mask_batch).astype(np.int32)
-            left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
-            prompts_mask = np.array(prompts_mask_batch).astype(np.int32)
+                right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
+                responses_mask = np.array(responses_mask_batch).astype(np.int32)
+                left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
+                prompts_mask = np.array(prompts_mask_batch).astype(np.int32)
 
-            static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
-            save_strategy_file(static_dict, f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
-            stage_name = 'other'
-            context.set_auto_parallel_context(
-                strategy_ckpt_config={
-                    "save_file":
-                        f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-            context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
+                static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
+                save_strategy_file(static_dict, f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
+                stage_name = 'other'
+                context.set_auto_parallel_context(
+                    strategy_ckpt_config={
+                        "save_file":
+                            f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
-            is_eos = right_padding_responses == self.tokenizer.eos_token_id
-            eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
-            eos_idx[is_eos.any(axis=1)] = np.argmax(is_eos.astype(int), axis=1)[is_eos.any(axis=1)]
-            sequence_indices = np.arange(is_eos.shape[1])
-            responses_eos_mask = (sequence_indices <= eos_idx[:, None]).astype(int)
-            responses_mask *= responses_eos_mask
+                is_eos = right_padding_responses == self.tokenizer.eos_token_id
+                eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
+                eos_idx[is_eos.any(axis=1)] = np.argmax(is_eos.astype(int), axis=1)[is_eos.any(axis=1)]
+                sequence_indices = np.arange(is_eos.shape[1])
+                responses_eos_mask = (sequence_indices <= eos_idx[:, None]).astype(int)
+                responses_mask *= responses_eos_mask
 
-            end_time = time.time()
-            print("generate end at {}, elapsed time {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
+                end_time = time.time()
+                print("generate end at {}, elapsed time {} s-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
 
-            prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
+                prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
                                                    axis=1)  # [n_questions, seq_length]
-            prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)),
+                prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)),
                                           axis=1)  # [n_questions, seq_length]
-            responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask),
+                responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask),
                                             axis=1)  # [n_questions, seq_length]
-            attention_mask = prompts_mask + responses_mask  # [n_questions, seq_length]
+                attention_mask = prompts_mask + responses_mask  # [n_questions, seq_length]
 
-            start_time = time.time()
-            print("reference model start at {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-            prompt_completion_ids_tensor = Tensor(prompt_completion_ids,
+                start_time = time.time()
+                print("reference model start at {}-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
+                prompt_completion_ids_tensor = Tensor(prompt_completion_ids,
                                                   dtype=mindspore.int32)  # [n_questions, seq_length]
-            attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)  # [n_questions, seq_length]
-            stage_name = 'infer'
-            context.set_auto_parallel_context(
-                strategy_ckpt_config={
-                    "save_file":
-                        f"../strategy/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
-            ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor, attention_mask_tensor,
+                attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)  # [n_questions, seq_length]
+                stage_name = 'infer'
+                context.set_auto_parallel_context(
+                    strategy_ckpt_config={
+                        "save_file":
+                            f"../strategy/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
+                ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor, attention_mask_tensor,
                                                  samples=prompt_completion_ids_tensor,
                                                  is_ref=False)  # [n_questions, seq_length-1]
-            if not pre_run_flag:
-                for param in self.ref_model.get_parameters(expand=True):
-                    # pylint: disable=W0212
-                    param._offload()
-                print("ref_model offload")
+                if not pre_run_flag:
+                    for param in self.ref_model.get_parameters(expand=True):
+                        param._offload()
+                    print("ref_model offload")
 
-            stage_name = 'other'
-            context.set_auto_parallel_context(
-                strategy_ckpt_config={
-                    "save_file":
-                        f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-            end_time = time.time()
-            print("reference model end at {}, elapsed time {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
+                stage_name = 'other'
+                context.set_auto_parallel_context(
+                    strategy_ckpt_config={
+                        "save_file":
+                            f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                end_time = time.time()
+                print("reference model end at {}, elapsed time {} s-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
 
-            start_time = time.time()
-            print("calculate reward start at {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
-            no_padding_prompts = remove_left_padding(left_padding_prompts, padding_token=self.grpo_config.pad_token_id)
-            no_padding_responses = remove_right_padding(right_padding_responses,
+                start_time = time.time()
+                print("calculate reward start at {}-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(start_time))), flush=True)
+                no_padding_prompts = remove_left_padding(left_padding_prompts, padding_token=self.grpo_config.pad_token_id)
+                no_padding_responses = remove_right_padding(right_padding_responses,
                                                         padding_token=self.grpo_config.pad_token_id)
-            prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
-            completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
+                prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
+                completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
 
-            print("prompts: \n", prompts)
-            print("completions: \n", completions)
-            mean_len = np.array([len(com) for com in completions]).mean()
-            print("mean completions.length: \n", mean_len)
+                print("prompts: \n", prompts)
+                print("completions: \n", completions)
+                all_elements_compeltion_len.extend([len(com) for com in completions])
 
-            rewards_per_func = np.zeros((n_questions, len(self.reward_funcs)), dtype=np.float32)
-            for i, reward_func in enumerate(self.reward_funcs):
-                # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-                output_reward_func = reward_func(prompts=prompts, completions=completions,
+                rewards_per_func = np.zeros((n_questions, len(self.reward_funcs)), dtype=np.float32)
+                for i, reward_func in enumerate(self.reward_funcs):
+                    # Repeat all input columns (but "prompt" and "completion") to match the number of generations
+                    output_reward_func = reward_func(prompts=prompts, completions=completions,
                                                  **reward_kwargs)  # [n_questions]
-                rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)  # [n_questions]
-            rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
-            end_time = time.time()
-            print("calculate reward end at {}, elapsed time {}-------------------------------".format(
-                time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
+                    rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)  # [n_questions]
+                rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
+                end_time = time.time()
+                print("calculate reward end at {}, elapsed time {} s-------------------------------".format(
+                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time), flush=True)
 
-            all_rewards[idx, :] = np.array(rewards, dtype=np.float32)
-            all_prompt_completion_ids[idx, :, :] = prompt_completion_ids
-            all_prompts_mask[idx, :, :] = prompts_mask
-            all_responses_mask[idx, :, :] = responses_mask
-            all_ref_per_token_logps[idx, :, :] = ref_per_token_logps
+                all_rewards[idx, :] = np.array(rewards, dtype=np.float32)
+                all_prompt_completion_ids[idx, :, :] = prompt_completion_ids
+                all_prompts_mask[idx, :, :] = prompts_mask
+                all_responses_mask[idx, :, :] = responses_mask
+                all_ref_per_token_logps[idx, :, :] = ref_per_token_logps
 
-        all_rewards = all_rewards.transpose((1, 0))  # [n_questions, num_generations]
-        all_prompt_completion_ids = all_prompt_completion_ids.transpose(
-            (1, 0, 2))  # [n_questions, num_generations, seq_length]
-        all_prompts_mask = all_prompts_mask.transpose((1, 0, 2))  # [n_questions, num_generations, seq_length]
-        all_responses_mask = all_responses_mask.transpose((1, 0, 2))  # [n_questions, num_generations, seq_length]
-        all_ref_per_token_logps = all_ref_per_token_logps.transpose(
-            (1, 0, 2))  # [n_questions, num_generations, seq_length-1]
-        mean_grouped_rewards = all_rewards.mean(axis=1)  # [n_questions]
-        std_grouped_rewards = all_rewards.std(axis=1, ddof=1)  # [n_questions]
-        advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / (
-            std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
-        print("mean_grouped_rewards: \n", mean_grouped_rewards)
+            all_rewards = all_rewards.transpose((1, 0))  # [n_questions, num_generations]
+            all_prompt_completion_ids = all_prompt_completion_ids.transpose(
+                (1, 0, 2))  # [n_questions, num_generations, seq_length]
+            all_prompts_mask = all_prompts_mask.transpose((1, 0, 2))  # [n_questions, num_generations, seq_length]
+            all_responses_mask = all_responses_mask.transpose((1, 0, 2))  # [n_questions, num_generations, seq_length]
+            all_ref_per_token_logps = all_ref_per_token_logps.transpose(
+                (1, 0, 2))  # [n_questions, num_generations, seq_length-1]
+            mean_grouped_rewards = all_rewards.mean(axis=1)  # [n_questions]
+            std_grouped_rewards = all_rewards.std(axis=1, ddof=1)  # [n_questions]
+            advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / (
+                std_grouped_rewards[:, np.newaxis] + 1e-4)  # [n_questions, num_generations]
+            all_mean_grouped_rewards.extend((mean_grouped_rewards.tolist()))
 
-        grpo_rl_elements = []
-        for i in range(n_questions):
-            for j in range(num_generations):
-                grpodata = GRPOData(
-                    prompt_completion_ids=all_prompt_completion_ids[i, j].astype(np.int32),
-                    prompts_mask=all_prompts_mask[i, j].astype(np.int32),
-                    responses_mask=all_responses_mask[i, j].astype(np.int32),
-                    ref_per_token_logps=all_ref_per_token_logps[i, j].astype(np.float32),
-                    advantages=advantages[i, j:j + 1].astype(np.float32)
-                )
-                grpo_rl_elements.append(grpodata)
+            for i in range(n_questions):
+                for j in range(num_generations):
+                    grpodata = GRPOData(
+                        prompt_completion_ids=all_prompt_completion_ids[i, j].astype(np.int32),
+                        prompts_mask=all_prompts_mask[i, j].astype(np.int32),
+                        responses_mask=all_responses_mask[i, j].astype(np.int32),
+                        ref_per_token_logps=all_ref_per_token_logps[i, j].astype(np.float32),
+                        advantages=advantages[i, j:j + 1].astype(np.float32)
+                    )
+                    grpo_rl_elements.append(grpodata)
         print(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
+        print(f"all_elements_compeltion_len mean: {np.mean(all_elements_compeltion_len)}")
+        
         self.push_to_store(grpo_rl_elements)
-
-        print("Avg scores:\n", np.mean(np.array(mean_grouped_rewards)), flush=True)
+        print("all_mean_grouped_rewards: ", all_mean_grouped_rewards)
+        print("Avg scores: ", np.mean(np.array(all_mean_grouped_rewards)), flush=True)
         end_time = time.time()
-        print("Make experience, end at {}, elapsed time {} \n------------------------------- ".format(
+        print("Make experience, end at {}, elapsed time {} s------------------------------- ".format(
             time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time), flush=True)
         if self.grpo_config.save_data_file:
             if rank_id % 8 == 0:
@@ -592,7 +595,7 @@ class GRPOTrainer:
             ep_begin_time = time.time()
             out = sink_process()
             end_time = time.time()
-            print("steps {}, end at {}, elapsed time {} \n------------------------------- "
+            print("steps {}, end at {}, elapsed time {} s\n------------------------------- "
                   .format(batch + 1, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time),
                   flush=True)
             print(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"

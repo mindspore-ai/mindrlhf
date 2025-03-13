@@ -21,7 +21,7 @@ class GRPOConfig:
     GRPO config class which defines the model size
     """
     beta: float = 0.01 # KL coefficient
-    num_generations: int = 2
+    num_generations: int = 8
     grpo_epochs: int = 2
 
     model_name: str = ''
@@ -43,8 +43,8 @@ class GRPOConfig:
     t_max: int = 100000
     eta_min: float = 5.0e-6
 
-    num_rollouts: int = 8
-    chunk_size: int = 1
+    num_rollouts: int = 4
+    chunk_size: int = 2
     ppo_epochs: int = 1
     init_kl_coef: float = 0.1
     kl_coef: float = 0.02
