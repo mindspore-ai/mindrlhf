@@ -16,20 +16,23 @@
     run grpo one stage
 """
 
-import time
-import os
 import argparse
-
 import mindspore as ms
+import os
+import sys
+import time
+from mindformers import LlamaConfig
+from mindformers import MindFormerConfig
+from mindformers.core.context import build_context
+from mindformers.core.parallel_config import build_parallel_config
 from mindspore import context, ops
 from mindspore.communication.management import get_rank, get_group_size
 
-from mindformers import MindFormerConfig
-from mindformers import LlamaConfig
-from mindformers.core.context import build_context
-from mindformers.core.parallel_config import build_parallel_config
+if os.environ.get("MINDFORMERS_PATH") is None:
+    raise ValueError("MINDFORMERS_PATH is not set")
+os.environ["REGISTER_PATH"] = os.environ["MINDFORMERS_PATH"] + "research/deepseek3"
+sys.path.append(os.environ["REGISTER_PATH"])
 from mindrlhf.utils import TransformParametersD2D
-
 from mindrlhf.trainer.grpo_trainer import GRPOTrainer
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.configs import (

@@ -21,7 +21,7 @@ class GRPOConfig:
     GRPO config class which defines the model size
     """
     beta: float = 0.01 # KL coefficient
-    num_generations: int = 2
+    num_generations: int = 8
     grpo_epochs: int = 2
 
     model_name: str = ''
