@@ -201,3 +201,9 @@ enable_compile_cache:         是否使用编译缓存
 ```shell
 tail -f qwen2_5_one_log/worker_0.log
 ```
+
+## 四、训练收敛曲线
+
+基于Qwen/Qwen2.5-7B模型，使用gsm8k数据集，训练过程中主要配置项设`num_rollouts=8`，`chunk_size=2`，`lr=9.0e-6`，跑出收敛曲线如下：
+
+![grpo_converge](https://gitee.com/mindspore/mindrlhf/tree/master/images/grpo_converge.png)
