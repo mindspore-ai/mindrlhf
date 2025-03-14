@@ -17,12 +17,13 @@ MindRLHF config
 """
 import copy
 import math
-import mindspore
-import mindspore.nn as nn
 from dataclasses import asdict, make_dataclass
+
 from mindformers import AutoConfig
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.tools.register import MindFormerConfig
+import mindspore
+import mindspore.nn as nn
 from mindspore.dataset import GeneratorDataset, MindDataset
 from mindspore.dataset.transforms import TypeCast
 from mindspore.nn import PipelineCell, MicroBatchInterleaved
@@ -39,14 +40,19 @@ from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossSca
 __all__ = ['combine_config', 'init_configs']
 
 
-def decay_filter(x):
-    return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
 
-def set_weight_decay(params, decay_params, other_params=None):
+
+def set_weight_decay(params, is_use_other_params=True):
     """
     Set weight decay coefficient, zero for bias and layernorm, 1e-1 for rest
     """
-    if other_params:
+
+    def decay_filter(x):
+        return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
+
+    decay_params = list(filter(decay_filter, params))
+    other_params = list(filter(lambda x: not decay_filter(x), params))
+    if is_use_other_params:
         group_params = [{
             'params': decay_params,
             'weight_decay': 1e-1
@@ -57,13 +63,13 @@ def set_weight_decay(params, decay_params, other_params=None):
             'order_params': params
         }]
     else:
+        # use for deepseek
         group_params = [{
             'params': decay_params,
             'weight_decay': 1e-1
         }, {
             'order_params': params
         }]
-        return group_params
     return group_params
 
 
@@ -155,9 +161,7 @@ def init_network_and_optimizer(trainer):
     lr = LearningRate(learning_rate=ppo_config.start_lr, end_learning_rate=ppo_config.end_lr,
                       warmup_steps=ppo_config.warmup_step, decay_steps=ppo_config.decay_steps)
     params = ppo_with_loss.trainable_params()
-    decay_params = list(filter(decay_filter, params))
-    other_params = list(filter(lambda x: not decay_filter(x), params))
-    group_params = set_weight_decay(params, decay_params, other_params)
+    group_params = set_weight_decay(params)
 
     if ppo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)
@@ -276,8 +280,10 @@ def init_grpo_network_and_optimizer(trainer):
     lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
                       warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
     params = grpo_with_loss.trainable_params()
-    decay_params = list(filter(decay_filter, params))
-    group_params = set_weight_decay(params, decay_params)
+    if trainer.sft_model_config_train.model_name == "deepseek_training":
+        group_params = set_weight_decay(params, is_use_other_params=False)
+    else:
+        group_params = set_weight_decay(params)
 
     if grpo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)

@@ -40,12 +40,12 @@ cd /{path}/mindrlhf
 
 ```shell
 python examples/grpo/deepseekv3_grpo_tutorial/rlhf_data.py \
---tokenizer_path /{path}/tokenizer.json \
+--tokenizer_file /{path}/tokenizer.json \
 --file_path /{path}/train.jsonl/ \
 --output_path /{path}/gsm8k_train.mindrecord
 
 # 参数说明
-tokenizer_path:       deepseek模型对应的tokenizer文件tokenizer.json路径
+tokenizer_file:       deepseek模型对应的tokenizer文件tokenizer.json路径
 file_path:        GSM8K Train数据集train.jsonl文件路径
 output_path:      输出.mindrecord文件路径
 ```
