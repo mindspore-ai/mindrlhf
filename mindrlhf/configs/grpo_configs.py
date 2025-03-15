@@ -44,7 +44,7 @@ class GRPOConfig:
     eta_min: float = 5.0e-6
 
     num_rollouts: int = 4
-    chunk_size: int = 2
+    chunk_size: int = 1
     ppo_epochs: int = 1
     init_kl_coef: float = 0.1
     kl_coef: float = 0.02
