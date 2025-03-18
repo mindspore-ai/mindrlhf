@@ -1,0 +1,7 @@
+resource_pool:
+  global_pool_1:
+    nproc_list: [1, 1]
+    role_list: [Actor, RefPolicy]
+  global_pool_2:
+    nproc_list: [2]
+    role_list: [Critic]
