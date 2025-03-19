@@ -404,8 +404,8 @@ class SPMDGRPOTrainer:
         """
         第一次执行前, load ckpt后参数在host上, 在网络第一次执行时会将参数自动加载到device上, 不需要手动load/offload
         """
-        for n in range(1):
-            for i in range(2):
+        for n in range(self.grpo_config.epochs):
+            for i in range(self.step_num):
                 logger.info(f"epoch: {n}, step: {i}")
                 self._make_experience(num_generations=self.grpo_config.num_generations)
                 self.train.load_optimizer()
