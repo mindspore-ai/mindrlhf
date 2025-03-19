@@ -42,47 +42,46 @@ class Role(Enum):
         raise ValueError(f"Invalid role name or value: {s}")
 
 
-class RoleList():
-    """Model role list. Some models could be depolyed to same resource pool"""
-    def __init__(self, role_list: list[Role]):
-        self.role_list = role_list
-
-
 class RayResourcePool():
     """Resource pool of ray."""
     def __init__(self, pool_id: str, nproc_list: list[int], detached=False):
         self.pool_id = pool_id
         self.nproc_list = nproc_list
         self.detached = detached
-        self.pgs = None
+        self.pgs = []
         self.world_size = sum(nproc_list)
     
     def create_placement_groups(self, strategy="STRICT_PACK"):
-        if self.pgs is not None:
+        if self.pgs:
             print("placement_groups have already been created, don't create again....", flush=True)
             return self.pgs
-        pg_name_prefix = f"{self.pool_id}_group_{'_'.join([str(count) for count in self.nproc_list])}:"
-        pg_scheme = [[]] * len(self.nproc_list)
-        for i, process_count in enumerate(self.nproc_list):
-            pg_scheme[i].append({"CPU": 1}) # for scheduler
-            pg_scheme[i].extend([{"CPU": 1, "NPU": 1} for _ in range(process_count)])
 
+        pg_name_prefix = f"{self.pool_id}_pg_{'_'.join([str(count) for count in self.nproc_list])}:"
         lifetime = 'detached' if self.detached else None
 
-        pgs = [
-            placement_group(bundles=bundles, strategy=strategy, name=pg_name_prefix + str(idx), lifetime=lifetime)
-            for idx, bundles in enumerate(pg_scheme)
-        ]
+        # For each node(each element of nproc_list), assign a placement group for this node:
+        # That is: 
+        # 1. One resource pool has multiple placement groups(multiple nodes).
+        # 2. One placement group has multiple bundles.
+        # 3. Each node has one placement group.
+        for node_rank, proc_num in enumerate(self.nproc_list):
+            one_node_bundles = []
+            one_node_bundles.append({"CPU": 1})
+            one_node_bundles.extend([{"CPU": 1, "NPU": 1} for _ in range(proc_num)])
 
-        ray.get([pg.ready() for pg in pgs])
-        self.pgs = pgs
+            one_node_pg = placement_group(bundles=one_node_bundles, strategy=strategy,
+                                          name=pg_name_prefix + str(node_rank), lifetime=lifetime)
+            self.pgs.append(one_node_pg)
+
+
+        ray.get([pg.ready() for pg in self.pgs])
         return self.pgs
 
     def get_placement_groups(self):
-        if self.pgs is None:
+        if self.pgs:
             print("placement_groups are not created, start creating placement groups....", flush=True)
             self.create_placement_groups()
-        
+
         return self.pgs
 
     
@@ -113,6 +112,7 @@ class ResourcePoolManager:
         Role.Critic: 'glabal_pool_2',
     }
     """
+    # TODO ZPaC: update cfg_path to a dict.
     def __init__(self, cfg_path):
         # dict[str, list[int]]
         self.pool_id_to_nproc_list = {}
@@ -137,9 +137,13 @@ class ResourcePoolManager:
                 self.role_to_pool_id[Role.from_string(role)] = pool_id
  
     def create_resource_pool(self):
-        """Create resource pool for specified c"""
+        """
+        Create resource pool according to config.
+        Ray placement groups will be created in this method.
+        """
         for pool_id, nproc_list in self.pool_id_to_nproc_list.items():
             resource_pool = RayResourcePool(pool_id=pool_id, nproc_list=nproc_list)
+            resource_pool.create_placement_groups()
             self.pool_id_to_resoure_pool[pool_id] = resource_pool
 
     def get_resource_pool(self, role: Role):
