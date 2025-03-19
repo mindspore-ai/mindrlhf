@@ -59,6 +59,7 @@ class TrainWorker(Worker):
         sft_config_train.model.model_config.parallel_config = (
             sft_config_train.parallel_config
         )
+        sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
         sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
         sft_model_config_train.checkpoint_name_or_path = args.load_sft_checkpoint_train
         sft_model_config_train.model_name = "llama"
@@ -274,7 +275,6 @@ class TrainWorker(Worker):
 
     def save_checkpoint(self, rank_id=0, steps=0):
         """ save checkpoint """
-        return
         if self.grpo_config.save_ckpt_dir:
             logger.info("Save checkpoints in {}".format(self.grpo_config.save_ckpt_dir))
             train_save_dir = os.path.join(self.grpo_config.save_ckpt_dir, 'train', f"rank_{rank_id}")

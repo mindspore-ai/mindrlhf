@@ -22,8 +22,6 @@ from mindformers.models.gpt2 import GPT2LMHeadModel
 from mindformers.models.pangualpha import PanguAlphaHeadModel
 from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
 from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
-from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
-from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
 
 
 class BaseModel(nn.Cell):
@@ -79,10 +77,12 @@ class BaseModel(nn.Cell):
             self.backbone = self.model.transformer
             self.lm_head = self.model.transformer.output_layer
         elif self.model_type == "deepseek_infer":
+            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
             self.model = InferenceDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
         elif self.model_type == "deepseek_training":
+            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
             self.model = TrainingDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
@@ -120,9 +120,11 @@ class BaseModel(nn.Cell):
             self.model = ChatGLM2ForConditionalGeneration(model_config)
             self.backbone = self.model.transformer
         elif self.model_type == "deepseek_infer":
+            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
             self.model = InferenceDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
         elif self.model_type == "deepseek_training":
+            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
             self.model = TrainingDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
@@ -160,9 +162,11 @@ class BaseModel(nn.Cell):
             self.model = ChatGLM2ForConditionalGeneration(model_config)
             self.backbone = self.model.transformer
         elif self.model_type == "deepseek_infer":
+            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
             self.model = InferenceDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
         elif self.model_type == "deepseek_training":
+            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
             self.model = TrainingDeepseekV3ForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head

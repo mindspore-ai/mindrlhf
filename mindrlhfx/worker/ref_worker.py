@@ -73,7 +73,8 @@ class RefWorker(Worker):
                     "save_file":
                         f"../../strategy/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
 
-        ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor, attention_mask_tensor, samples=samples)
+        ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,
+                                             attention_mask_tensor, samples=samples, is_ref=False)
 
         if save_strategy:
             stage_name = 'other'
