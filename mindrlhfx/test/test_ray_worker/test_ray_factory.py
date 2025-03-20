@@ -1,4 +1,4 @@
-from mindrlhfx.ray_wrapper import RayWorkerFactory, RayWorker
+from mindrlhfx.ray.ray_wrapper import RayWorkerFactory, WorkerGroup
 
 def test_ray_worker_factory():
     class WorkerA():
@@ -14,15 +14,15 @@ def test_ray_worker_factory():
             return "bar"
     
     worker_dict = {
-        "A": WorkerA(),
-        "B": WorkerB()
+        "A": WorkerA,
+        "B": WorkerB
     }
     factory = RayWorkerFactory()
-    ray_workers = factory._spawn_worker(worker_dict)
-    print("ray workers: ", ray_workers, flush=True)
-    assert isinstance(ray_workers["A"], RayWorker)
-    assert isinstance(ray_workers["B"], RayWorker)
-    assert ray_workers["A"].foo() == "foo"
-    assert ray_workers["B"].bar() == "bar"
+    ray_worker_groups = factory.spawn_colocated_workers("pool", [4], worker_dict)
+    print("ray workers: ", ray_worker_groups, flush=True)
+    assert isinstance(ray_worker_groups["A"], WorkerGroup)
+    assert isinstance(ray_worker_groups["B"], WorkerGroup)
+    assert ray_worker_groups["A"].foo() == ["foo", "foo", "foo", "foo"]
+    assert ray_worker_groups["B"].bar() == ["bar", "bar", "bar", "bar"]
 
 test_ray_worker_factory()
