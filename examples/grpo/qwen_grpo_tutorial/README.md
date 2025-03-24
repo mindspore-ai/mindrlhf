@@ -13,19 +13,20 @@ GRPO（Group Relative Policy Optimization）是针对数学逻辑推理任务提
 模型权重下载完成后，需要转为MindSpore使用的.ckpt文件。首先进入MindFormers路径
 
 ```shell
-cd /{path}/mindformers
+cd /{path}/mindformers/research/qwen2_5
 ```
 
 并执行以下脚本：
 
 ```shell
-python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16
+python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml 
 
 # 参数说明
 model:       模型名称
 input_path:  下载HuggingFace权重的文件夹路径
 output_path: 转换后的MindSpore权重文件保存路径
 dtype:       转换权重的精度
+config_path: 模型配置文件地址
 ```
 
 脚本会将完整的.ckpt格式模型权重保存在`{path}/MS_CKPT_NAME.ckpt`路径下。
