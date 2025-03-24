@@ -15,7 +15,8 @@
 # python
 import time
 import numpy as np
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
+from typing import List, Dict
 
 # mindspore
 import mindspore
@@ -33,7 +34,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward
 from mindrlhf.configs.grpo_configs import GRPOConfig
-from mindrlhf.utils import transfer_from_str_to_bool
+from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 # mindrlhf
@@ -76,7 +77,7 @@ class GRPOTrainer:
         logger.info("GRPOTrainer: _init_grpo_configs {args} in main task")
         use_parallel = transfer_from_str_to_bool(args.use_parallel)
         # init grpo config
-        grpo_config = GRPOConfig()
+        grpo_config = yaml_to_dataclass(args.config, GRPOConfig)
         grpo_config.mind_dataset_dir = args.mind_dataset_dir
         grpo_config.save_data_file = args.save_data_file
         grpo_config.save_ckpt_dir = args.save_ckpt_dir
