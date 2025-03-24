@@ -225,7 +225,62 @@ enable_compile_cache:         是否使用编译缓存
 tail -f qwen2_5_one_log/worker_0.log
 ```
 
-## 四、训练收敛曲线
+## 四、开启vLLM推理功能
+
+在第三部分的基础上，根据该网址下载安装vllm及vllm_mindspore相关插件：
+https://gitee.com/mindspore/vllm-mindspore/wikis/Getting%20Started/Installation
+
+设置以下环境变量：
+
+```shell
+export vLLM_MODEL_BACKEND=MindFormers
+export vLLM_MODEL_MEMORY_USE_GB=40
+export MINDFORMERS_MODEL_CONFIG=/path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml
+export HCCL_EXEC_TIMEOUT=7200
+export MS_JIT_MODULES=vllm_mindspore,research
+```
+
+随后使用以下命令拉起单机8卡GRPO训练任务
+
+```shell
+msrun --bind_core=True --worker_num=8 --local_worker_num=8 \
+--master_addr=127.0.0.1 --master_port=9887 \
+--join=True --log_dir=./prof_vllm_log \
+./main.py \
+--config ./grpo_config.yaml \
+--sft_path_infer /path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
+--sft_path_train /path/to/mindrlhf/model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
+--vocab_path /{path}/vocab.json \
+--merges_file_path /{path}/merges.txt \
+--mind_dataset_dir /{path}/gsm8k_train.mindrecord \
+--save_data_file /{path}/grpo.mindrecord \
+--save_ckpt_dir /{path}/save_ckpt \
+--use_parallel True \
+--load_sft_checkpoint_infer /{path}/infer_ckpt \
+--load_sft_checkpoint_train /{path}/train_ckpt \
+--load_ref_checkpoint /{path}/ref_ckpt \
+--enable_compile_cache False
+--use_vllm 1 > vllm.log 2>&1 &
+
+# 参数说明
+# vllm config
+use_vllm:                     是否开启vllm推理
+hf_config_path:               vllm config 生成路径
+max_model_len                 模型的最大生成长度,包括prompt长度和generated长度
+max_num_batched_tokens        每次迭代的最大批处理令牌数
+max_num_seqs                  最大并发序列数
+num_scheduler_steps           控制调度器的多步调度功能
+gpu_memory_utilization        每个NPU最大的显存使用比例
+detokenize                    是否在vllm推理内部进行decode
+```
+
+拉起任务后，通过以下命令查看运行日志
+
+```shell
+tail -f prof_vllm_log/worker_0.log
+```
+
+## 五、训练收敛曲线
 
 基于Qwen/Qwen2.5-7B模型，使用gsm8k数据集，训练过程中主要配置项设`num_rollouts=8`，`chunk_size=2`，`lr=9.0e-6`，跑出收敛曲线如下：
 

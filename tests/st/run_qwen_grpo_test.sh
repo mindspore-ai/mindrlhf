@@ -56,4 +56,4 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --load_ref_checkpoint "" \
 --enable_compile_cache False \
 --reward_funcs "format_reward" \
---reward_weights 1.0 > $WORKDIR/test_st.log
+--reward_weights 1.0
