@@ -28,7 +28,7 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.utils import TransformParametersD2D
-from mindrlhfx.worker.worker import Worker, format_time_delta
+from mindrlhf.worker.worker import Worker, format_time_delta
 
 
 def match_func(s1, s2):

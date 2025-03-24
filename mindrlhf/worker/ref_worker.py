@@ -29,7 +29,7 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
-from mindrlhfx.worker.worker import Worker
+from mindrlhf.worker.worker import Worker
 
 
 class RefWorker(Worker):

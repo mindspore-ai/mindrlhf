@@ -36,21 +36,21 @@ from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils import transfer_from_str_to_bool
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
-# mindrlhfx
-from mindrlhfx.worker.worker import GRPOData
-from mindrlhfx.worker.train_worker import TrainWorker
-from mindrlhfx.worker.infer_worker import InferWorker
-from mindrlhfx.worker.ref_worker import RefWorker
-from mindrlhfx.worker.transform_worker import TransformWorker
+# mindrlhf
+from mindrlhf.worker.worker import GRPOData
+from mindrlhf.worker.train_worker import TrainWorker
+from mindrlhf.worker.infer_worker import InferWorker
+from mindrlhf.worker.ref_worker import RefWorker
+from mindrlhf.worker.transform_worker import TransformWorker
 
 
-class SPMDGRPOTrainer:
+class GRPOTrainer:
     def __init__(self, args=None):
         self.args = args
         self._init_grpo_configs(args)
         self._init_reward_fn()
 
-        logger.info("SPMDGRPOTrainer: start init workers")
+        logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config,
                                  sft_path_infer=self.sft_path_infer,
                                  args=self.args)
@@ -65,7 +65,7 @@ class SPMDGRPOTrainer:
         self.train = TrainWorker(grpo_config=self.grpo_config,
                                  sft_path_train=self.sft_path_train,
                                  args=self.args)
-        logger.info("SPMDGRPOTrainer: finish init workers")
+        logger.info("GRPOTrainer: finish init workers")
 
         self._compile()
         self._load_checkpoint()
@@ -73,7 +73,7 @@ class SPMDGRPOTrainer:
                                          self.infer.model(), self.ref.model())
 
     def _init_grpo_configs(self, args):
-        logger.info("SPMDGRPOTrainer: _init_grpo_configs {args} in main task")
+        logger.info("GRPOTrainer: _init_grpo_configs {args} in main task")
         use_parallel = transfer_from_str_to_bool(args.use_parallel)
         # init grpo config
         grpo_config = GRPOConfig()
@@ -93,7 +93,7 @@ class SPMDGRPOTrainer:
         self.sft_path_train = args.sft_path_train
 
     def _init_reward_fn(self, reward_weights=None):
-        logger.info("SPMDGRPOTrainer: _init_reward_fn")
+        logger.info("GRPOTrainer: _init_reward_fn")
         reward_funcs = [accuracy_reward, format_reward]
         if not isinstance(reward_funcs, list):
             reward_funcs = [reward_funcs]
@@ -117,7 +117,7 @@ class SPMDGRPOTrainer:
         Build dataset for generating.
         '''
         logger.info(
-            "SPMDGRPOTrainer: _init_grpo_infer_dataset, dataset dir {self.mind_dataset_dir}")
+            "GRPOTrainer: _init_grpo_infer_dataset, dataset dir {self.mind_dataset_dir}")
         self.mind_dataset_dir = self.grpo_config.mind_dataset_dir
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids", "loss_mask"]

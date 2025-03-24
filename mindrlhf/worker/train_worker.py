@@ -40,7 +40,7 @@ from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.wrapper import TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
-from mindrlhfx.worker.worker import Worker, format_time_delta
+from mindrlhf.worker.worker import Worker, format_time_delta
 
 
 class TrainWorker(Worker):
