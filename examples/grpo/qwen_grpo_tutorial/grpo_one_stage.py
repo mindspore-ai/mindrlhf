@@ -16,20 +16,17 @@
     run grpo one stage
 """
 
-import time
-import os
 import argparse
-
-import mindspore as ms
-from mindspore import context, ops
-from mindspore.communication.management import get_rank, get_group_size
-
-from mindformers import MindFormerConfig
+import os
+import time
 from mindformers import LlamaConfig
+from mindformers import MindFormerConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
+import mindspore as ms
+from mindspore import context
+from mindspore.communication.management import get_rank, get_group_size
 from mindrlhf.utils import TransformParametersD2D
-
 from mindrlhf.trainer.grpo_trainer import GRPOTrainer
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.configs import (
@@ -39,7 +36,7 @@ from mindrlhf.utils.configs import (
 )
 from mindrlhf.utils import transfer_from_str_to_bool
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-from mindrlhf.reward.reward_fn import reward_func_from_jiaoda, accuracy_reward, format_reward
+from mindrlhf.reward.reward_fn import accuracy_reward, format_reward
 
 
 def format_time_delta(seconds):
@@ -119,7 +116,7 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     print("trainer.sft_model_config_infer:", trainer.sft_model_config_infer)
 
     trainer.grpo_model_infer.grpo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
-    trainer.make_experience(num_generations=args.pre_num_generations, rank_id=rank_id, pre_run_flag=True)
+    trainer.make_experience(num_rollouts=1, num_generations=1, rank_id=rank_id, pre_run_flag=True)
     sample = trainer.store[0]
     trainer.store = [sample for _ in range(args.pre_store_data)]
 
@@ -137,7 +134,7 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
         strategy_ckpt_config={
             "save_file":
                 f"../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"},
-        pipeline_stages=trainer.train_pp_stage         
+        pipeline_stages=trainer.train_pp_stage
     )
     grpo_with_grad.compile(**data)
 
@@ -170,35 +167,41 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     dst_merged_stra = "../merge_strategy/infer_policy_merged_strategy.ckpt"
     ref_merged_stra = "../merge_strategy/infer_ref_merged_strategy.ckpt"
 
-    if get_rank() in list(range(0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages"))):
+    pp_stages = context.get_auto_parallel_context("pipeline_stages")
+    if get_rank() in list(range(0, get_group_size(), get_group_size() // pp_stages)):
         ms.merge_pipeline_strategys("../strategy/train_policy_strategy/", src_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_policy_strategy/", dst_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_ref_strategy/", ref_merged_stra)
     ms.mint.distributed.barrier()
+    # pylint: disable=c0301
     reshard_param = TransformParametersD2D(trainer.grpo_model_train, trainer.grpo_model_infer,
-                                          src_merged_stra, dst_merged_stra, match_func)
+                                           src_merged_stra, dst_merged_stra, match_func)
     ms.communication.comm_func.barrier()
     reshard_param_policy2ref = TransformParametersD2D(trainer.grpo_model_train, trainer.ref_model,
-                                           src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
+                                                      src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
     ms.communication.comm_func.barrier()
 
     for n in range(grpo_config.epochs):
         # do generate
-        steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
+        steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size() // grpo_config.num_rollouts
 
         for i in range(steps):
             print(f"--------- epoch:{n} step:{i} ---------")
-            trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
+            trainer.make_experience(num_rollouts=grpo_config.num_rollouts, num_generations=grpo_config.num_generations, rank_id=rank_id)
 
             if n != 0 or i != 0:
                 for param in grpo_with_grad.network.get_parameters(expand=True):
+                    # pylint: disable=W0212
                     param._load()
                 for param in grpo_with_grad.optimizer.moments1:
+                    # pylint: disable=W0212
                     param._load()
                 for param in grpo_with_grad.optimizer.moments2:
+                    # pylint: disable=W0212
                     param._load()
                 if trainer.train_pp_stage > 1:
                     for param in grpo_with_grad.accu_grads:
+                        # pylint: disable=W0212
                         param._load()
             print("model_train and optimizer load")
 
@@ -207,17 +210,22 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
             trainer.train(grpo_with_grad, dataset)
 
             for param in grpo_with_grad.optimizer.moments1:
+                # pylint: disable=W0212
                 param._offload()
             for param in grpo_with_grad.optimizer.moments2:
+                # pylint: disable=W0212
                 param._offload()
             if trainer.train_pp_stage > 1:
                 for param in grpo_with_grad.accu_grads:
+                    # pylint: disable=W0212
                     param._offload()
             print("optimizer offload")
 
             for param in trainer.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                # pylint: disable=W0212
                 param._load()
             for param in trainer.ref_model.get_parameters(expand=True):
+                # pylint: disable=W0212
                 param._load()
             print("model_infer and ref_model load")
 
@@ -233,14 +241,15 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
 
             for param in grpo_with_grad.network.get_parameters(expand=True):
                 print("grpo with grad offload debug: ", param.name, flush=True)
+                # pylint: disable=W0212
                 param._offload()
             print("model_train offload")
 
     for param in grpo_with_grad.network.get_parameters(expand=True):
+        # pylint: disable=W0212
         param._load()
     trainer.save_checkpoint(rank_id=get_rank(), steps=grpo_config.epochs)
     print("save checkpoint done!")
-        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="qwen make experience")

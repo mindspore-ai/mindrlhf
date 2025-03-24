@@ -32,7 +32,8 @@ def load_json_file(file_path):
     return raw_data
 
 
-def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
+def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id,
+                 is_dataset_gsm8k):
     """
     process_data
     """
@@ -43,9 +44,12 @@ def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_i
         sample = {}
         prompt = template.format_map(
             {"prompt": item["question"], "response": ""})
-        response = template.format_map(
-            {"prompt": item["question"], "response": item["answer"]}
-        )
+        if is_dataset_gsm8k:
+            response = item['answer'].split("#### ")[-1]
+        else:
+            response = template.format_map(
+                {"prompt": item["question"], "response": item["answer"]}
+            )
 
         prompt_dict = tokenizer(
             prompt,
@@ -121,7 +125,8 @@ def write_mindrecord(args):
     writer.add_schema(schema)
 
     count = 0
-    for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
+    for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length,
+                               pad_token_id, args.is_dataset_gsm8k):
         count += 1
         writer.write_raw_data([sample])
     print("Total number of samples: {}".format(count))
@@ -150,6 +155,8 @@ def get_args():
     parser.add_argument("--seq_length", default=4096,
                         help="encoded sequence length.")
     parser.add_argument("--pad_token_id", default=None, help="pad token id.")
+    parser.add_argument("--is_dataset_gsm8k", default=False,
+                        help="is your dataset gsm8k?")
     args_opt = parser.parse_args()
     return args_opt
 
