@@ -15,10 +15,10 @@
 import time
 import os
 import argparse
-from mindrlhfx.trainer.spmd_trainer import SPMDGRPOTrainer
+from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
 def main(args):
-    trainer = SPMDGRPOTrainer(args)
+    trainer = GRPOTrainer(args)
     trainer.run_grpo_train()
 
 if __name__ == '__main__':

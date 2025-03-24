@@ -14,6 +14,4 @@
 # ============================================================================
 """MindRLHF models."""
 from .ppo_trainer import PPOTrainer
-from .grpo_trainer import GRPOTrainer
-__all__ = ['PPOTrainer',
-           'GRPOTrainer']
+__all__ = ['PPOTrainer']
