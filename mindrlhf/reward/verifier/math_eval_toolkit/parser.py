@@ -13,10 +13,10 @@
 # limitations under the License.
 # ============================================================================
 import random
+import importlib
 import regex
 import re
 import sympy
-from latex2sympy2_extended import latex2sympy
 from typing import TypeVar, Iterable, List, Union, Any, Dict
 from word2number import w2n
 from .utils import *
@@ -462,6 +462,8 @@ def clean_units(pred_str: str):
 
 
 def extract_theoremqa_answer(pred: str, answer_flag: bool = True):
+    latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
+    latex2sympy = latex2sympy2_extended.latex2sympy
     if any([option in pred.lower() for option in ["yes", "true"]]):
         pred = "True"
     elif any([option in pred.lower() for option in ["no", "false"]]):

@@ -14,15 +14,21 @@
 # ============================================================================
 
 import os
+import pytest
 
 from tests.st.utils import check_log
 
+root_path = os.path.dirname(os.path.abspath(__file__))
 
+
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend910b_training
+@pytest.mark.env_single
 def test_qwen_grpo():
     """ test Qwen GRPO training """
-    os.system(f"bash ./tests/st/run_qwen_grpo_test.sh")
+    os.system(f"bash {root_path}/run_qwen_grpo_test.sh")
 
-    log_path = "./qwen2_one_log/worker_0.log"
+    log_path = f"{root_path}/qwen2_one_log/worker_0.log"
     check_pair = {"Save checkpoints in": 1}
     
     check_log(log_path, check_pair)

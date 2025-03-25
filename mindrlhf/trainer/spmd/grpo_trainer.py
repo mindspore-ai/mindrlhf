@@ -32,7 +32,7 @@ from mindspore import communication as D
 from mindformers import logger
 
 # mindrlhf
-from mindrlhf.reward.reward_fn import accuracy_reward, format_reward
+from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
@@ -49,7 +49,7 @@ class GRPOTrainer:
     def __init__(self, args=None):
         self.args = args
         self._init_grpo_configs(args)
-        self._init_reward_fn()
+        self._init_reward_fn(args)
 
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config,
@@ -93,25 +93,36 @@ class GRPOTrainer:
         self.sft_path_infer = args.sft_path_infer
         self.sft_path_train = args.sft_path_train
 
-    def _init_reward_fn(self, reward_weights=None):
+    def _init_reward_fn(self, args):
         logger.info("GRPOTrainer: _init_reward_fn")
-        reward_funcs = [accuracy_reward, format_reward]
-        if not isinstance(reward_funcs, list):
-            reward_funcs = [reward_funcs]
+        if args.reward_funcs:
+            reward_funcs_list = args.reward_funcs
+        else:
+            reward_funcs_list = ["accuracy_reward", "format_reward"]
+        if args.reward_weights:
+            reward_weights = args.reward_weights
+        else:
+            reward_weights = [1.0, 1.0]
 
+        reward_funcs = []
+        for reward_func_str in reward_funcs_list:
+            if reward_func_str == "accuracy_reward":
+                reward_funcs.append(accuracy_reward)
+            elif reward_func_str == "format_reward":
+                reward_funcs.append(format_reward)
+            elif reward_func_str == "reward_func_from_jiaoda":
+                reward_funcs.append(reward_func_from_jiaoda)
+            else:
+                raise ValueError(f"Unsupported reward function {reward_func_str}")
         self.reward_funcs = reward_funcs
 
         # Reward weights
-        if reward_weights is not None:
-            if len(reward_weights) != len(reward_funcs):
-                raise ValueError(
-                    f"Number of reward weights ({len(len(reward_weights))}) must match number of reward "
-                    f"functions ({len(reward_funcs)})"
-                )
-            self.reward_weights = np.array(reward_weights, dtype=np.float32)
-        else:
-            self.reward_weights = np.ones(
-                (len(reward_funcs),), dtype=np.float32)
+        if len(reward_weights) != len(reward_funcs):
+            raise ValueError(
+                f"Number of reward weights ({len(len(reward_weights))}) must match number of reward "
+                f"functions ({len(reward_funcs)})"
+            )
+        self.reward_weights = np.array(reward_weights, dtype=np.float32)
 
     def _init_grpo_infer_dataset(self):
         '''
