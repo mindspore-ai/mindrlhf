@@ -29,7 +29,7 @@ class GRPOConfig:
     epochs: int = 10
     total_steps: int = 100000
     batch_size: int = 1
-    checkpoint_interval = 10000
+    checkpoint_interval: int = 10000
     eval_interval: int = 200
 
     optimizer: str = 'adamw'

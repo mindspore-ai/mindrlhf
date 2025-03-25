@@ -23,6 +23,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="qwen make experience")
+    parser.add_argument("--config", type=str, default=None, help="configs path", required=True)
     parser.add_argument("--sft_path_infer", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--sft_path_train", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--vocab_path", required=True, help="path to vocab.json")

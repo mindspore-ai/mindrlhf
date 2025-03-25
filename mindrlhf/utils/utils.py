@@ -19,6 +19,7 @@ import os
 import time
 import hashlib
 import numpy as np
+import yaml
 import mindspore.nn as nn
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
@@ -43,8 +44,32 @@ from mindformers.tools.ckpt_transform import TransformCkpt
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_generate"]
+           "ckpt_transfer_for_generate", "yaml_to_dataclass"]
 
+def yaml_to_dataclass(file_path, dataclass_type):
+    """
+    Parse a YAML file into an instance of the specified dataclass.
+
+    Parameters:
+    file_path (str): Path to the YAML file.
+    dataclass_type (type): The dataclass type to instantiate.
+
+    Returns:
+    dataclass_type: An instance of the dataclass.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            data = yaml.safe_load(file)
+            return dataclass_type(**data)
+    except FileNotFoundError:
+        print(f"File not found: {file_path}")
+        return None
+    except yaml.YAMLError as error:
+        print(f"Error parsing YAML file: {error}")
+        return None
+    except TypeError as error:
+        print(f"Data type mismatch: {error}")
+        return None
 
 def set_pipeline_parallel_context(ppo_config):
     """Set pipeline parallel context."""
