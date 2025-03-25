@@ -18,26 +18,31 @@ MindRLHF config
 import copy
 import math
 from dataclasses import asdict, make_dataclass
+
+from mindformers import AutoConfig
+from mindformers.core.parallel_config import build_parallel_config
+from mindformers.tools.register import MindFormerConfig
 import mindspore
 import mindspore.nn as nn
-from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
-from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell, MicroBatchInterleaved
 from mindspore.dataset import GeneratorDataset, MindDataset
 from mindspore.dataset.transforms import TypeCast
-from mindformers.tools.register import MindFormerConfig
-from mindformers.core.parallel_config import build_parallel_config
-from mindformers import AutoConfig
+from mindspore.nn import PipelineCell, MicroBatchInterleaved
+from mindspore.nn.wrap.cell_wrapper import _VirtualDatasetCell
+from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
+
 from mindrlhf.configs.ppo_configs import PPOConfig
-from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
-from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
 from mindrlhf.utils.dataset import GRPOIteratorStore
-from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
+from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
+from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, \
+    TrainPipelineWithLossScaleCell_GRPO
 
 __all__ = ['combine_config', 'init_configs']
 
 
-def set_weight_decay(params):
+
+
+def set_weight_decay(params, is_use_other_params=True):
     """
     Set weight decay coefficient, zero for bias and layernorm, 1e-1 for rest
     """
@@ -47,15 +52,24 @@ def set_weight_decay(params):
 
     decay_params = list(filter(decay_filter, params))
     other_params = list(filter(lambda x: not decay_filter(x), params))
-    group_params = [{
-        'params': decay_params,
-        'weight_decay': 1e-1
-    }, {
-        'params': other_params,
-        'weight_decay': 0.0
-    }, {
-        'order_params': params
-    }]
+    if is_use_other_params:
+        group_params = [{
+            'params': decay_params,
+            'weight_decay': 1e-1
+        }, {
+            'params': other_params,
+            'weight_decay': 0.0
+        }, {
+            'order_params': params
+        }]
+    else:
+        # use for deepseek
+        group_params = [{
+            'params': decay_params,
+            'weight_decay': 1e-1
+        }, {
+            'order_params': params
+        }]
     return group_params
 
 
@@ -257,8 +271,8 @@ def init_grpo_network_and_optimizer(trainer):
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
         grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.grpo_model_train,
-                                                               grpo_config.micro_batch_interleaved),
-                                         sft_model_config.parallel_config.micro_batch_num)
+                                                                grpo_config.micro_batch_interleaved),
+                                          sft_model_config.parallel_config.micro_batch_num)
     else:
         print("non-pipeline cell")
         grpo_with_loss_net = trainer.grpo_model_train
@@ -266,7 +280,10 @@ def init_grpo_network_and_optimizer(trainer):
     lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
                       warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
     params = grpo_with_loss.trainable_params()
-    group_params = set_weight_decay(params)
+    if trainer.sft_model_config_train.model_name == "deepseek_training":
+        group_params = set_weight_decay(params, is_use_other_params=False)
+    else:
+        group_params = set_weight_decay(params)
 
     if grpo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)
@@ -283,10 +300,10 @@ def init_grpo_network_and_optimizer(trainer):
 
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
-        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                       scale_update_cell=update_cell)
+        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer,
+                                                             config=sft_model_config, scale_update_cell=update_cell)
     else:
         print("non-pipeline cell")
         grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                  scale_update_cell=update_cell, enable_global_norm=True)
+                                                        scale_update_cell=update_cell, enable_global_norm=True)
     return grpo_with_grad

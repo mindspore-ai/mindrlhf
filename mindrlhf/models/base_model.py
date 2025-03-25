@@ -15,12 +15,24 @@
 """
 MindRLHF Base Model
 """
+import importlib
 import mindspore.nn as nn
 from mindformers import LlamaForCausalLM
+from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
 from mindformers.models.gpt2 import GPT2LMHeadModel
 from mindformers.models.pangualpha import PanguAlphaHeadModel
-from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
 from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
+
+
+def dynamic_import_from(module_name, attribute_name):
+    """
+    dynamic_import
+    """
+    module = importlib.import_module(module_name)
+    attribute = getattr(module, attribute_name)
+    print(f"Attribute {attribute_name} from module {module_name} successfully imported.")
+    return attribute
+
 
 
 class BaseModel(nn.Cell):
@@ -70,14 +82,15 @@ class BaseModel(nn.Cell):
             self.model = ChatGLM2ForConditionalGeneration(model_config)
             self.backbone = self.model.transformer
             self.lm_head = self.model.transformer.output_layer
-        elif self.model_type == "deepseek_infer":
-            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
-            self.model = InferenceDeepseekV3ForCausalLM(model_config)
-            self.backbone = self.model.model
-            self.lm_head = self.model.lm_head
-        elif self.model_type == "deepseek_training":
-            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
-            self.model = TrainingDeepseekV3ForCausalLM(model_config)
+        elif "deepseek" in self.model_type:
+            if model_config.use_past:
+                infer_model = dynamic_import_from('research.deepseek3.deepseek3_model_infer',
+                                                  'InferenceDeepseekV3ForCausalLM')
+                self.model = infer_model(model_config)
+            else:
+                train_model = dynamic_import_from('research.deepseek3.deepseek3_model_train',
+                                                  'TrainingDeepseekV3ForCausalLM')
+                self.model = train_model(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
 
@@ -110,13 +123,15 @@ class BaseModel(nn.Cell):
         elif self.model_type == "glm4":
             self.model = ChatGLM2ForConditionalGeneration(model_config)
             self.backbone = self.model.transformer
-        elif self.model_type == "deepseek_infer":
-            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
-            self.model = InferenceDeepseekV3ForCausalLM(model_config)
-            self.backbone = self.model.model
-        elif self.model_type == "deepseek_training":
-            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
-            self.model = TrainingDeepseekV3ForCausalLM(model_config)
+        elif "deepseek" in self.model_type:
+            if model_config.use_past:
+                infer_model = dynamic_import_from('research.deepseek3.deepseek3_model_infer',
+                                                  'InferenceDeepseekV3ForCausalLM')
+                self.model = infer_model(model_config)
+            else:
+                train_model = dynamic_import_from('research.deepseek3.deepseek3_model_train',
+                                                  'TrainingDeepseekV3ForCausalLM')
+                self.model = train_model(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
 
@@ -149,12 +164,14 @@ class BaseModel(nn.Cell):
         elif self.model_type == "glm4":
             self.model = ChatGLM2ForConditionalGeneration(model_config)
             self.backbone = self.model.transformer
-        elif self.model_type == "deepseek_infer":
-            from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
-            self.model = InferenceDeepseekV3ForCausalLM(model_config)
-            self.backbone = self.model.model
-        elif self.model_type == "deepseek_training":
-            from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
-            self.model = TrainingDeepseekV3ForCausalLM(model_config)
+        elif "deepseek" in self.model_type:
+            if model_config.use_past:
+                infer_model = dynamic_import_from('research.deepseek3.deepseek3_model_infer',
+                                                  'InferenceDeepseekV3ForCausalLM')
+                self.model = infer_model(model_config)
+            else:
+                train_model = dynamic_import_from('research.deepseek3.deepseek3_model_train',
+                                                  'TrainingDeepseekV3ForCausalLM')
+                self.model = train_model(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head

@@ -43,7 +43,7 @@ from mindrlhf.utils.configs import (
     combine_grpo_config,
 )
 from mindrlhf.utils.utils import get_valid_length_each_example
-from mindrlhfx.worker.worker import Worker
+from mindrlhf.worker.worker import Worker
 
 
 class InferWorker(Worker):

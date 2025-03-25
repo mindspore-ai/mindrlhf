@@ -101,10 +101,10 @@ parallel:
 
 # default parallel of device num = 16 for Atlas 800
 parallel_config:
-  data_parallel: 4
-  model_parallel: 1
-  pipeline_stage: 1
-  expert_parallel: 4
+  data_parallel: 1
+  model_parallel: 2
+  pipeline_stage: 2
+  expert_parallel: 1
   micro_batch_num: &micro_batch_num 2
   vocab_emb_dp: True
   use_seq_parallel: True

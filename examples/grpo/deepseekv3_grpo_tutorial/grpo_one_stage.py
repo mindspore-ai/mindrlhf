@@ -16,18 +16,22 @@
     run grpo one stage
 """
 import argparse
+import mindspore as ms
 import os
+import sys
 import time
 from mindformers import MindFormerConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.models.llama import LlamaTokenizerFast
-from research.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-import mindspore as ms
 from mindspore import context
 from mindspore.communication.management import get_rank, get_group_size
-from research.deepseek3.deepseek3_config import DeepseekV3Config
 
+if os.environ.get("MINDFORMERS_PATH") is None:
+    raise ValueError("MINDFORMERS_PATH is not set")
+os.environ["REGISTER_PATH"] = os.environ["MINDFORMERS_PATH"] + "research/deepseek3"
+sys.path.append(os.environ["REGISTER_PATH"])
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward
 from mindrlhf.trainer.grpo_trainer import GRPOTrainer
@@ -38,7 +42,6 @@ from mindrlhf.utils.configs import (
     init_grpo_network_and_optimizer,
 )
 from mindrlhf.utils.transform_param import TransformParametersD2D, TransformParametersD2DForDSv3
-
 
 def format_time_delta(seconds):
     "计算时间差"
@@ -109,7 +112,9 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     )
     rank_id = get_rank() if use_parallel else 0
 
-    tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+    tokenizer = LlamaTokenizerFast(
+        tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
+    )
     trainer = GRPOTrainer(
         grpo_config=grpo_config,
         sft_model_config_infer=sft_model_config_infer,
@@ -160,9 +165,11 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
 
     # 权重倒换
     start_time = time.time()
+
     def match_func(s1, s2):
-        s1 = s1[s1.find('.')+1: ]
-        s2 = s2[s2.find('.')+1: ]
+        s1 = s1[s1.find('.') + 1:]
+        s2 = s2[s2.find('.') + 1:]
+
         def match_layout_num(s1, s2):
             split_s1 = s1.split('.')
             split_s2 = s2.split('.')
@@ -170,30 +177,32 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
             s2_layer_num = -1
             for i, value in enumerate(split_s1):
                 if value == "layers":
-                    s1_layer_num = split_s1[i+1]
+                    s1_layer_num = split_s1[i + 1]
             for i, value in enumerate(split_s2):
                 if value == "layers":
-                    s2_layer_num = split_s2[i+1]
+                    s2_layer_num = split_s2[i + 1]
             return int(s1_layer_num) == int(s2_layer_num)
+
         if "attention.l2q_nope_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
             return match_layout_num(s1, s2)
-        if "attention.l2q_pe_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
+        elif "attention.l2q_pe_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
             return match_layout_num(s1, s2)
-        if "attention.kv2l_k_pe.weight" in s1 and "attention.kv2l.weight" in s2:
+        elif "attention.kv2l_k_pe.weight" in s1 and "attention.kv2l.weight" in s2:
             return match_layout_num(s1, s2)
-        if "attention.kv2l_latent_kv.weight" in s1 and "attention.kv2l.weight" in s2:
+        elif "attention.kv2l_latent_kv.weight" in s1 and "attention.kv2l.weight" in s2:
             return match_layout_num(s1, s2)
-        if "routed_experts.topk_bias" in s1 and "router.e_score_correction_bias" in s2:
+        elif "routed_experts.topk_bias" in s1 and "router.e_score_correction_bias" in s2:
             return match_layout_num(s1, s2)
-        if "ffn.w1" in s1 and "ffn.w1.weight" in s2:
+        elif "ffn.w1" in s1 and "ffn.w1.weight" in s2:
             return match_layout_num(s1, s2)
-        if "ffn.w2" in s1 and "ffn.w2.weight" in s2:
+        elif "ffn.w2" in s1 and "ffn.w2.weight" in s2:
             return match_layout_num(s1, s2)
-        if "ffn.w3" in s1 and "ffn.w3.weight" in s2:
+        elif "ffn.w3" in s1 and "ffn.w3.weight" in s2:
             return match_layout_num(s1, s2)
-        if "router_dense.weight" in s1 and "router.dense.weight" in s2:
+        elif "router_dense.weight" in s1 and "router.dense.weight" in s2:
             return match_layout_num(s1, s2)
-        return s1 == s2
+        else:
+            return s1 == s2
 
     def match_func_policy2ref(s1, s2):
         s1 = s1[s1.find('.')+1: ]
@@ -204,8 +213,7 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     dst_merged_stra = "../merge_strategy/infer_policy_merged_strategy.ckpt"
     ref_merged_stra = "../merge_strategy/infer_ref_merged_strategy.ckpt"
 
-    pipeline_stages = context.get_auto_parallel_context("pipeline_stages")
-    if get_rank() in list(range(0, get_group_size(), get_group_size() // pipeline_stages)):
+    if get_rank() in list(range(0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages"))):
         ms.merge_pipeline_strategys("../strategy/train_policy_strategy/", src_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_policy_strategy/", dst_merged_stra)
         ms.merge_pipeline_strategys("../strategy/infer_ref_strategy/", ref_merged_stra)
@@ -216,12 +224,8 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
     reshard_param = TransformParametersD2DForDSv3(trainer.grpo_model_train, trainer.grpo_model_infer, tranform_args,
                                                   src_merged_stra, dst_merged_stra, match_func)
     ms.communication.comm_func.barrier()
-    reshard_param_policy2ref = TransformParametersD2D(
-        trainer.grpo_model_train,
-        trainer.ref_model,
-        src_merged_stra,
-        ref_merged_stra,
-        match_func=match_func_policy2ref)
+    reshard_param_policy2ref = TransformParametersD2D(trainer.grpo_model_train, trainer.ref_model,
+                                                      src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
     ms.communication.comm_func.barrier()
 
     for n in range(grpo_config.epochs):
@@ -235,17 +239,13 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
 
             if n != 0 or i != 0:
                 for param in grpo_with_grad.network.get_parameters(expand=True):
-                    # pylint: disable=W0212
                     param._load()
                 for param in grpo_with_grad.optimizer.moments1:
-                    # pylint: disable=W0212
                     param._load()
                 for param in grpo_with_grad.optimizer.moments2:
-                    # pylint: disable=W0212
                     param._load()
                 if trainer.train_pp_stage > 1:
                     for param in grpo_with_grad.accu_grads:
-                        # pylint: disable=W0212
                         param._load()
             print("model_train and optimizer load")
 
@@ -255,27 +255,23 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
             trainer.train(grpo_with_grad, dataset)
 
             for param in grpo_with_grad.optimizer.moments1:
-                # pylint: disable=W0212
                 param._offload()
             for param in grpo_with_grad.optimizer.moments2:
-                # pylint: disable=W0212
                 param._offload()
             if trainer.train_pp_stage > 1:
                 for param in grpo_with_grad.accu_grads:
-                    # pylint: disable=W0212
                     param._offload()
             print("optimizer offload")
 
             for param in trainer.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
                 param._load()
             for param in trainer.ref_model.get_parameters(expand=True):
-                # pylint: disable=W0212
                 param._load()
             print("model_infer and ref_model load")
 
             start_time = time.time()
             reshard_param.transform()
+            ms.communication.comm_func.barrier()
             print(f"model_train to model_infer ckpt_transform: {format_time_delta(time.time() - start_time)}")
 
             if grpo_config.sync_ref_model:
@@ -286,12 +282,10 @@ def main(sft_path_infer, sft_path_train, use_parallel, args):
 
             for param in grpo_with_grad.network.get_parameters(expand=True):
                 print("grpo with grad offload debug: ", param.name, flush=True)
-                # pylint: disable=W0212
                 param._offload()
             print("model_train offload")
 
     for param in grpo_with_grad.network.get_parameters(expand=True):
-        # pylint: disable=W0212
         param._load()
     trainer.save_checkpoint(rank_id=get_rank(), steps=grpo_config.epochs)
     print("save checkpoint done!")
@@ -301,19 +295,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="qwen make experience")
     parser.add_argument("--sft_path_infer", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--sft_path_train", type=str, default=None, help="sft model path", required=True)
-    parser.add_argument("--vocab_path", required=True, help="path to tokenizer_file")
-    parser.add_argument("--merges_file_path", required=True, help="path to vocab_path")
+    parser.add_argument("--tokenizer_path", required=True, help="path to tokenizer_file")
     parser.add_argument("--save_data_file", type=str, default=None, help="save_data_file")
     parser.add_argument("--mind_dataset_dir", type=str, default=None, help="mind_dataset_dir", required=True)
     parser.add_argument("--save_ckpt_dir", type=str, default="./", help="save_ckpt_dir")
-    parser.add_argument("--use_parallel", type=str, default=False, help="use_parallel")
+    parser.add_argument("--use_parallel", type=str, default=True, help="use_parallel")
     parser.add_argument("--load_sft_checkpoint_infer", type=str, default=None, help="load checkpoint path")
     parser.add_argument("--load_sft_checkpoint_train", type=str, default=None, help="load checkpoint path")
     parser.add_argument("--load_ref_checkpoint", type=str, default=None, help="load checkpoint path")
     parser.add_argument("--enable_compile_cache", type=str, default=False, help="enable compile cache")
     parser.add_argument("--pre_num_generations", type=int, default=1, help="pre generate times")
     parser.add_argument("--pre_store_data", type=int, default=16, help="pre generate times")
-
     my_args = parser.parse_args()
 
     main(

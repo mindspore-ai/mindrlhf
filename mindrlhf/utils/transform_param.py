@@ -22,7 +22,7 @@ from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
 from mindspore.parallel.shard import Layout, _DistributedTensorInfo
 from mindspore.parallel._parallel_serialization import _build_searched_strategy, _convert_to_list
-
+from mindspore.parallel.function.reshard_func import _redistribute
 
 def _get_used_dev_mat(dev_mat, tensormap):
     used_dev_mat = []
@@ -30,6 +30,16 @@ def _get_used_dev_mat(dev_mat, tensormap):
         idx = len(dev_mat) - i - 1
         used_dev_mat.append(idx in tensormap)
     return used_dev_mat
+
+
+def _tensor_map_flatten(tensor_map):
+    tensor_map = np.array(tensor_map)
+    if tensor_map.ndim == 1:
+        return tensor_map.tolist()
+    elif tensor_map.ndim == 2 and tensor_map.shape[1] == 1:
+        return tensor_map.flatten().tolist()
+    else:
+        raise ValueError(f"tensor_map shape: {tensor_map.shape} is not supported")
 
 
 # pylint: disable=R1705
@@ -115,6 +125,7 @@ def _layout_process(stra_layout, pp_stages):
     opt_shard = stra_layout[5]
     dev_mat = stra_layout[0]
     tensor_map = stra_layout[1]
+    tensor_map = _tensor_map_flatten(tensor_map)
     new_dev_mat, counter, new_tensor_map, full_opt_shard = _get_dev_mat_for_opt_shard(opt_shard, dev_mat,
                                                                                       tensor_map)
     alias_name = [alphabet[i] for i in range(len(new_dev_mat))]
@@ -192,14 +203,14 @@ class TransformParametersD2D:
             src_net_param_dict[name] = param
             if name not in src_stra_info.keys():
                 logger.warning(f"for param {name}, it's not in strategy file, set default strategy.")
-                src_stra_info[name] = [[get_group_size(),], [-1] * len(param.shape), [], 0, 0, 0, [0]]
+                src_stra_info[name] = [[get_group_size(), ], [-1] * len(param.shape), [], 0, 0, 0, [0]]
 
         dst_net_param_dict = {}
         for name, param in dst_network.parameters_and_names():
             dst_net_param_dict[name] = param
             if name not in dst_stra_info.keys():
                 logger.warning(f"for param {name}, it's not in strategy file, set default strategy.")
-                dst_stra_info[name] = [[get_group_size(),], [-1] * len(param.shape), [], 0, 0, 0, [0]]
+                dst_stra_info[name] = [[get_group_size(), ], [-1] * len(param.shape), [], 0, 0, 0, [0]]
 
         # 获取src和dst的param的交集
         src_param_name_intersection = []
@@ -247,7 +258,6 @@ class TransformParametersD2D:
     def transform(self):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        from mindspore.ops.function.reshard_func import _redistribute
         for i, src_param in enumerate(self._src_param_name_intersection):
             redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
             redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
@@ -283,9 +293,12 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     Transform parameter from source network's layout to destination network's layout. All the parameters will do
     transformation from device to device.
     """
-    def __init__(self, src_network, dst_network, transform_args, src_strategy_path=None, dst_strategy_path=None, match_func=None,
+
+    def __init__(self, src_network, dst_network, transform_args, src_strategy_path=None, dst_strategy_path=None,
+                 match_func=None,
                  offload_src=False, load_dst=False):
-        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func, offload_src, load_dst)
+        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func, offload_src,
+                         load_dst)
         if not isinstance(transform_args, dict):
             raise TypeError("transform args must be dict")
 
@@ -303,7 +316,6 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     def transform(self):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        from mindspore.ops.function.reshard_func import _redistribute
         for i, src_param in enumerate(self._src_param_name_intersection):
             if src_param != "skip":
                 redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
@@ -323,7 +335,6 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         """
         new_src_param_intersection = []
         dev_mat = Layout((get_group_size(),), ("all_dev",))
-        from mindspore.ops.function.reshard_func import _redistribute
         for _, src_param in enumerate(self._src_param_name_intersection):
             tensor_map = ["None"] * len(src_param.shape)
             standalone_layout = dev_mat(*tensor_map)
@@ -368,8 +379,9 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
             else:
                 new_src_param_intersection.append(src_param)
                 continue
-                
-            if ("attention.l2q_nope_proj.weight" in src_param.name or "attention.l2q_pe_proj.weight" in src_param.name) and self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
+
+            if (
+                    "attention.l2q_nope_proj.weight" in src_param.name or "attention.l2q_pe_proj.weight" in src_param.name) and self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
                 self.l2q_nope_proj = self.l2q_nope_proj.asnumpy()
                 self.l2q_pe_proj = self.l2q_pe_proj.asnumpy()
                 value_nope = self.l2q_nope_proj.reshape(self._n_head, self._qk_nope_head_dim, -1)
@@ -389,8 +401,9 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
                 value_merged = value_merged.reshape(-1, value_merged.shape[-1])
                 self.l2q_nope_proj = None
                 self.l2q_pe_proj = None
-            elif ("attention.kv2l_k_pe.weight" in src_param.name or "attention.kv2l_latent_kv.weight" in src_param.name) and \
-                     self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
+            elif (
+                    "attention.kv2l_k_pe.weight" in src_param.name or "attention.kv2l_latent_kv.weight" in src_param.name) and \
+                    self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
                 # 转换为 numpy 数组
                 self.kv2l_k_pe = self.kv2l_k_pe.asnumpy()
                 self.kv2l_latent_kv = self.kv2l_latent_kv.asnumpy()
