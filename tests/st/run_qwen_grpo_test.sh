@@ -23,6 +23,9 @@ export MINDFORMERS_PATH=$MINDRLHF_PATH/tests/st/mindformers/
 export PYTHONPATH=$MINDRLHF_PATH:$MINDFORMERS_PATH:$PYTHONPATH
 echo "PYTHONPATH is $PYTHONPATH"
 
+pip install -r $MINDFORMERS_PATH/requirements.txt
+pip install -r $MINDRLHF_PATH/requirements.txt
+
 jsonl_path="$WORKDIR/tests/st/qwen2_5/mini_gsm8k.jsonl"
 vocab_path="$WORKDIR/tests/st/qwen2_5/vocab.json"
 merges_path="$WORKDIR/tests/st/qwen2_5/merges.txt"
