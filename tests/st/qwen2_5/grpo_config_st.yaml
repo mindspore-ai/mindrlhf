@@ -1,0 +1,76 @@
+# grpo config
+beta: 0.01 # KL coefficient
+num_generations: 2
+grpo_epochs: 2
+num_rollouts: 1
+chunk_size: 2
+ppo_epochs: 1
+init_kl_coef: 0.1
+kl_coef: 0.02
+target: 6.0
+horizon: 10000
+gamma: 1.0
+lam: 0.95
+cliprange: 0.2
+cliprange_value: 0.2
+vf_coef: 1.0
+pretrain_coef: 0.9
+scale_reward: None
+ref_mean: False
+ref_std: False
+gen_experience_kwargs: False
+
+# model train config
+model_name: ''
+align_type: ''
+epochs: 1
+total_steps: 100000
+batch_size: 1
+checkpoint_interval: 10000
+eval_interval: 200
+
+optimizer: 'adamw'
+lr: 9.0e-6
+beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
+weight_decay: 0.01
+
+sceduler_name: 'cosine_annealing'
+t_max: 100000
+eta_min: 5.0e-6
+
+sink_size: 2
+device_target: 'Ascend'
+parallel_mode: 'semi_auto_parallel'
+full_batch: True
+enable_alltoall: False
+micro_batch_interleaved: 1
+start_lr: 5.0e-7  # 1e-12
+end_lr: 1.0e-10  # 1e-13
+warmup_step: 10 # 3200
+decay_steps: 200000
+opt_offload: False
+mind_dataset_dir: "/path/train.mindrecord"
+inference_micro_size: 1
+save_ckpt_dir: "./"
+save_data_file: ""
+sft_model_path: "/path/model.yaml"
+critic_model_path: "/path/model.yaml"
+reward_model_path: "/path/model.yaml"
+is_shared_backbone: True
+only_save_strategy: False
+use_parallel: False
+sync_ref_model: True
+# Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
+ref_model_sync_steps: 50
+# ref_model_batch_size: 2
+
+# vllm config
+# use_vllm: 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
+# hf_config_path: "./config.json"   # vllm config 生成路径
+# max_model_len: 25536
+# max_num_batched_tokens: 25536
+# max_num_seqs: 1024
+# num_scheduler_steps: 32
+# gpu_memory_utilization: 0.8
