@@ -74,7 +74,7 @@ class GRPOTrainer:
                                          self.infer.model(), self.ref.model())
 
     def _init_grpo_configs(self, args):
-        logger.info("GRPOTrainer: _init_grpo_configs {args} in main task")
+        logger.info(f"GRPOTrainer: _init_grpo_configs {args} in main task")
         use_parallel = transfer_from_str_to_bool(args.use_parallel)
         # init grpo config
         grpo_config = yaml_to_dataclass(args.config, GRPOConfig)
@@ -129,7 +129,7 @@ class GRPOTrainer:
             bs = self.grpo_config.chunk_size * self.infer_dp
             self.prompt_dataloader = self.prompt_dataloader.batch(batch_size=bs, drop_remainder=True)
             self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
-            self.step_num = self.prompt_dataset.get_dataset_size() // self.prompt_dataset.get_batch_size() // self.grpo_config.num_rollouts
+            self.step_num = self.prompt_dataloader.get_dataset_size() // self.grpo_config.num_rollouts
         else:
             logger.info("In main task, there is not dataset for making experience")
 
