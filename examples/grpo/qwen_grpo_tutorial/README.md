@@ -134,11 +134,12 @@ pipeline_stage:               流水线并行切分组数, 必须为1. 当前推
 
 ### GRPO训练算法配置
 
-GRPO训练算法相关配置可以在`mindrlhf/configs/grpo_configs.py`内进行修改，包括以下参数：
+GRPO训练算法相关配置可以在`examples/grpo/qwen_grpo_tutorial/grpo_config.yaml`内进行修改，包括以下参数：
 
 ```shell
 beta: float = 0.01
 num_generations: int = 8
+num_rollouts: int = 4
 grpo_epochs: int = 2
 start_lr: float = 5e-7
 end_lr: float = 1e-10
@@ -151,6 +152,7 @@ ref_model_sync_steps: int = 50
 grpo_epochs:            在数据集上总共训练的epochs轮数
 chunk_size:             推理模型在每一步中为多少个问题生成回答
 num_generations:        推理模型在每一步中为每个问题生成多少个回答
+num_rollouts:           推理模型在训练之前会反复进行多少轮
 beta:                   反向训练GRPO loss中KL散度的权重
 start_lr:               初始时反向训练的learning rate步长
 end_lr:                 结束时反向训练的learning rate步长, 必须大于start_lr
@@ -159,7 +161,7 @@ sync_ref_model:         是否每隔若干步将ref model的权重更新为最�
 ref_model_sync_steps:   若sync_ref_model=True, ref model权重更新的间隔步数
 ```
 
-## 三、启动单机8卡GRPO训练脚本
+## 三、启动GRPO训练脚本
 
 首先进入MindRLHF路径
 
@@ -177,12 +179,14 @@ export PYTHONPATH="$MINDRLHF_FILE:$MINDFORMERS_FILE:$PYTHONPATH"
 export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```
 
-随后使用以下命令拉起单机8卡GRPO训练任务
+### 单机8卡拉起Qwen2.5-7b
+随后使用以下命令拉起单机8卡GRPO训练任务，可以参考run_grpo.sh
 
 ```shell
 msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=False --log_dir=./qwen2_5_one_log \
 examples/grpo/qwen_grpo_tutorial/grpo_one_stage.py \
+--config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
 --sft_path_infer ./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
 --sft_path_train ./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
 --vocab_path /{path}/vocab.json \
@@ -205,6 +209,7 @@ master_port:                  主节点端口
 join:                         是否等待所有worker退出
 log_dir:                      日志路径
 # grpo_one_stage.py 参数
+config:                       grpo的配置文件
 sft_path_infer:               推理用的模型配置文件
 sft_path_train:               训练用的模型配置文件
 vocab_path:                   模型对应的tokenizer文件vocab.json的路径
@@ -219,6 +224,16 @@ load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
 enable_compile_cache:         是否使用编译缓存
 ```
 
+### 4机32卡拉起Qwen2.5-32B
+Qwen2.5-32B需要4个8卡节点拉起，需要在4个节点上同时执行拉起脚本；脚本参数与7b模型的8卡相比，需要额外配置2个参数
+```shell
+bash run_grpo_32p.sh $node_rank $master_ip
+# 参数说明
+node_rank                     主机序列号，例如4个节点上拉起需要分别配置为0、1、2、3
+master_ip                     主机IP，一般以序列号为0的节点的IP作为主机IP，该参数4个节点输入需相同
+```
+
+### 任务查看
 拉起任务后，通过以下命令查看运行日志
 
 ```shell
@@ -229,4 +244,8 @@ tail -f qwen2_5_one_log/worker_0.log
 
 基于Qwen/Qwen2.5-7B模型，使用gsm8k数据集，训练过程中主要配置项设`num_rollouts=8`，`chunk_size=2`，`lr=9.0e-6`，跑出收敛曲线如下：
 
-![grpo_converge](https://gitee.com/mindspore/mindrlhf/blob/master/images/grpo_converge.png)
+![grpo_converge](https://gitee.com/mindspore/mindrlhf/raw/master/images/grpo_converge.png)
+
+基于Qwen/Qwen2.5-32B模型，使用openR1-math-220k数据集，训练过程中主要配置项设`num_rollouts=4`，`chunk_size=2`，`lr=5.0e-7`，跑出收敛曲线如下：
+
+![grpo_converge](https://gitee.com/mindspore/mindrlhf/raw/master/images/grpo_converge_32.png)

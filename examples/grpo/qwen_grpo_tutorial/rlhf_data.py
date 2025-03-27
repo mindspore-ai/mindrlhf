@@ -33,7 +33,7 @@ def load_json_file(file_path):
 
 
 def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id,
-                 is_dataset_gsm8k):
+                 dataset_type):
     """
     process_data
     """
@@ -44,8 +44,10 @@ def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_i
         sample = {}
         prompt = template.format_map(
             {"prompt": item["question"], "response": ""})
-        if is_dataset_gsm8k:
+        if dataset_type == 'gsm8k':
             response = item['answer'].split("#### ")[-1]
+        elif dataset_type == 'openR1math':
+            response = item['answer']
         else:
             response = template.format_map(
                 {"prompt": item["question"], "response": item["answer"]}
@@ -126,7 +128,7 @@ def write_mindrecord(args):
 
     count = 0
     for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length,
-                               pad_token_id, args.is_dataset_gsm8k):
+                               pad_token_id, args.dataset_type):
         count += 1
         writer.write_raw_data([sample])
     print("Total number of samples: {}".format(count))
@@ -155,8 +157,8 @@ def get_args():
     parser.add_argument("--seq_length", default=4096,
                         help="encoded sequence length.")
     parser.add_argument("--pad_token_id", default=None, help="pad token id.")
-    parser.add_argument("--is_dataset_gsm8k", default=False,
-                        help="is your dataset gsm8k?")
+    parser.add_argument("--dataset_type", default=None,
+                        help="your dataset type?")
     args_opt = parser.parse_args()
     return args_opt
 
