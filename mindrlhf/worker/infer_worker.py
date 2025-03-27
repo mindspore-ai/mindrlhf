@@ -16,6 +16,7 @@
 import os
 import numpy as np
 import time
+from glob import glob
 
 # mindspore
 import mindspore
@@ -34,6 +35,7 @@ from mindformers.core.parallel_config import build_parallel_config
 from mindformers.experimental.infer.core.utils import generate_state_dict
 from mindformers.experimental.parallel_core.pynative.utils import save_strategy_file
 from mindformers import logger
+from mindformers.models.build_tokenizer import build_tokenizer
 
 # mindrlhf
 from mindrlhf.utils import transfer_from_str_to_bool
@@ -77,7 +79,7 @@ class InferWorker(Worker):
         )
         sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
         sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
-        sft_model_config_infer.model_name = "llama"
+        sft_model_config_infer.model_name = args.custom_model_name
 
         self.grpo_config = combine_grpo_config(grpo_config, sft_model_config_infer)
         self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
@@ -85,8 +87,12 @@ class InferWorker(Worker):
         sft_model_config_infer.checkpoint_name_or_path = None
         self.sft_model_config_infer = sft_model_config_infer
 
-        self.tokenizer = Qwen2Tokenizer(self.args.vocab_path, self.args.merges_file_path,
-                                        add_bos_token=False, add_eos_token=False)
+        if args.custom_model_name == "llama":
+            sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
+            self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
+        else:
+            self.tokenizer = Qwen2Tokenizer(
+                args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
 
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         self.use_vllm = grpo_config.use_vllm
@@ -134,8 +140,10 @@ class InferWorker(Worker):
             )
             logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
             policy_model = self.inference_engine.get_model()
+            policy_model.dp = sft_model_config_infer.parallel_config.data_parallel
         else:
             # no vllm
+            sft_model_config_infer.name = "grpo_infer"
             policy_model = CausalLMHybrid(sft_model_config_infer, self.grpo_config)
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         self.grpo_model_infer = GRPOModelInfer(self.grpo_config, policy_model)
@@ -148,6 +156,7 @@ class InferWorker(Worker):
             self.grpo_model_infer.grpo_model.policy_model.add_flags_recursive(is_first_iteration=True)
             self.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.on_device = True
+        self.save_strategy_dir = grpo_config.save_strategy_dir
 
     def model(self):
         return self.grpo_model_infer
@@ -208,17 +217,24 @@ class InferWorker(Worker):
 
     # For SPMD, developer could call 'post_process_infer_outputs' to process data.
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
-    def generate(self, input_ids_numpy):
+    def generate(self, input_ids_numpy, max_decode_length=0):
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
         np.set_printoptions(threshold=1024)
+        if self.args.custom_model_name == "llama":
+            print("processing custom tokenizer...")
+            self.sft_config_infer.processor.tokenizer.tokenizer_file = self.args.vocab_path
+            tokenizer = build_tokenizer(self.sft_config_infer.processor.tokenizer)
+        else:
+            print("processing qwen2 tokenizer...")
+            tokenizer = Qwen2Tokenizer(
+                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
+            )
 
         def print_data(data, tokenizer, name):
             decoded_str2 = tokenizer.decode(data)
             logger.info(f"{name} strs are {decoded_str2}")
 
-        logger.info("input ids are {}".format(print_data(input_ids_numpy.tolist(), self.tokenizer, "input_ids")))
-        logger.info(f"input ids for precision is {input_ids_numpy}")
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
         """ Policy model generates responses for a batch of prompts. """
 
@@ -226,17 +242,19 @@ class InferWorker(Worker):
             input_ids_numpy, self.grpo_model_infer.grpo_model.pad_token_id)  # get valid length and max length in a batch
 
         generate_begin_time = time.time()
+        if max_decode_length == 0:
+            max_decode_length = self.grpo_config.max_decode_length
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
             outputs = self.grpo_model_infer.grpo_model.policy_model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                             max_new_tokens=self.grpo_config.max_decode_length,
+                                                                             max_new_tokens=max_decode_length,
                                                                              do_sample=True)
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
             outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                                   max_new_tokens=self.grpo_config.max_decode_length,
+                                                                                   max_new_tokens=max_decode_length,
                                                                                    do_sample=True)
             logger.info("infer without vllm end, not use vllm model")
         else:
@@ -252,7 +270,6 @@ class InferWorker(Worker):
             logger.info("end vllm")
             outputs = outputs[0]
 
-        logger.info(f"outputs for precision is {outputs}")
         logger.info(f"Generating elapsed time: {time.time() - generate_begin_time}")
 
         input_ids_list = input_ids_numpy.tolist()
@@ -278,57 +295,52 @@ class InferWorker(Worker):
         responses_mask = (right_padding_responses != self.grpo_config.pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
 
-        print_data(right_padding_responses.astype(np.int32).tolist(), self.tokenizer, "right_padding_responses")
-        print_data(responses_mask.tolist(), self.tokenizer, "responses_mask")
-        print_data(left_padding_prompts.astype(np.int32).tolist(), self.tokenizer, "left_padding_prompts")
-        print_data(prompts_mask.tolist(), self.tokenizer, "prompts_mask")
-
-        logger.info(
-            f"precision return value is {right_padding_responses.astype(np.int32)}, {responses_mask}, {left_padding_prompts.astype(np.int32)}, {prompts_mask}")
+        context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         return right_padding_responses.astype(np.int32), responses_mask, left_padding_prompts.astype(np.int32), prompts_mask
 
     def generate_strategy(self):
+        context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
+                                          parallel_mode="stand_alone", full_batch=False)
         stage_name = 'infer'
-        dir_name = f"../../strategy/{stage_name}_policy_strategy/"
-        if os.path.exists(dir_name) and get_rank() == 0:
-            import shutil
-            logger.info(f"remove infer policy strategy dir {dir_name}")
-            shutil.rmtree(dir_name)
-        mindspore.mint.distributed.barrier()
+        strategy_path = self.grpo_config.save_strategy_dir
         if self.use_vllm == VllmMode.ORIGIN:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
         else:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model)
-        save_strategy_file(static_dict, f"../../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
+        save_strategy_file(static_dict, f"{strategy_path}/strategy_file/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={
                 "save_file":
-                    f"../../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                    f"{strategy_path}/strategy_file/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
         if self.on_device is False:
             return
-        logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
+        logger.info(f'before offload stf infer')
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             param._offload()
-        logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
+        logger.info(f'after offload stf infer')
         self.on_device = False
 
     def load(self):
         if self.on_device:
             return
-        logger.info(f'before load stf infer {ms.hal.memory_stats()}')
+        logger.info(f'before load stf infer')
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             param._load()
-        logger.info(f'after load stf infer {ms.hal.memory_stats()}')
+        logger.info(f'after load stf infer')
         self.on_device = True
 
     def load_checkpoint(self):
+        if self.args.load_ckpt_format == "safetensors":
+            self.on_device = True
+            return self._load_checkpoint_safetensors()
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.use_parallel else ms.load_checkpoint
         logger.info(f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel} {load_ckpt_func}")
         if self.sft_ckpt_path_infer:
+            self.on_device = True
             param_dict = load_ckpt_func(self.sft_ckpt_path_infer)
             if self.use_vllm == VllmMode.ORIGIN:
                 new_param_dict = {'grpo_model.policy_model.model.' + k: v for k, v in param_dict.items()}
@@ -387,3 +399,26 @@ class InferWorker(Worker):
         print("hf config for vllm: ", hf_config, flush=True)
 
         return hf_config
+
+    def _load_checkpoint_safetensors(self):
+        network = self.grpo_model_infer.grpo_model.policy_model
+        name_map = None
+        try:
+            load_checkpoint_files = glob(
+                os.path.join(self.sft_ckpt_path_infer, f"*.safetensors"))
+            load_checkpoint_files.sort()
+            name_map = network.obtain_name_map(load_checkpoint_files)
+            if self.use_vllm != VllmMode.ORIGIN:
+                prefix = "grpo_model.policy_model."
+                name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
+        except Exception as e:
+            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
+
+        strategy_path = os.path.join(self.grpo_config.save_strategy_dir, 'merge_strategy/infer_policy_merged_strategy.ckpt')
+        ms.load_distributed_checkpoint(
+            network=network,
+            predict_strategy=strategy_path,
+            unified_safetensors_dir=self.sft_ckpt_path_infer,
+            format='safetensors',
+            name_map=name_map
+        )

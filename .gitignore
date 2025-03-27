@@ -15,4 +15,7 @@ TLDR_data/
 .vscode/
 build/
 device*/
-kernel_meta_*/
+kernel_meta*/
+*.npz
+*.npy
+*.json
