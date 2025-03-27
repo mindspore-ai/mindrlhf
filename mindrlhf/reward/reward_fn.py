@@ -14,9 +14,7 @@
 # ============================================================================
 """Reward functions for GRPO training."""
 import re
-
-from latex2sympy2_extended import NormalizationConfig
-from math_verify import LatexExtractionConfig, parse, verify
+import importlib
 
 from .verifier.rule_verifier import func_from_jiaoda
 
@@ -25,6 +23,13 @@ def reward_func_from_jiaoda(completions, solution, **kwargs):
 
 def accuracy_reward(completions, solution, **kwargs):
 	"""Reward function that checks if the completion is the same as the ground truth."""
+	latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
+	NormalizationConfig = latex2sympy2_extended.NormalizationConfig
+	math_verify = importlib.import_module("math_verify")
+	LatexExtractionConfig = math_verify.LatexExtractionConfig
+	parse = math_verify.parse
+	verify = math_verify.verify
+
 	rewards = []
 	for content, sol in zip(completions, solution):
 		gold_parsed = parse(

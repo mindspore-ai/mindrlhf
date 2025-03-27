@@ -22,6 +22,7 @@ This logic is largely copied from the Hendrycks' MATH release (math_equivalence)
 
 import re
 import regex
+import importlib
 import multiprocessing
 from math import isclose
 from typing import Union
@@ -30,7 +31,6 @@ from collections import defaultdict
 from sympy import simplify, N
 from sympy.parsing.sympy_parser import parse_expr
 from sympy.parsing.latex import parse_latex
-from latex2sympy2_extended import latex2sympy
 
 
 def choice_answer_clean(pred: str):
@@ -274,6 +274,8 @@ def numeric_equal(prediction: float, reference: float):
 
 def symbolic_equal(a, b):
     def _parse(s):
+        latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
+        latex2sympy = latex2sympy2_extended.latex2sympy
         for f in [parse_latex, parse_expr, latex2sympy]:
             try:
                 return f(s.replace("\\\\", "\\"))
