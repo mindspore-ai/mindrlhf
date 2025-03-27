@@ -44,10 +44,13 @@ class GRPOIteratorStore:
             raise StopIteration
         else:
             item = (self.store[self._index].prompt_completion_ids,
-                    self.store[self._index].prompts_mask,
+                    # self.store[self._index].prompts_mask,
                     self.store[self._index].responses_mask,
                     self.store[self._index].ref_per_token_logps,
                     self.store[self._index].advantages,
+                    self.store[self._index].actual_sequence_length,
+                    self.store[self._index].sample_index,
+                    self.store[self._index].sample_valid_length,
                     )
             self._index += 1
             return item

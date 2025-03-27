@@ -21,7 +21,6 @@ import numpy as np
 
 # mindspore
 import mindspore as ms
-from mindspore import Tensor, mint
 import mindspore.common.dtype as mstype
 from mindspore.communication import get_rank, get_group_size
 from mindspore.mindrecord import FileWriter
@@ -31,24 +30,54 @@ from mindspore.common.api import _pynative_executor
 # mindformers
 from mindformers import logger
 from mindformers.models.llama import LlamaTokenizerFast
-from mindformers import MindFormerConfig
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
+import numpy as np
+import time
+from dataclasses import asdict, dataclass, field
+from mindformers import MindFormerConfig
+import json
+import os
+# mindformers
+from mindformers import logger
+from mindformers.models.build_tokenizer import build_tokenizer
+from mindformers.tools.utils import is_main_rank
+from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
+from mindspore import Tensor, mint
+from mindspore import communication as D
+from mindspore.common.api import _pynative_executor
+from mindspore.communication import get_rank
+from mindspore.dataset import MindDataset
+from mindspore.mindrecord import FileWriter
+from typing import List, Dict
 
-# mindrlhf
-from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
 
 from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat,
                             convert_index_json_total, save_prompt_completions_data, MetricData)
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
-
 # mindrlhf
-from mindrlhf.worker.worker import GRPOData
-from mindrlhf.worker.train_worker import TrainWorker
+from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
+from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat, convert_index_json_total
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
+from mindrlhf.worker.train_worker import TrainWorker
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
+# mindrlhf
+from mindrlhf.worker.worker import GRPOData
+
+
+def pad_sequence_to_length(sequence, target_length, pad_value):
+    """Pad sequence to target length with specified pad value."""
+    current_length = len(sequence)
+    if current_length < target_length:
+        return np.pad(
+            sequence,
+            (0, target_length - current_length),
+            mode="constant",
+            constant_values=pad_value,
+        )
+    return sequence[:target_length]
 
 
 class GRPOTrainer:
@@ -123,6 +152,10 @@ class GRPOTrainer:
             self.tokenizer = LlamaTokenizerFast(
                 tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
             )
+        elif args.custom_model_name == "llama":
+            sft_config_infer = MindFormerConfig(args.sft_path_infer)
+            sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
+            self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
             raise ValueError(
                 f"model_name should in ['qwen', 'deepseek'], but get {model_name}")
@@ -328,8 +361,155 @@ class GRPOTrainer:
         prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)), axis=1)
         responses_mask = np.concatenate(
             (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
+        attention_mask = prompts_mask + responses_mask
 
-        return prompt_completion_ids, responses_mask, prompts_mask
+        # Generate outputs.
+        # prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
+        attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)
+        return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
+    
+    def _construct_inputs_packing(self, all_packed, ref_model_batch_size=None, idx=None):
+        if ref_model_batch_size:
+            tmp_ids = []
+            tmp_actual_seq_len = []
+            for i in range(ref_model_batch_size):
+                tmp_ids.append(all_packed[i + idx * ref_model_batch_size]["prompt_completion_ids"])
+                tmp_actual_seq_len.append(all_packed[i + idx * ref_model_batch_size]["actual_sequence_length"])
+                
+        tmp_ids = np.array(tmp_ids)
+        tmp_actual_seq_len = np.array(tmp_actual_seq_len)
+        return tmp_ids, tmp_actual_seq_len
+    
+    def create_pack_group(self, data_dict_list, pack_num):
+        sample_num = len(data_dict_list)
+        pack_group, each_group = [], []
+        current_group_length = 0
+        for i in range(sample_num):
+            sample_length = data_dict_list[i]["response_end_index"] - data_dict_list[i]["prompt_start_idx"] + 2
+            needed_length = current_group_length + sample_length + (pack_num - len(each_group) - 1)
+            if len(each_group) >= pack_num or needed_length > self.grpo_config.seq_length:
+                pack_group.append(each_group)
+                each_group = []
+                current_group_length = 0
+            each_group.append(data_dict_list[i])
+            current_group_length += sample_length
+        if each_group:
+            pack_group.append(each_group)
+        return pack_group
+
+    def pack_grouped_data(self, pack_list, pack_num=1):
+        real_sample_num = len(pack_list)
+        dummy_sample_num = pack_num - real_sample_num
+        pad_to_length = self.grpo_config.seq_length - dummy_sample_num
+        pad_token_id = self.tokenizer.eos_token_id
+
+        prompt_completion_ids = []
+        actual_sequence_length = []
+        responses_mask = []
+        sample_index = []
+        sample_valid_length = []
+        advantages = []
+        occupied_length = 0
+        for i, data_dict in enumerate(pack_list):
+            sample_prompt_completion_ids = data_dict["prompt_completion_ids"]
+            sample_response_mask = data_dict["response_mask"]
+            sample_advantage = data_dict["advantage"]
+            prompt_start_idx = data_dict["prompt_start_idx"]
+            response_end_index = data_dict["response_end_index"]
+            sample_length = response_end_index - prompt_start_idx + 2
+
+            sample_prompt_completion_ids = sample_prompt_completion_ids[prompt_start_idx:response_end_index + 1]
+            sample_prompt_completion_ids = np.pad(
+                sample_prompt_completion_ids, (0, 1), mode="constant", constant_values=pad_token_id,
+            )
+
+            sample_response_mask = sample_response_mask[prompt_start_idx:response_end_index + 1]
+            sample_response_mask = np.pad(
+                sample_response_mask, (0, 1), mode="constant", constant_values=0,
+            )
+
+
+            sample_actual_sequence_length = occupied_length + sample_length
+            this_sample_index = np.array([i] * sample_length)
+            sample_advantage = np.array([sample_advantage] * sample_length)
+
+            if i == real_sample_num - 1:
+                sample_prompt_completion_ids = pad_sequence_to_length(
+                    sample_prompt_completion_ids, pad_to_length - occupied_length, pad_token_id
+                )
+                sample_response_mask = pad_sequence_to_length(
+                    sample_response_mask, pad_to_length - occupied_length, 0
+                )
+                sample_advantage = pad_sequence_to_length(
+                    sample_advantage, pad_to_length - occupied_length, 0
+                )
+                this_sample_index = pad_sequence_to_length(
+                    this_sample_index, pad_to_length - occupied_length, i
+                )
+                sample_actual_sequence_length = pad_to_length
+
+            prompt_completion_ids.append(sample_prompt_completion_ids)
+            responses_mask.append(sample_response_mask)
+            advantages.append(sample_advantage)
+            actual_sequence_length.append(sample_actual_sequence_length)
+            sample_index.append(this_sample_index)
+            sample_valid_length.append(np.sum(sample_response_mask))
+
+            occupied_length += sample_length
+
+        for i in range(dummy_sample_num):
+            prompt_completion_ids.append(np.array([pad_token_id]))
+            responses_mask.append(np.array([0]))
+            advantages.append(np.array([0]))
+            actual_sequence_length.append(actual_sequence_length[-1]+1)
+            sample_index.append(np.array([real_sample_num + i]))
+            sample_valid_length.append(1)
+
+        result = {
+            "prompt_completion_ids": np.concatenate(prompt_completion_ids, axis=0),
+            "responses_mask": np.concatenate(responses_mask, axis=0),
+            "advantages": np.concatenate(advantages, axis=0),
+            "actual_sequence_length": np.array(actual_sequence_length),
+            "sample_index": np.concatenate(sample_index, axis=0),
+            "sample_valid_length": np.array(sample_valid_length)
+        }
+
+        return result
+
+    def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages, pack_num=1):
+
+        data_dict_list = []
+        bs = prompt_completion_ids.shape[0]
+        advantages = advantages.reshape(-1)
+        print(f"#1 advantages shape: {advantages.shape}")
+        for i in range(bs):
+            sample_prompt_mask = prompts_mask[i]
+            sample_response_mask = responses_mask[i]
+            indices = np.nonzero(sample_prompt_mask)[0]
+            if len(indices) > 0:
+                prompt_start_idx = indices[0]
+            else:
+                logger.warning(f"prompts_mask is all zero for index {i}!")
+                continue
+            indices = np.nonzero(sample_response_mask)[0]
+            if len(indices) > 0:
+                response_end_index = indices[-1]
+            else:
+                logger.warning(f"responses_mask is all zero for index {i}!")
+                continue
+            data_dict = {"prompt_completion_ids": prompt_completion_ids[i],
+                         "prompt_mask": prompts_mask[i],
+                         "response_mask": responses_mask[i],
+                         "advantage": advantages[i],
+                         "prompt_start_idx": prompt_start_idx,
+                         "response_end_index": response_end_index}
+            data_dict_list.append(data_dict)
+        pack_group = self.create_pack_group(data_dict_list, pack_num)
+        result = []
+        for i, pack_list in enumerate(pack_group):
+            packed = self.pack_grouped_data(pack_list, pack_num)
+            result.append(packed)
+        return result
 
     def compute_advantages(self, rewards, eps=1e-4):
         mean_grouped_rewards = rewards.mean()
@@ -389,19 +569,23 @@ class GRPOTrainer:
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
-
+        
+        max_decode_length = self.grpo_config.max_decode_length
         if self.infer.use_vllm == VllmMode.ORIGIN:
             results = []
             input_bs = n_questions // self.infer_dp
+            max_decode_length = self.grpo_config.max_decode_length
             for idx in range(num_rollouts * num_generations):
-                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :])
+                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], 
+                                             max_decode_length=max_decode_length)
                 for res_idx in range(len(result)):
                     if len(results) == len(result):
                         results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
                     else:
                         results.append(result[res_idx])
         else:
-            results = self.infer.generate(input_ids_numpy)
+
+            results = self.infer.generate(input_ids_numpy, max_decode_length)
 
         end_time = time.time()
         print_perf_stat(start_time, end_time, "infer generate")
@@ -413,68 +597,15 @@ class GRPOTrainer:
         logger.info("model_infer offload")
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
-        for i, ele in enumerate(results):
-            logger.info(f"{i} result is {ele}")
-
-        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = (
-            self.infer.post_process_infer_outputs(results)
-        )
-
-        self.ref.load()
-        logger.info("ref_model load")
-
-        total_ref_model_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
-        logger.info(f"total_ref_model_batch_size: {total_ref_model_batch_size}")
-        ref_step_num = (num_generations * n_questions * num_rollouts) // total_ref_model_batch_size
-        logger.info(f"ref model total steps: {ref_step_num}")
-        all_ref_start_time = time.time()
-        for idx in range(ref_step_num):
-            # responses_mask will be updated before ref model infer.
-            prompt_completion_ids, responses_mask, prompts_mask = (
-                self._construct_inputs_for_ref_model(
-                    right_padding_responses,
-                    responses_mask_gather,
-                    left_padding_prompts,
-                    prompts_mask_gather,
-                    ref_model_batch_size=total_ref_model_batch_size,
-                    idx=idx
-                )
-            )
-
-            input_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
-                               constant_values=self.grpo_config.pad_token_id)
-            prompt_completion_ids_tensor = Tensor(input_ids[:, :-1],
-                                                  dtype=ms.int32)  # [n_questions, seq_length]
-            sampels_tensor = Tensor(input_ids[:, 1:], dtype=ms.int32)  # [n_questions, seq_length]
-
-            # Step 2: run ref model.
-            start_time = time.time()
-            logger.info("reference model step {} start at {}-------------------------------".format(
-                idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
-
-            ref_per_token_logps = self.ref.compute_ref_log_prob(
-                prompt_completion_ids_tensor, samples=sampels_tensor)
-            ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
-
-            end_time = time.time()
-            print_perf_stat(start_time, end_time, f"reference model step {idx}")
-            logger.info("reference model step {} end at {}-------------------------------".format(
-                idx, time.strftime('%H:%M:%S', time.localtime(end_time))))
-            logger.info(f"Ref log probs {ref_per_token_logps}")
-
-            start_index = idx * total_ref_model_batch_size
-            end_index = (idx + 1) * total_ref_model_batch_size
-            all_prompt_completion_ids[start_index : end_index, :] = prompt_completion_ids_tensor.asnumpy()
-            all_prompts_mask[start_index : end_index, :] = prompts_mask
-            all_responses_mask[start_index : end_index, :] = responses_mask
-            all_ref_per_token_logps[start_index : end_index, :] = ref_per_token_logps
-
-        all_ref_end_time = time.time()
-        print_perf_stat(all_ref_start_time, all_ref_end_time, f"reference model all steps {ref_step_num}")
-
-        self.ref.offload()
-        logger.info("ref_model offload")
-
+        
+        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(
+            results)
+        all_prompts_mask = np.concatenate((prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)),
+                                          axis=1)
+        all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
+                                            axis=1)
+        all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
+                                                   axis=1)
         # Step 3: calculate reward.
         start_time = time.time()
         logger.info("calculate reward start at {}-------------------------------".format(
@@ -530,7 +661,12 @@ class GRPOTrainer:
             adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
             all_mean_grouped_rewards.append(mean_grouped_rewards)
             advantages[i::samples_per_step] = adv_tem.reshape((-1,))
-
+      
+        logger.info(f"advantages: {advantages}")
+        logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
+        
+        self.ref.load()
+        logger.info("ref_model load")
         # regroup the index of all data
         # assume the input shape is [num_generations*num_rollout*num_questions, -1]
         # [1,2,3,4,1,2,3,4]--->[1,1,2,2,3,3,4,4]
@@ -543,44 +679,90 @@ class GRPOTrainer:
         all_prompt_completion_ids = reconstruct_index(all_prompt_completion_ids, num_generations)
         all_prompts_mask = reconstruct_index(all_prompts_mask, num_generations)
         all_responses_mask = reconstruct_index(all_responses_mask, num_generations)
-        all_ref_per_token_logps = reconstruct_index(all_ref_per_token_logps, num_generations)
         advantages = reconstruct_index(advantages, num_generations)
+        logger.info(f"all_prompt_completion_ids {all_prompt_completion_ids}")
+        logger.info(f"advantages {advantages}")
+        if self.grpo_config.packing:
+            pack_num = self.grpo_config.pack_num
+            all_packed = self.pack_grpo_data(
+                all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
+            logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
+            total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.infer_dp
+            total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
 
-        logger.info(f"advantages: {advantages}")
-        logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
+            while len(all_packed) < total_ref_batch_size:
+                all_packed.append(all_packed[0])
 
-        if (self.grpo_config.save_prompt_completions_data and
-                step % self.grpo_config.save_prompt_completions_interval == 0):
-            save_kwargs = {
-                MetricData.QUESTION.value: prompts,
-                MetricData.ANSWER.value: completions,
-                MetricData.PARSED_ANSWER.value: answer_parsed_lst,
-                MetricData.SOLUTION.value: solution,
-                MetricData.REWARD_PER_QUESTION.value: rewards,
-                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
-            }
-            save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
-                                          f'prompt_completions_step_{step}.json')
-            save_prompt_completions_data(save_file_path, **save_kwargs)
+            all_ref_per_token_logps = np.zeros(
+                (len(all_packed), self.grpo_config.seq_length), dtype=np.float32)
+            ref_step_num = len(all_packed) // total_ref_batch_size
+            logger.info(f"ref model total steps: {ref_step_num}")
+            for idx in range(ref_step_num):
+                # responses_mask will be updated before ref model infer.
+                prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                    all_packed, ref_model_batch_size=total_ref_batch_size, idx=idx)
 
-        for i in range(num_rollouts * n_questions * num_generations):
-            pad_prompt_completion_ids = np.pad(all_prompt_completion_ids[i],
-                                               ((0, 1),), 'constant',
-                                               constant_values=self.grpo_config.pad_token_id).astype(np.int32)
-            pad_prompts_mask = np.pad(all_prompts_mask[i], ((0, 1),),
-                                      'constant', constant_values=0).astype(np.int32)
-            pad_responses_mask = np.pad(all_responses_mask[i], ((0, 1),),
-                                        'constant', constant_values=0).astype(np.int32)
-            grpodata = GRPOData(
-                prompt_completion_ids=pad_prompt_completion_ids,
-                prompts_mask=pad_prompts_mask,
-                responses_mask=pad_responses_mask,
-                ref_per_token_logps=all_ref_per_token_logps[i].astype(
-                    np.float32
-                ),
-                advantages=np.array(advantages[i]).astype(np.float32)
-            )
-            grpo_rl_elements.append(grpodata)
+                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0),(0, 1)), 'constant', 
+                                    constant_values=self.grpo_config.pad_token_id)
+                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=mindspore.int32)
+                input_prompt_ids = Tensor(prompt_completion_ids[:,:-1], dtype=mindspore.int32)
+                actual_sequence_length = Tensor(actual_sequence_length, dtype=mindspore.int32)
+
+                # Step 2: run ref model.
+                start_time = time.time()
+                logger.info("reference model step {} start at {}-------------------------------".format(
+                    idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
+
+                ref_per_token_logps = self.ref.compute_ref_log_prob(
+                    input_prompt_ids, None, samples=sampels_tensor, actual_sequence_length=actual_sequence_length)
+                ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
+
+                end_time = time.time()
+                logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
+                    idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+                logger.info(f"Ref log probs {ref_per_token_logps}")
+
+                all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
+
+            self.ref.offload()
+            logger.info("ref_model offload")
+
+            if (self.grpo_config.save_prompt_completions_data and
+                    step % self.grpo_config.save_prompt_completions_interval == 0):
+                save_kwargs = {
+                    MetricData.QUESTION.value: prompts,
+                    MetricData.ANSWER.value: completions,
+                    MetricData.PARSED_ANSWER.value: answer_parsed_lst,
+                    MetricData.SOLUTION.value: solution,
+                    MetricData.REWARD_PER_QUESTION.value: rewards,
+                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
+                }
+                save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
+                                            f'prompt_completions_step_{step}.json')
+                save_prompt_completions_data(save_file_path, **save_kwargs)
+
+            for i in range(len(all_packed)):
+                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0,1),), 'constant', 
+                                                    constant_values=self.grpo_config.pad_token_id).astype(np.int32)
+
+                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0,1),), 'constant', 
+                                                    constant_values=0).astype(np.int32)
+                responses_mask_temp = responses_mask_temp[1:]
+
+                ref_per_token_logps = all_ref_per_token_logps[i].astype(np.float32)
+                ref_per_token_logps = ref_per_token_logps * responses_mask_temp
+                ref_per_token_logps[np.isnan(ref_per_token_logps)] = 0.0
+
+                grpodata = GRPOData(
+                    prompt_completion_ids=prompt_completion_ids_temp.astype(np.int32),
+                    responses_mask=responses_mask_temp.astype(np.int32),
+                    ref_per_token_logps=ref_per_token_logps,
+                    advantages=all_packed[i]["advantages"].astype(np.float32),
+                    actual_sequence_length=all_packed[i]["actual_sequence_length"].astype(np.int32),
+                    sample_index=all_packed[i]["sample_index"].astype(np.int32),
+                    sample_valid_length=all_packed[i]["sample_valid_length"].astype(np.int32),
+                )
+                grpo_rl_elements.append(grpodata)
 
         logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
         all_mean_len = np.mean(all_elements_completion_len)
@@ -590,7 +772,7 @@ class GRPOTrainer:
         self.train.push_to_store(grpo_rl_elements)
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
         avg_scores = np.mean(np.array(all_mean_grouped_rewards))
-        logger.info(f"Avg scores:\n {avg_scores}")
+        logger.info(f"Avg scores: {avg_scores}")
         if self.tensor_writer:
             self.tensor_writer.add_scalar("average-scores", avg_scores, global_step=self.make_exp_step)
 
@@ -614,10 +796,12 @@ class GRPOTrainer:
             logger.info(f"start save grpo {save_path}")
             schema = {
                 "prompt_completion_ids": {"type": "int32", "shape": [-1]},
-                "prompts_mask": {"type": "int32", "shape": [-1]},
                 "responses_mask": {"type": "int32", "shape": [-1]},
                 "ref_per_token_logps": {"type": "float32", "shape": [-1]},
                 "advantages": {"type": "float32", "shape": [-1]},
+                "actual_sequence_length": {"type": "int32", "shape": [-1]},
+                "sample_index":{"type": "int32", "shape": [-1]},
+                "sample_valid_length": {"type": "int32", "shape": [-1]},
             }
 
             writer = FileWriter(file_name=save_path, shard_num=1, overwrite=True)
@@ -660,14 +844,9 @@ class GRPOTrainer:
                 # load for reshard
                 self.infer.load()
 
-                if self.transform.sync_ref_model and \
-                    ((i + 1) % self.transform.ref_model_sync_steps == 0):
-                    # in some work, ref update may have a 'bad' effect
-                    self.ref.load()
-                    self.transform.reshard_params(i)
-                    self.ref.offload()
-                else:
-                    self.transform.reshard_params(i)
+                # 权重倒换优化
+                self.ref.load()
+                self.transform.reshard_params(i)
                 self.train.offload_model()
 
                 step_end_time = time.time()

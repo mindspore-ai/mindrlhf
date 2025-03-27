@@ -111,5 +111,10 @@ class GRPOConfig:
     gpu_memory_utilization: float = 0.8
     detokenize: bool = False
 
+    packing: bool = True
+    packing_sample_length: int = 2048 #1024
+    pack_num: int = 1
+
     tensorboard_dir: str = ""
     tensorboard_queue_size: int = 10
+    
