@@ -28,6 +28,7 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.utils import TransformParametersD2D
+from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.worker.worker import Worker, format_time_delta
 
 
@@ -40,6 +41,17 @@ def match_func(s1, s2):
 def match_func_policy2ref(s1, s2):
     s1 = s1[s1.find('.')+1:]
     s1 = s1[s1.find('.')+1:]
+    return s1 == s2
+
+
+def match_func_vllm(s1, s2):
+    s1 = s1[s1.find('.')+1: ]
+    # get rid of the first 'model'
+    # eg. policy_model.model.model.layer -> policy_model.model.layer
+    tmp1 = s1[:s1.find('.')]
+    tmp2 = s1[s1.find('.model')+6:]
+    s1 = tmp1 + tmp2
+    s2 = s2[s2.find('.')+1: ]
     return s1 == s2
 
 
@@ -57,8 +69,12 @@ class TransformWorker(Worker):
             ms.merge_pipeline_strategys("../../strategy/infer_policy_strategy/", dst_merged_stra)
             ms.merge_pipeline_strategys("../../strategy/infer_ref_strategy/", ref_merged_stra)
         ms.mint.distributed.barrier()
-        self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
+        if grpo_config.use_vllm == VllmMode.ORIGIN:
+            self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
                                                                  src_merged_stra, dst_merged_stra, match_func)
+        else:
+            self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
+                                                                    src_merged_stra, dst_merged_stra, match_func_vllm)
         ms.communication.comm_func.barrier()
         self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
                                                                src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)

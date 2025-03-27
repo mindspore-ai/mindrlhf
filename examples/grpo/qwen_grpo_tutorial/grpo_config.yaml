@@ -64,13 +64,13 @@ use_parallel: False
 sync_ref_model: True
 # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
 ref_model_sync_steps: 50
-# ref_model_batch_size: 2
+ref_model_batch_size: 2
 
-# # vllm config
-# use_vllm: 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
-# hf_config_path: "./config.json"   # vllm config 生成路径
-# max_model_len: 25536
-# max_num_batched_tokens: 25536
-# max_num_seqs: 1024
-# num_scheduler_steps: 32
-# gpu_memory_utilization: 0.8
+# vllm config
+use_vllm: 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
+hf_config_path: "./config.json"   # vllm config 生成路径
+max_model_len: 25536
+max_num_batched_tokens: 25536
+max_num_seqs: 1024
+num_scheduler_steps: 32
+gpu_memory_utilization: 0.8

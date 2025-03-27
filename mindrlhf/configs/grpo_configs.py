@@ -14,6 +14,14 @@
 # ============================================================================
 """GRPO model"""
 from dataclasses import dataclass
+from enum import Enum
+
+
+class VllmMode(Enum):
+    ORIGIN = 0
+    VLLM = 1
+    DEBUG = 2   # DEBUG mode：init model with vllm, but generate with mindformers
+
 
 @dataclass
 class GRPOConfig:
@@ -85,3 +93,14 @@ class GRPOConfig:
     sync_ref_model: bool = True
     # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
     ref_model_sync_steps: int = 50
+    ref_model_batch_size: int = 2
+
+    # vllm config
+    use_vllm: int = 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
+    hf_config_path: str = "./config.json"   # vllm config 生成路径
+    max_model_len: int = 25536
+    max_num_batched_tokens: int = 25536
+    max_num_seqs: int = 1024
+    num_scheduler_steps: int = 32
+    gpu_memory_utilization: float = 0.8
+    detokenize: bool = False

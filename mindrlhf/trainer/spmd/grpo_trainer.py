@@ -21,7 +21,7 @@ from typing import List, Dict
 # mindspore
 import mindspore
 import mindspore as ms
-from mindspore import Tensor
+from mindspore import Tensor, mint
 import mindspore.common.dtype as mstype
 from mindspore.communication import get_rank
 from mindspore.mindrecord import FileWriter
@@ -33,7 +33,7 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
-from mindrlhf.configs.grpo_configs import GRPOConfig
+from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
 from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
@@ -83,6 +83,11 @@ class GRPOTrainer:
         grpo_config.save_ckpt_dir = args.save_ckpt_dir
         grpo_config.align_type = "rlhf_stages"
         grpo_config.use_parallel = use_parallel
+        if grpo_config.use_vllm not in range(len(VllmMode)):
+            logger.warning(f"use_vllm should be 0, 1 or 2, but got {grpo_config.use_vllm}. Reset to 0.")
+            grpo_config.use_vllm = 0
+        grpo_config.use_vllm = VllmMode(grpo_config.use_vllm)
+        logger.info(f"vllm mode: {grpo_config.use_vllm}, hf_config_path: {grpo_config.hf_config_path}")
 
         # for worker
         self.tokenizer = Qwen2Tokenizer(
@@ -153,15 +158,22 @@ class GRPOTrainer:
         self.ref.load_checkpoint()
         self.train.load_checkpoint()
 
-    def _get_batch(self):
+    def _get_batch(self, num_rollouts):
         """ get batch """
-        try:
-            batch = next(self.prompt_iterator)
-        except StopIteration:
-            ms.dataset.config.set_seed(2023)
-            self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
-            batch = next(self.prompt_iterator)
-        return batch
+        full_batch = None
+        for _ in range(num_rollouts):
+            try:
+                batch = next(self.prompt_iterator)
+            except StopIteration:
+                ms.dataset.config.set_seed(2023)
+                self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
+                batch = next(self.prompt_iterator)
+            if full_batch:
+                full_batch[0] = mint.cat((full_batch[0], batch[0]))
+                full_batch[1] = mint.cat((full_batch[1], batch[1]))
+            else:
+                full_batch = batch
+        return full_batch
 
     def _split_for_data_parallel(self, batch_inputs, data_parallel_size):
         """
@@ -178,208 +190,230 @@ class GRPOTrainer:
         stop = (dp_rank_id + 1) * split_size
         batch_inputs_for_this_rank = batch_inputs[start:stop]
         return batch_inputs_for_this_rank
+    
+    def _remove_right_padding(self, token_ids, padding_token=0):
+        """ remove_right_padding """
+        trimmed_sequences = []
+        for seq in token_ids:
+            # 将序列转换为列表以处理不同输入类型（如numpy数组）
+            seq_list = list(seq)
+            # 逆序查找第一个非填充标记的位置
+            last_non_pad = next((i for i in reversed(
+                range(len(seq_list))) if seq_list[i] != padding_token), None)
+            # 截断右侧填充
+            if last_non_pad is not None:
+                trimmed_sequences.append(seq_list[:last_non_pad + 1])
+            else:
+                trimmed_sequences.append([])  # 全为填充时返回空列表
+        return trimmed_sequences
 
+    def _remove_left_padding(self, token_ids, padding_token=0):
+        """ remove_left_padding """
+        trimmed_sequences = []
+        for seq in token_ids:
+            # 将序列转换为列表以处理不同输入类型（如numpy数组）
+            seq_list = list(seq)
+            # 顺查找第一个非填充标记的位置
+            last_non_pad = next(
+                (i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
+            # 截断左侧填充
+            if last_non_pad is not None:
+                trimmed_sequences.append(seq_list[last_non_pad:])
+            else:
+                trimmed_sequences.append([])  # 全为填充时返回空列表
+        return trimmed_sequences
+
+    def _construct_inputs_for_ref_model(self, right_padding_responses, responses_mask, left_padding_prompts, prompts_mask,
+                                        ref_model_batch_size=None, idx=None):
+        if ref_model_batch_size:
+            right_padding_responses = right_padding_responses[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
+            responses_mask = responses_mask[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
+            left_padding_prompts = left_padding_prompts[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
+            prompts_mask = prompts_mask[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
+
+        is_eos = right_padding_responses == self.tokenizer.eos_token_id
+        eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
+        eos_idx[is_eos.any(axis=1)] = np.argmax(is_eos.astype(int), axis=1)[is_eos.any(axis=1)]
+        sequence_indices = np.arange(is_eos.shape[1])
+        responses_eos_mask = (sequence_indices <= eos_idx[:, None]).astype(int)
+        responses_mask = responses_mask * responses_eos_mask
+
+        prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses), axis=1)
+        prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)), axis=1)
+        responses_mask = np.concatenate(
+            (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
+        attention_mask = prompts_mask + responses_mask
+
+        # Generate outputs.
+        prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
+        attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)
+        return prompt_completion_ids_tensor, attention_mask_tensor, responses_mask, prompts_mask
+    
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16, pre_run_flag=False):
-        def _remove_right_padding(token_ids, padding_token=0):
-            """ remove_right_padding """
-            trimmed_sequences = []
-            for seq in token_ids:
-                # 将序列转换为列表以处理不同输入类型（如numpy数组）
-                seq_list = list(seq)
-                # 逆序查找第一个非填充标记的位置
-                last_non_pad = next((i for i in reversed(
-                    range(len(seq_list))) if seq_list[i] != padding_token), None)
-                # 截断右侧填充
-                if last_non_pad is not None:
-                    trimmed_sequences.append(seq_list[:last_non_pad + 1])
-                else:
-                    trimmed_sequences.append([])  # 全为填充时返回空列表
-            return trimmed_sequences
-
-        def _remove_left_padding(token_ids, padding_token=0):
-            """ remove_left_padding """
-            trimmed_sequences = []
-            for seq in token_ids:
-                # 将序列转换为列表以处理不同输入类型（如numpy数组）
-                seq_list = list(seq)
-                # 顺查找第一个非填充标记的位置
-                last_non_pad = next(
-                    (i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
-                # 截断左侧填充
-                if last_non_pad is not None:
-                    trimmed_sequences.append(seq_list[last_non_pad:])
-                else:
-                    trimmed_sequences.append([])  # 全为填充时返回空列表
-            return trimmed_sequences
-
-        def _construct_inputs_for_ref_model(right_padding_responses, responses_mask, left_padding_prompts, prompts_mask):
-            is_eos = right_padding_responses == self.tokenizer.eos_token_id
-            eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
-            eos_idx[is_eos.any(axis=1)] = np.argmax(is_eos.astype(int), axis=1)[is_eos.any(axis=1)]
-            sequence_indices = np.arange(is_eos.shape[1])
-            responses_eos_mask = (sequence_indices <= eos_idx[:, None]).astype(int)
-            responses_mask = responses_mask * responses_eos_mask
-
-            prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses), axis=1)
-            prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)), axis=1)
-            responses_mask = np.concatenate(
-                (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
-            attention_mask = prompts_mask + responses_mask
-
-            # Generate outputs.
-            prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
-            attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)
-            return prompt_completion_ids_tensor, attention_mask_tensor, responses_mask, prompts_mask
-
         ep_begin_time = time.time()
         logger.info("Make experience begin at {} \n------------------------------- "
                     .format(time.strftime('%H:%M:%S', time.localtime(ep_begin_time))))
         logger.info(f"Generate {num_generations} times")
-        self.infer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
+        if self.infer.use_vllm == VllmMode.ORIGIN:
+            self.infer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
+        else:
+            self.infer.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.ref.ref_model.model.set_train(False)
-        
-        
+
         grpo_rl_elements = []
         all_mean_grouped_rewards = []
         all_elements_compeltion_len = []
+
+        batch = self._get_batch(num_rollouts)
+        prompt_tensors = Tensor(batch[0], mstype.int32).asnumpy()
+        solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
+        prompt_tensors_full = prompt_tensors
+        repeat_solution_ids = solution_ids
+        for i in range(num_generations - 1):
+            prompt_tensors_full = np.concatenate((prompt_tensors_full, prompt_tensors))
+            repeat_solution_ids = np.concatenate((repeat_solution_ids, solution_ids))
+        input_ids_numpy = self._split_for_data_parallel(prompt_tensors_full, self.infer_dp)
+        solution_ids = self._remove_right_padding(repeat_solution_ids, padding_token=self.grpo_config.pad_token_id)
+        solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
+        for i in range(len(solution)):
+            solution[i] = "$" + solution[i] + "$"
+        reward_kwargs = {"solution": solution}
+        logger.info(f"solution: {solution}")
+
+        n_questions = batch[0].shape[0] // num_rollouts
+        all_rewards = np.zeros((num_generations * num_rollouts * n_questions), dtype=np.float32)
+        all_prompt_completion_ids = np.zeros(
+            (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
+        all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
+        all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
+        all_ref_per_token_logps = np.zeros(
+            (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length-1), dtype=np.float32)
+
+        self.infer.load()
+        # Step 1: generate responses and masks.
+        start_time = time.time()
+        logger.info("generation start at {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(start_time))))
         
-        for rollout in range(num_rollouts):
-            batch = self._get_batch()
-            prompt_tensors_full = Tensor(batch[0], mstype.int32)
-            prompt_tensors = self._split_for_data_parallel(prompt_tensors_full, self.infer_dp)
-            solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
-            solution_ids = _remove_right_padding(solution_ids, padding_token=self.grpo_config.pad_token_id)
-            solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
-            for i in range(len(solution)):
-                solution[i] = "$" + solution[i] + "$"
-            reward_kwargs = {"solution": solution}
-            logger.info(f"solution: {solution}")
+        if self.infer.use_vllm == VllmMode.ORIGIN:
+            results = []
+            input_bs = n_questions // self.infer_dp
+            for idx in range(num_rollouts * num_generations):
+                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :])
+                for res_idx in range(len(result)):
+                    if len(results) == len(result):
+                        results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
+                    else:
+                        results.append(result[res_idx])
+        else:
+            results = self.infer.generate(input_ids_numpy)
 
-            n_questions = batch[0].shape[0]
-            all_rewards = np.zeros((num_generations, n_questions), dtype=np.float32)
-            all_prompt_completion_ids = np.zeros(
-                (num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
-            all_prompts_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
-            all_responses_mask = np.zeros((num_generations, n_questions, self.grpo_config.seq_length), dtype=np.int32)
-            all_ref_per_token_logps = np.zeros(
-                (num_generations, n_questions, self.grpo_config.seq_length-1), dtype=np.float32)
+        self.infer.offload()
+        logger.info("model_infer offload")
 
-            for idx in range(num_generations):
-                self.infer.load()
-                # Step 1: generate responses and masks.
-                start_time = time.time()
-                logger.info("generation start at {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(start_time))))
+        end_time = time.time()
+        logger.info("generate end at {}, elapsed time {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
 
-                results = self.infer.generate(prompt_tensors)
+        logger.info(f"generate sequence results is {results} type {type(results)}")
+        for i, ele in enumerate(results):
+            logger.info(f"{i} result is {ele}")
 
-                self.infer.offload()
-                logger.info("model_infer offload")
+        if pre_run_flag:
+            # only generate once
+            self.infer.generate_strategy()
+        
+        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(
+            results)
+        
+        self.ref.load()
+        logger.info("ref_model load")
 
-                self.ref.load()
-                logger.info("ref_model load")
+        logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
+        ref_step_num = (num_generations * n_questions * num_rollouts) // self.grpo_config.ref_model_batch_size
+        logger.info(f"ref model total steps: {ref_step_num}")
+        for idx in range(ref_step_num):
+            # responses_mask will be updated before ref model infer.
+            prompt_completion_ids_tensor, attention_mask_tensor, responses_mask, prompts_mask = self._construct_inputs_for_ref_model(
+                right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather,
+                ref_model_batch_size=self.grpo_config.ref_model_batch_size, idx=idx)
+            
+            # Step 2: run ref model.
+            start_time = time.time()
+            logger.info("reference model step {} start at {}-------------------------------".format(
+                idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
 
-                end_time = time.time()
-                logger.info("generate end at {}, elapsed time {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+            ref_per_token_logps = self.ref.compute_ref_log_prob(
+                prompt_completion_ids_tensor, attention_mask_tensor, samples=prompt_completion_ids_tensor, save_strategy=pre_run_flag)
 
-                logger.info(f"generate sequence results is {results} type {type(results)}")
-                for i, ele in enumerate(results):
-                    logger.info(f"{i} result is {ele}")
+            end_time = time.time()
+            logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
+                idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+            logger.info(f"Ref log probs {ref_per_token_logps}")
 
-                right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = self.infer.post_process_infer_outputs(
-                    results)
+            all_prompt_completion_ids[idx * self.grpo_config.ref_model_batch_size : (idx + 1) * self.grpo_config.ref_model_batch_size, :] = prompt_completion_ids_tensor.asnumpy()
+            all_prompts_mask[idx * self.grpo_config.ref_model_batch_size : (idx + 1) * self.grpo_config.ref_model_batch_size, :] = prompts_mask
+            all_responses_mask[idx * self.grpo_config.ref_model_batch_size : (idx + 1) * self.grpo_config.ref_model_batch_size, :] = responses_mask
+            all_ref_per_token_logps[idx * self.grpo_config.ref_model_batch_size : (idx + 1) * self.grpo_config.ref_model_batch_size, :] = ref_per_token_logps
 
-                if pre_run_flag and idx == 0:
-                    # only generate once
-                    self.infer.generate_strategy()
+        self.ref.offload()
+        logger.info("ref_model offload")
 
-                # responses_mask will be updated before ref model infer.
-                prompt_completion_ids_tensor, attention_mask_tensor, responses_mask, prompts_mask = _construct_inputs_for_ref_model(
-                    right_padding_responses, responses_mask, left_padding_prompts, prompts_mask)
+        # Step 3: calculate reward.
+        start_time = time.time()
+        logger.info("calculate reward start at {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(start_time))))
 
-                # Step 2: run ref model.
-                start_time = time.time()
-                logger.info("reference model start at {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(start_time))))
+        logger.info(
+            f"left_padding_prompts is {type(left_padding_prompts)}")
+        no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=self.grpo_config.pad_token_id)
+        no_padding_responses = self._remove_right_padding(
+            right_padding_responses, padding_token=self.grpo_config.pad_token_id)
+        prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
+        completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
 
-                ref_per_token_logps = self.ref.compute_ref_log_prob(
-                    prompt_completion_ids_tensor, attention_mask_tensor, samples=prompt_completion_ids_tensor, save_strategy=pre_run_flag)
+        logger.info(f"prompts: \n {prompts}")
+        logger.info(f"completions: \n {completions}")
+        all_elements_compeltion_len.extend([len(com) for com in completions])
+        mean_len = np.array([len(com) for com in completions]).mean()
+        logger.info(f"mean completions.length: \n {mean_len}")
 
-                end_time = time.time()
-                logger.info("reference model end at {}, elapsed time {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
-                logger.info(f"Ref log probs {ref_per_token_logps}")
+        rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.reward_funcs)), dtype=np.float32)
+        for i, reward_func in enumerate(self.reward_funcs):
+            # Repeat all input columns (but "prompt" and "completion") to match the number of generations
+            output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+            rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
+        rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
+        logger.info(f"precision rewards are {rewards}")
 
-                self.ref.offload()
-                logger.info("ref_model offload")
+        end_time = time.time()
+        logger.info("calculate reward end at {}, elapsed time {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
 
-                # Step 3: calculate reward.
-                start_time = time.time()
-                logger.info("calculate reward start at {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(start_time))))
+        all_rewards = np.array(rewards, dtype=np.float32)
+        logger.info(f"loaded_all_rewards: {all_rewards}")
 
+        mean_grouped_rewards = all_rewards.mean()
+        std_grouped_rewards = all_rewards.std(ddof=1)
+        advantages = (all_rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
+        logger.info(f"mean_grouped_rewards: \n {mean_grouped_rewards}")
+        all_mean_grouped_rewards = mean_grouped_rewards.tolist()
+
+        for i in range(n_questions):
+            for j in range(num_generations * num_rollouts):
+                grpodata = GRPOData(
+                    prompt_completion_ids=all_prompt_completion_ids[i * (num_generations * num_rollouts) + j].astype(np.int32),
+                    prompts_mask=all_prompts_mask[i * (num_generations * num_rollouts) + j].astype(np.int32),
+                    responses_mask=all_responses_mask[i * (num_generations * num_rollouts) + j].astype(np.int32),
+                    ref_per_token_logps=all_ref_per_token_logps[i * (num_generations * num_rollouts) + j].astype(np.float32),
+                    advantages=np.array(advantages[i * (num_generations * num_rollouts) + j]).astype(np.float32)
+                )
                 logger.info(
-                    f"left_padding_prompts is {type(left_padding_prompts)}")
-                no_padding_prompts = _remove_left_padding(left_padding_prompts, padding_token=self.grpo_config.pad_token_id)
-                no_padding_responses = _remove_right_padding(
-                    right_padding_responses, padding_token=self.grpo_config.pad_token_id)
-                prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
-                completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
-
-                logger.info(f"prompts: \n {prompts}", )
-                logger.info(f"completions: \n {completions}")
-                all_elements_compeltion_len.extend([len(com) for com in completions])
-                
-                mean_len = np.array([len(com) for com in completions]).mean()
-                logger.info(f"mean completions.length: \n {mean_len}")
-
-                rewards_per_func = np.zeros((n_questions, len(self.reward_funcs)), dtype=np.float32)
-                for i, reward_func in enumerate(self.reward_funcs):
-                    # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-                    output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
-                    rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
-                rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
-                logger.info(f"precision rewards are {rewards}")
-
-                end_time = time.time()
-                logger.info("calculate reward end at {}, elapsed time {}-------------------------------".format(
-                    time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
-
-                all_rewards[idx, :] = np.array(rewards, dtype=np.float32)
-                all_prompt_completion_ids[idx, :, :] = prompt_completion_ids_tensor.asnumpy()
-                all_prompts_mask[idx, :, :] = prompts_mask
-                all_responses_mask[idx, :, :] = responses_mask
-                all_ref_per_token_logps[idx, :, :] = ref_per_token_logps
-
-            all_rewards = all_rewards.transpose((1, 0))
-            logger.info(f"loaded_all_rewards: {all_rewards}")
-            all_prompt_completion_ids = all_prompt_completion_ids.transpose((1, 0, 2))
-            all_prompts_mask = all_prompts_mask.transpose((1, 0, 2))
-            all_responses_mask = all_responses_mask.transpose((1, 0, 2))
-            all_ref_per_token_logps = all_ref_per_token_logps.transpose((1, 0, 2))
-
-            mean_grouped_rewards = all_rewards.mean(axis=1)
-            std_grouped_rewards = all_rewards.std(axis=1, ddof=1)
-            advantages = (all_rewards - mean_grouped_rewards[:, np.newaxis]) / (std_grouped_rewards[:, np.newaxis] + 1e-4)
-            logger.info(f"mean_grouped_rewards: \n {mean_grouped_rewards}")
-            all_mean_grouped_rewards.extend((mean_grouped_rewards.tolist()))
-
-            for i in range(n_questions):
-                for j in range(num_generations):
-                    grpodata = GRPOData(
-                        prompt_completion_ids=all_prompt_completion_ids[i, j].astype(np.int32),
-                        prompts_mask=all_prompts_mask[i, j].astype(np.int32),
-                        responses_mask=all_responses_mask[i, j].astype(np.int32),
-                        ref_per_token_logps=all_ref_per_token_logps[i, j].astype(np.float32),
-                        advantages=advantages[i, j:j+1].astype(np.float32)
-                    )
-                    logger.info(
-                        f"precision grpo data is {all_prompt_completion_ids}\n=== {all_prompts_mask}\n=== {all_responses_mask}\n=== {all_ref_per_token_logps}\n=== {advantages}\n")
-                    grpo_rl_elements.append(grpodata)
+                    f"precision grpo data is {all_prompt_completion_ids}\n=== {all_prompts_mask}\n=== {all_responses_mask}\n=== {all_ref_per_token_logps}\n=== {advantages}\n")
+                grpo_rl_elements.append(grpodata)
 
         logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
-        print(f"all_elements_compeltion_len mean: {np.mean(all_elements_compeltion_len)}")
+        logger.info(f"all_elements_compeltion_len mean: {np.mean(all_elements_compeltion_len)}")
         self.train.push_to_store(grpo_rl_elements)
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
         logger.info(f"Avg scores:\n {np.mean(np.array(all_mean_grouped_rewards))}")
