@@ -30,7 +30,7 @@ The MindRLHF learning process consists of three stages:
 * Stage 2: Reward model training.
 * Stage 3: Reinforcement learning training.
 
-MindRLHF integrates the rich model library of the [MindFormers](https://github.com/mindspore-lab/mindformers), providing fine-tuning processes for basic models such as Pangu-Alpha (2.6B, 13B) and GPT-2.
+MindRLHF integrates the rich model library of the [MindFormers](https://github.com/mindspore-lab/mindformers), providing fine-tuning processes for basic models such as GPT-2.
 
 Fully inheriting the parallel interface of MindSpore, MindRLHF can easily deploy models to the training cluster with just one click, enabling training and inference of large models.
 
@@ -55,23 +55,23 @@ There are some requirements for MindRLHF:
 
 Current version of MindRLHF: `0.3.0`
 
-The current version integrates Pangu-alpha(13B), GPT2, Baichuan2(7B/13B) models, and users can explore these two models. In the future, we will provide more models such as LLAMA, BLOOM, GLM, etc. To help users quickly implement their own applications. The specific supported list is shown below:
+The current version integrates GPT2, Baichuan2(7B/13B) models, and users can explore these two models. In the future, we will provide more models such as LLAMA, BLOOM, GLM, etc. To help users quickly implement their own applications. The specific supported list is shown below:
 
 Table 1： The models and scales supported in MindRLHF
-|  Models   | Pangu-alpha |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
-|  ----     | ----        |  ----   |  ----   |  ----   |----   |
-| Scales    | 2.6B/13B    | 124M    | 7B    | 7B    |9B    |
-| Parallel  | Y           | Y       | Y            |   Y       |Y       |
-| Device    | NPU         | NPU     | NPU          |   NPU     | NPU     |
+|  Models   |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
+|  ----     |  ----   |  ----   |  ----   |----   |
+| Scales    | 124M    | 7B    | 7B    |9B    |
+| Parallel  | Y       | Y            |   Y       |Y       |
+| Device    | NPU     | NPU          |   NPU     | NPU     |
 
 The support of models for different training stages is shown in the following table:
 
 Table 2： The models and stages supported in MindRLHF
-|  Stages     | Pangu-alpha    |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
-|  ----       | ----           |  ----   |  ----        |----        |
-| SFT         | Y              | Y       | Y            |Y            |
-| RM          | Y              | Y       | Y            |Y            |
-| RLHF        | Y              | Y       | Y            |Y            |
+|  Stages     |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
+|  ----       |  ----   |  ----        |----        |
+| SFT         | Y       | Y            |Y            |
+| RM          | Y       | Y            |Y            |
+| RLHF        | Y       | Y            |Y            |
 
 In the future, we will integrate more models such as LLAMA, GLM, BLOOM, etc.
 
