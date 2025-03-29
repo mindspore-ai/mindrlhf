@@ -20,7 +20,6 @@ import mindspore.nn as nn
 from mindformers import LlamaForCausalLM
 from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
 from mindformers.models.gpt2 import GPT2LMHeadModel
-from mindformers.models.pangualpha import PanguAlphaHeadModel
 from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
 
 
@@ -41,7 +40,6 @@ class BaseModel(nn.Cell):
     def __init__(self):
         super(BaseModel, self).__init__()
         self._model_list = [
-            "pangu",
             "gpt2",
             "llama",
             "glm4",
@@ -63,11 +61,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "pangu":
-            self.model = PanguAlphaHeadModel(model_config)
-            self.backbone = self.model.backbone
-            self.lm_head = self.model.head
-        elif self.model_type == "gpt2":
+        if self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
             self.lm_head = self.model.head
@@ -108,10 +102,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "pangu":
-            self.model = PanguAlphaHeadModel(model_config)
-            self.backbone = self.model.backbone
-        elif self.model_type == "gpt2":
+        if self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
         elif self.model_type == "llama":
@@ -149,10 +140,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "pangu":
-            self.model = PanguAlphaHeadModel(model_config)
-            self.backbone = self.model.backbone
-        elif self.model_type == "gpt2":
+        if self.model_type == "gpt2":
             self.model = GPT2LMHeadModel(model_config)
             self.backbone = self.model.backbone
         elif self.model_type == "llama":

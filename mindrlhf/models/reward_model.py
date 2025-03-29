@@ -67,34 +67,7 @@ class RewardModel(BaseModel):
         preferred_end_scores = []  # preferred completions' scores
         batch_size, seq_length = F.shape(input_ids)
 
-        if self.model_type == 'pangu':
-            if self.model.phase == "train":
-                seq_length = seq_length - 1
-                tokens = self.model.slice(input_ids, (0, 0), (batch_size, seq_length), (1, 1))
-            else:
-                tokens = input_ids
-            input_mask = F.cast(self.model.not_equal(tokens, self.model.pad_token_id),
-                                mstype.float32)
-            if attention_mask is None:
-                attention_mask = self.model.get_attention_mask(input_mask)
-            else:
-                attention_mask = self.model.cast(attention_mask, mstype.float32)
-                attention_mask = self.model.slice2(attention_mask, (0, 0, 0),
-                                                   (batch_size, seq_length, seq_length),
-                                                   (1, 1, 1))
-            if input_position is None:
-                input_position = F.tuple_to_array(F.make_range(seq_length))
-                input_position = self.model.expand(input_position, 0)
-                if batch_size == 1:
-                    input_position = F.reshape(input_position, (1, seq_length))
-                else:
-                    input_position = self.model.tile(input_position, (batch_size, 1))
-            else:
-                input_position = self.model.slice(input_position, (0, 0), (batch_size, seq_length), (1, 1))
-            # [batch_size, seq_length, vocab_size]
-            output_states, _ = self.backbone(tokens, input_position, attention_mask,
-                                             init_reset, batch_valid_length)
-        elif self.model_type == 'gpt2':
+        if self.model_type == 'gpt2':
             tokens = input_ids
             if attention_mask is None:
                 attention_mask = self.model.not_equal(input_ids, self.model.eos_token_id)
@@ -164,31 +137,7 @@ class CriticModel(BaseModel):
         construct function for critic model
         """
         batch_size, seq_length = F.shape(input_ids)
-        if self.model_type == 'pangu':
-            tokens = input_ids
-            input_mask = F.cast(self.model.not_equal(tokens, self.model.pad_token_id),
-                                mstype.float32)
-            if attention_mask is None:
-                attention_mask = self.model.get_attention_mask(input_mask)
-            else:
-                attention_mask = self.model.cast(attention_mask, mstype.float32)
-                attention_mask = self.model.slice2(attention_mask, (0, 0, 0),
-                                                   (batch_size, seq_length, seq_length),
-                                                   (1, 1, 1))
-            if input_position is None:
-                input_position = F.tuple_to_array(F.make_range(seq_length))
-                input_position = self.model.expand(input_position, 0)
-                if batch_size == 1:
-                    input_position = F.reshape(input_position, (1, seq_length))
-                else:
-                    input_position = self.model.tile(input_position, (batch_size, 1))
-            else:
-                input_position = self.model.slice(input_position, (0, 0), (batch_size, seq_length), (1, 1))
-            # [batch_size, seq_length, vocab_size]
-            init_reset = True
-            batch_valid_length = None
-            output_states, _ = self.backbone(tokens, input_position, attention_mask)
-        elif self.model_type == 'gpt2':
+        if self.model_type == 'gpt2':
             tokens = input_ids
             if attention_mask is None:
                 attention_mask = self.model.not_equal(input_ids, self.model.eos_token_id)

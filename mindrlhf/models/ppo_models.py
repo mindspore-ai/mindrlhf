@@ -269,45 +269,7 @@ class CausalLMHydraWithValueHead(BaseModel):
         construct function for CausalLMHydraWithValueHead
         """
         batch_size, seq_length = input_ids.shape
-        if self.model_type == "pangu":
-            tokens = input_ids
-            input_mask = F.cast(
-                self.model.not_equal(
-                    tokens, self.model.pad_token_id), mstype.float32
-            )
-            if attention_mask is None:
-                attention_mask = self.model.get_attention_mask(input_mask)
-            else:
-                attention_mask = self.model.cast(
-                    attention_mask, mstype.float32)
-                attention_mask = self.model.slice2(
-                    attention_mask,
-                    (0, 0, 0),
-                    (batch_size, seq_length, seq_length),
-                    (1, 1, 1),
-                )
-
-            if input_position is None:
-                input_position = F.tuple_to_array(F.make_range(seq_length))
-                input_position = self.model.expand(input_position, 0)
-                if batch_size == 1:
-                    input_position = F.reshape(input_position, (1, seq_length))
-                else:
-                    input_position = self.model.tile(
-                        input_position, (batch_size, 1))
-            else:
-                if self.model.phase == "train":
-                    input_position = self.model.slice(
-                        input_position, (0, 0), (batch_size,
-                                                 seq_length), (1, 1)
-                    )
-
-            # [batch_size, seq_length, vocab_size]
-            output_states, embedding_table = self.backbone(
-                tokens, input_position, attention_mask, init_reset, batch_valid_length
-            )
-            logits_2d = self.lm_head(output_states, embedding_table)
-        elif self.model_type == "gpt2":
+        if self.model_type == "gpt2":
             tokens = input_ids
             if attention_mask is None:
                 attention_mask = self.model.not_equal(
