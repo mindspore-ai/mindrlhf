@@ -4,14 +4,15 @@ export MS_ALLOC_CONF="memory_tracker:False,enable_vmm:True"
 export GLOG_v=2
 export MS_DEV_DUMP_IR_PASSES="hwopt_d_after_stream_assign,valid,graph_build"
 export MS_DEV_RUNTIME_CONF="memory_statistics:False"
-export MS_ENABLE_LCCL=off  # 910C上必须得设成off
+export MS_ENABLE_LCCL=on  # turn off on A3
 
 root_path="$(realpath "$(dirname "$0")")"
 root_path=$root_path/../../../
 cd $root_path
 WORKDIR=$PWD/../
-export PYTHONPATH=$root_path:$PYTHONPATH  # 指定mindrlhf路径
+export PYTHONPATH=$root_path:$PYTHONPATH  # define mindrlhf path
 export MINDFORMERS_PATH=$WORKDIR/mindformers/
+export PYTHONPATH=$MINDFORMERS_PATH:$PYTHONPATH  # define mindformers path
 
 noderank=$1
 master_addr=$2
