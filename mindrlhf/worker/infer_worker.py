@@ -154,6 +154,7 @@ class InferWorker(Worker):
             self.grpo_model_infer.grpo_model.policy_model.add_flags_recursive(is_first_iteration=True)
             self.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.on_device = True
+        self.save_strategy_dir = grpo_config.save_strategy_dir
 
     def model(self):
         return self.grpo_model_infer
@@ -305,6 +306,7 @@ class InferWorker(Worker):
             f"precision return value is {right_padding_responses.astype(np.int32)}, {responses_mask}, "
             f"{left_padding_prompts.astype(np.int32)}, {prompts_mask}"
         )
+        context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         return (
             right_padding_responses.astype(np.int32), responses_mask,
             left_padding_prompts.astype(np.int32), prompts_mask
@@ -312,8 +314,10 @@ class InferWorker(Worker):
 
     def generate_strategy(self):
         """ generate_strategy """
+        context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
+                                          parallel_mode="stand_alone", full_batch=False)
         stage_name = 'infer'
-        dir_name = f"../../strategy/{stage_name}_policy_strategy/"
+        dir_name = f"{self.save_strategy_dir}/{stage_name}_policy_strategy/"
         if os.path.exists(dir_name) and get_rank() == 0:
             import shutil
             logger.info(f"remove infer policy strategy dir {dir_name}")
@@ -323,12 +327,13 @@ class InferWorker(Worker):
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
         else:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model)
-        save_strategy_file(static_dict, f"../../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
+        save_strategy_file(static_dict,
+                           f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={
                 "save_file":
-                    f"../../strategy/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                    f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
@@ -356,6 +361,7 @@ class InferWorker(Worker):
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.use_parallel else ms.load_checkpoint
         logger.info(f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel} {load_ckpt_func}")
         if self.sft_ckpt_path_infer:
+            self.on_device = True
             param_dict = load_ckpt_func(self.sft_ckpt_path_infer)
             if self.use_vllm == VllmMode.ORIGIN:
                 new_param_dict = {'grpo_model.policy_model.model.' + k: v for k, v in param_dict.items()}
