@@ -40,5 +40,6 @@ if __name__ == '__main__':
     parser.add_argument("--pre_store_data", type=int, default=16, help="pre generate times")
     parser.add_argument("--reward_funcs", nargs='*', type=str, help="reward_funcs")
     parser.add_argument("--reward_weights", nargs='*', type=float, help="reward_weights")
+    parser.add_argument("--save_strategy_dir", type=str, default="../../strategy/", help="save_strategy_dir")
     args = parser.parse_args()
     main(args)

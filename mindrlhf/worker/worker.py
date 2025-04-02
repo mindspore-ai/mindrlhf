@@ -24,10 +24,13 @@ class GRPOData:
     grpo data
     """
     prompt_completion_ids: np.array
-    prompts_mask: np.array
+    # prompts_mask: np.array
     responses_mask: np.array
     ref_per_token_logps: np.array
     advantages: np.array
+    actual_sequence_length: np.array
+    sample_index: np.array
+    sample_valid_length: np.array
 
 
 # 占位，后续扩展基类功能

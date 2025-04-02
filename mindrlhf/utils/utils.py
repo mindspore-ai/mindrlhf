@@ -20,6 +20,9 @@ import time
 import hashlib
 import numpy as np
 import yaml
+import json
+import copy
+
 import mindspore.nn as nn
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
@@ -40,11 +43,12 @@ from mindspore import context
 import mindspore.common.dtype as mstype
 
 from mindformers.tools.ckpt_transform import TransformCkpt
+from mindformers import logger
 
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_generate", "yaml_to_dataclass"]
+           "ckpt_transfer_for_generate", "yaml_to_dataclass", "convert_index_json_total"]
 
 def yaml_to_dataclass(file_path, dataclass_type):
     """
@@ -462,3 +466,23 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
         dst_strategy="./generate_policy_strategy/",
         prefix="./generate_policy_"
     )
+
+
+def convert_index_json_total(load_checkpoint, converted_dir, convert_map_dict_lst, is_qkv_concat):
+    """convert mapping file if exists"""
+    index_path = os.path.join(load_checkpoint, 'model.safetensors.index.json')
+    if not os.path.exists(index_path):
+        logger.warning(f"The given path contains no 'model.safetensors.index.json' file.")
+        return
+    with open(index_path, 'r') as f:
+        data = json.load(f)
+    weight_map = data.get("weight_map")
+    total_weight_map = {}
+    for convert_map_dict_func in convert_map_dict_lst:
+        new_weight_map = copy.deepcopy(weight_map)
+        converted_weight_map = convert_map_dict_func(new_weight_map, qkv_concat=is_qkv_concat)
+        total_weight_map.update(converted_weight_map)
+    flags_ = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    with os.fdopen(os.open(os.path.join(converted_dir, 'param_name_map.json'), flags_, 0o750), 'w') as f:
+        json.dump(total_weight_map, f, indent=2)
+        logger.info(f"Converted file param_name_map.json")
