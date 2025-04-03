@@ -221,15 +221,6 @@ class InferWorker(Worker):
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
         np.set_printoptions(threshold=1024)
-        if self.args.custom_model_name == "llama":
-            print("processing custom tokenizer...")
-            self.sft_config_infer.processor.tokenizer.tokenizer_file = self.args.vocab_path
-            tokenizer = build_tokenizer(self.sft_config_infer.processor.tokenizer)
-        else:
-            print("processing qwen2 tokenizer...")
-            tokenizer = Qwen2Tokenizer(
-                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
-            )
 
         def print_data(data, tokenizer, name):
             decoded_str2 = tokenizer.decode(data)
