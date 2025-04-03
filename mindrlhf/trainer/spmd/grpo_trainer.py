@@ -26,6 +26,7 @@ from mindspore.communication import get_rank
 from mindspore.mindrecord import FileWriter
 from mindspore.dataset import MindDataset
 from mindspore import communication as D
+from mindspore.common.api import _pynative_executor
 
 # mindformers
 from mindformers import logger
@@ -35,7 +36,7 @@ from mindformers import MindFormerConfig
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat
+from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat, convert_index_json_total
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 # mindrlhf
@@ -73,10 +74,14 @@ class GRPOTrainer:
         logger.info("GRPOTrainer: finish init workers")
 
         self.reshard_optimizer = None
+        # rename parameters in safetensors
+        if args.load_sft_checkpoint_infer and args.load_ckpt_format == "safetensors":
+            self.rename_safetensors_weights(args)
+
         self._compile()
-        self._load_checkpoint()
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
                                          self.train.model(), self.infer.model(), self.ref.model())
+        self._load_checkpoint()
 
     def _init_grpo_configs(self, args):
         """ init grpo configs """
@@ -601,3 +606,25 @@ class GRPOTrainer:
         self.train.save_checkpoint(
             rank_id=get_rank(), steps=self.grpo_config.epochs)
         logger.info("run grpo train end")
+
+    def rename_safetensors_weights(self, args):
+        """ rename safetensors and write output to param_name_map.json"""
+        # 默认3个模型要加载的safetensors文件相同，用同一个config对象处理
+        infer_config = MindFormerConfig(args.sft_path_infer)
+        infer_config.load_checkpoint = args.load_sft_checkpoint_infer
+
+        if infer_config.model.model_config.get("qkv_concat", False):
+            raise ValueError("safetensors only support qkv_concat=False for now")
+
+        if get_rank() == 0:
+            convert_func_lst = []
+            convert_func_lst.append(self.infer.convert_map_dict)
+            convert_func_lst.append(self.ref.convert_map_dict)
+            convert_func_lst.append(self.train.convert_map_dict)
+            convert_index_json_total(infer_config.load_checkpoint,
+                                     infer_config.load_checkpoint, convert_func_lst, False)
+        else:
+            # wait for rank 0 to finish
+            time.sleep(10)
+        ms.mint.distributed.barrier()
+        _pynative_executor.sync()
