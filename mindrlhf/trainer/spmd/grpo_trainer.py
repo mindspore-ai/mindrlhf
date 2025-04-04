@@ -92,6 +92,11 @@ class GRPOTrainer:
         self.train = TrainWorker(grpo_config=self.grpo_config,
                                  sft_path_train=self.sft_path_train,
                                  args=self.args)
+        logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
+        if self.grpo_config.packing:
+            self.grpo_config.packing_sample_length = \
+                self.train.sft_model_config_train.seq_length
+            logger.info(f"set packing_sample_length to {self.grpo_config.packing_sample_length}")
         logger.info("GRPOTrainer: finish init workers")
 
         if get_rank() == 0:
@@ -99,7 +104,7 @@ class GRPOTrainer:
             strategy_ckpt_save_dir = self.grpo_config.save_strategy_dir
             if os.path.exists(strategy_ckpt_save_dir):
                 shutil.rmtree(strategy_ckpt_save_dir)
-                print(f"Existed strategy directory {strategy_ckpt_save_dir} has been deleted.")
+                logger.info(f"Existed strategy directory {strategy_ckpt_save_dir} has been deleted.")
             os.makedirs(strategy_ckpt_save_dir, exist_ok=True)
         ms.communication.comm_func.barrier()
 
@@ -108,7 +113,7 @@ class GRPOTrainer:
             self.rename_safetensors_weights(args)
 
         self._compile()
-        print('self.grpo_config.save_strategy_dir', self.grpo_config.save_strategy_dir)
+        logger.info(f'self.grpo_config.save_strategy_dir {self.grpo_config.save_strategy_dir}')
         self.transform = TransformWorker(self.grpo_config, self.train.model(),
                                          self.infer.model(), self.ref.model())
         self._load_checkpoint()
@@ -415,7 +420,7 @@ class GRPOTrainer:
         data_dict_list = []
         bs = prompt_completion_ids.shape[0]
         advantages = advantages.reshape(-1)
-        print(f"#1 advantages shape: {advantages.shape}")
+        logger.info(f"advantages shape in pack: {advantages.shape}")
         for i in range(bs):
             sample_prompt_mask = prompts_mask[i]
             sample_response_mask = responses_mask[i]
@@ -527,7 +532,7 @@ class GRPOTrainer:
         logger.info(f"generate sequence results is {results} type {type(results)}")
         
         right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(
-            results)
+            results) # allgather data
         all_prompts_mask = np.concatenate((prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)),
                                           axis=1)
         all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
@@ -554,8 +559,6 @@ class GRPOTrainer:
         logger.info(f"mean completions.length: \n {mean_len}")
 
         rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.reward_funcs)), dtype=np.float32)
-        print("self.reward_funcs")
-        print(self.reward_funcs)
         for i, reward_func in enumerate(self.reward_funcs):
             # Repeat all input columns (but "prompt" and "completion") to match the number of generations
             output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
@@ -573,14 +576,13 @@ class GRPOTrainer:
         total_size = all_rewards.shape[0]
         advantages = np.zeros((total_size,))
         tmp_all_rewards = all_rewards.copy()
-        for i in range(total_size // num_generations):
-            step = total_size // self.infer_dp
-            listnum =list(range(i, total_size, step)) 
+        samples_per_step = total_size // num_generations
+        for i in range(samples_per_step):
+            listnum =list(range(i, total_size, samples_per_step)) 
             temp_rewards = tmp_all_rewards[listnum]
             adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
             all_mean_grouped_rewards.append(mean_grouped_rewards)
-            # adv[list_num] = adv_tem
-            advantages[i::step] = adv_tem.reshape((-1,))
+            advantages[i::samples_per_step] = adv_tem.reshape((-1,))
       
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
@@ -668,7 +670,6 @@ class GRPOTrainer:
                     sample_index=all_packed[i]["sample_index"].astype(np.int32),
                     sample_valid_length=all_packed[i]["sample_valid_length"].astype(np.int32),
                 )
-                print("##grpodata: ", grpodata)
                 grpo_rl_elements.append(grpodata)
 
         logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
@@ -729,7 +730,8 @@ class GRPOTrainer:
             f"Start training epoch num:{self.grpo_config.epochs}, step num:{self.step_num}, generation num:{self.grpo_config.num_generations}")
         np.set_printoptions(threshold=1024)
         """
-        第一次执行前, load ckpt后参数在host上, 在网络第一次执行时会将参数自动加载到device上, 不需要手动load/offload
+        Before the first execution, params are on the host after 'load_model';
+        The params will be automatically loaded to npu device without 'load' or 'offload'.
         """
         for n in range(self.grpo_config.epochs):
             for i in range(self.step_num):
@@ -749,12 +751,15 @@ class GRPOTrainer:
                 # load for reshard
                 self.infer.load()
 
-                # 权重倒换优化
-                self.ref.load()
-                self.transform.reshard_params(i)
-
+                if self.transform.sync_ref_model and \
+                    ((i + 1) % self.transform.ref_model_sync_steps == 0):
+                    # in some work, ref update may have a 'bad' effect
+                    self.ref.load()
+                    self.transform.reshard_params(updata_ref=True)
+                    self.ref.offload()
+                else:
+                    self.transform.reshard_params()
                 self.train.offload_model()
-                self.ref.offload()
                 
                 step_end_time = time.time()
                 logger.info("step end at  {}, elapsed time {} \n------------------------------- ".format(

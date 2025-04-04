@@ -235,17 +235,22 @@ class InferWorker(Worker):
         generate_begin_time = time.time()
         if max_decode_length == 0:
             max_decode_length = self.grpo_config.max_decode_length
+        min_decode_length = 4
+        logger.info(f"max_decode_length is {max_decode_length}")
+        logger.info(f"min_decode_length is {min_decode_length}")
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
             outputs = self.grpo_model_infer.grpo_model.policy_model.generate(input_ids_numpy[:, :max_valid_length],
                                                                              max_new_tokens=max_decode_length,
+                                                                             min_new_tokens=min_decode_length,
                                                                              do_sample=True)
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
             outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
                                                                                    max_new_tokens=max_decode_length,
+                                                                                   min_new_tokens=min_decode_length,
                                                                                    do_sample=True)
             logger.info("infer without vllm end, not use vllm model")
         else:
@@ -318,10 +323,14 @@ class InferWorker(Worker):
     def load(self):
         if self.on_device:
             return
-        logger.info(f'before load stf infer')
+        logger.info(f'before load stf infer {ms.hal.memory_stats()}')
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             param._load()
-        logger.info(f'after load stf infer')
+            # if "paged_attention_mgr.key_cache" in param.name or "paged_attention_mgr.value_cache":
+            #     continue
+            # else:
+            #     param._load()
+        logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 
     def load_checkpoint(self):

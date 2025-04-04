@@ -113,8 +113,6 @@ class RefWorker(Worker):
     def compute_ref_log_prob(self, prompt_completion_ids_tensor, attention_mask_tensor, samples, actual_sequence_length, save_strategy=False):
         np.set_printoptions(threshold=1024)
         context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
-        logger.info(f"precision refmodel inputs are {prompt_completion_ids_tensor}, {attention_mask_tensor}, {samples}")
-
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
         ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,

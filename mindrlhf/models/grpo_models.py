@@ -301,13 +301,8 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         sample_index, #[bs, seq_len]
         sample_valid_len,  #[bs, packed_sample_num]
     ):
-        # bs, seq_len = prompt_completion_ids.shape
         pack_sample_num = sample_valid_len.shape[1]
         real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
-        # responses_mask = self.slice(responses_mask, (0, 1), (bs, seq_len), (1, 1))
-        # ref_per_token_logps = self.slice(ref_per_token_logps, (0, 1), (bs, seq_len), (1, 1))
-        # advantages = self.slice(advantages, (0, 1), (bs, seq_len), (1, 1))
-
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
         samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
         actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
