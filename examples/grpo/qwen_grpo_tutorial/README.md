@@ -1,8 +1,8 @@
 # Qwen-GRPO强化学习训练教程
 
-GRPO（Group Relative Policy Optimization）是针对数学逻辑推理任务提出的强化学习优化算法。训练过程是通过学习一个策略模型，通过不断试错，策略模型与奖励模型的不断交互，策略模型会逐渐倾向于选择获得更高奖励的行为，自主探索出最佳学习路径。通过GRPO算法大规模训练，大模型在逻辑推理能力上得到显著提升。
+GRPO（Group Relative Policy Optimization）是针对数学逻辑推理任务提出的强化学习优化算法。强化学习的训练过程是学习一个策略模型，通过不断试错，策略模型与奖励模型的不断交互，策略模型会逐渐倾向于选择获得更高奖励的行为，自主探索出最佳学习路径。通过GRPO算法大规模训练，大模型在逻辑推理能力上得到显著提升。
 
-本教程基于`Qwen2.5 7b`模型与`GSM8K Train`数据集引导读者跑通单机8卡GRPO训推一体的基本流程。
+本教程基于`Qwen2.5 7b`模型与`GSM8K Train`数据集引导读者执行单机8卡GRPO训推一体的基本流程。
 
 ## 一、模型以及数据集获取与预处理
 
@@ -19,7 +19,7 @@ cd /{path}/mindformers/research/qwen2_5
 并执行以下脚本：
 
 ```shell
-python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml 
+python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml
 
 # 参数说明
 model:       模型名称
@@ -37,7 +37,7 @@ config_path: 模型配置文件地址
 首先，在MindFormers路径下使用以下命令得到并行策略文件`/strategy`:
 
 ```bash
-cd /research/qwen2_5
+cd /{path}/mindformers/research/qwen2_5
 
 bash ../../scripts/msrun_launcher.sh "run_qwen2_5.py \
 --config /{path}/desired_model_config.yaml \
@@ -45,13 +45,13 @@ bash ../../scripts/msrun_launcher.sh "run_qwen2_5.py \
 --train_data /{path}/alpaca-fastchat4096.mindrecord " 8 PORT output/msrun_log False 2000
 ```
 
-其中，数据文件`/{path}/alpaca-fastchat4096.mindrecord`可以按照[这份教程](https://www.mindspore.cn/mindformers/docs/zh-CN/r1.3.2/quick_start/source_code_start.html)
+其中，数据文件`/{path}/alpaca-fastchat4096.mindrecord`可以按照[快速启动](https://www.mindspore.cn/mindformers/docs/zh-CN/r1.3.2/quick_start/source_code_start.html)
 中的指导进行生成，而模型配置文件`/{path}/desired_model_config.yaml`可以使用[finetune_qwen2_5_7b_for_strategy.yaml](model_configs/qwen_grpo/finetune_qwen2_5_7b_for_strategy.yaml)，
 并手动将其中的并行策略配置更改为用户希望的并行策略。
 
 此命令将会在`/research/qwen2_5/strategy`路径下生成并行策略文件，在下一步切分ckpt时作为dst_strategy的值传入。
 
-随后，执行以下脚本将完整权重切分为分布式权重
+随后，执行以下脚本将完整权重切分为分布式权重：
 
 ```bash
 cd ../..
@@ -100,7 +100,7 @@ output_path:      输出.mindrecord文件路径
 
 ### 训练/推理模型配置
 
-训练模型的配置文件默认为`model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml`,其中用户可以手动配置训练模型的并行策略：
+训练模型的配置文件默认为`model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml`，其中用户可以手动配置训练模型的并行策略：
 
 ```shell
 parallel_config:
@@ -119,7 +119,7 @@ micro_batch_num:              流水线并行中的micro batch number
 micro_batch_interleave_num:   当model_parallel>1时,可以设置为2以加速训练
 ```
 
-推理模型的配置文件默认为`model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml`,其中用户可以手动配置推理模型的并行策略：
+推理模型的配置文件默认为`model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml`，其中用户可以手动配置推理模型的并行策略：
 
 ```shell
 parallel_config:
@@ -140,7 +140,7 @@ GRPO训练算法相关配置可以在`examples/grpo/qwen_grpo_tutorial/grpo_conf
 beta: float = 0.01
 num_generations: int = 8
 num_rollouts: int = 4
-grpo_epochs: int = 2
+epochs: int = 2
 start_lr: float = 5e-7
 end_lr: float = 1e-10
 chunk_size: int = 2
@@ -149,13 +149,13 @@ sync_ref_model: bool = True
 ref_model_sync_steps: int = 50
 
 # 参数说明
-grpo_epochs:            在数据集上总共训练的epochs轮数
-chunk_size:             推理模型在每一步中为多少个问题生成回答
+beta:                   反向训练GRPO loss中KL散度的权重
 num_generations:        推理模型在每一步中为每个问题生成多少个回答
 num_rollouts:           推理模型在训练之前会反复进行多少轮
-beta:                   反向训练GRPO loss中KL散度的权重
+epochs:                 在数据集上总共训练的epochs轮数
 start_lr:               初始时反向训练的learning rate步长
-end_lr:                 结束时反向训练的learning rate步长, 必须大于start_lr
+end_lr:                 结束时反向训练的learning rate步长, 必须严格小于于start_lr
+chunk_size:             推理模型在每一步中为多少个问题生成回答
 batch_size:             反向训练的batch size
 sync_ref_model:         是否每隔若干步将ref model的权重更新为最新的训练模型权重
 ref_model_sync_steps:   若sync_ref_model=True, ref model权重更新的间隔步数
@@ -180,6 +180,7 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```
 
 ### 单机8卡拉起Qwen2.5-7b
+
 随后使用以下命令拉起单机8卡GRPO训练任务，可以参考run_grpo.sh
 
 ```shell
@@ -225,7 +226,9 @@ enable_compile_cache:         是否使用编译缓存
 ```
 
 ### 4机32卡拉起Qwen2.5-32B
+
 Qwen2.5-32B需要4个8卡节点拉起，需要在4个节点上同时执行拉起脚本；脚本参数与7b模型的8卡相比，需要额外配置2个参数
+
 ```shell
 bash run_grpo_32p.sh $node_rank $master_ip
 # 参数说明
@@ -234,6 +237,7 @@ master_ip                     主机IP，一般以序列号为0的节点的IP作
 ```
 
 ### 任务查看
+
 拉起任务后，通过以下命令查看运行日志
 
 ```shell

@@ -10,10 +10,10 @@
 [English](README.md) | 中文
 
 [简介](#简介) |
+[新闻](#新闻) |
 [安装](#安装) |
 [支持列表](#支持列表) |
 [快速入门](#快速入门) |
-[教程](#教程) |
 [贡献](#贡献) |
 [许可证](#许可证)
 
@@ -21,7 +21,7 @@
 
 ## 简介
 
-OPENAI的[ChatGPT](https://openai.com/blog/chatgpt)在自然语言方面表现出了令人震惊的效果，开启了通用人工智能的序幕,它的优秀表现，与 RLHF（[Reinforcement Learning from Human Feedback](https://openai.com/research/learning-from-human-preferences)）算法密不可分。在ChatGPT的前身[InstructGPT](https://openai.com/research/instruction-following)中，利用RLHF算法，通过收集人类反馈的信息，可以生成更加符合人类认知和价值观的内容，从而弥补了大模型中潜在的认知偏差。
+OPENAI的[ChatGPT](https://openai.com/blog/chatgpt)在自然语言方面表现出了令人震惊的效果，开启了通用人工智能的序幕,它的优秀表现，与 RLHF（[Reinforcement Learning from Human Feedback](https://openai.com/research/learning-from-human-preferences)）算法密不可分。
 
 `MindSpore RLHF`（简称 `MindRLHF`）以[MindSpore](https://gitee.com/mindspore/mindspore)作为基础框架，利用框架具备的大模型并行训练、推理、部署等能力，助力客户快速训练及部署带有百亿、千亿级别基础模型的RLHF算法流程。MindRLHF包含3个阶段的学习流程：
 
@@ -29,25 +29,28 @@ OPENAI的[ChatGPT](https://openai.com/blog/chatgpt)在自然语言方面表现�
 * 阶段2： 奖励模型训练
 * 阶段3： 强化学习训练
 
-MindRLHF集成了大模型套件[MindFormers](https://github.com/mindspore-lab/mindformers)中丰富的模型库， 提供了`Qwen2_5`,`Glm4`等基础模型的微调流程。MindRLHF 完全继承MindSpore的并行接口，可以一键将模型部署到训练集群上，开启大模型的训练和推理。
+MindRLHF集成了大模型套件[MindFormers](https://github.com/mindspore-lab/mindformers)中丰富的模型库， 提供了`Qwen2_5`、`Glm4`等基础模型的微调流程。MindRLHF完全继承MindSpore的并行接口，可以一键将模型部署到训练集群上，开启大模型的训练和推理。
 
 ### 特性
-- MindRLHF中集成了`增量推理`以提升推理性能，通过状态复用，相比于全量推理，推理性能可提升`30%`以上。
-- MindRLHF组件化解耦训练流程与模型定义，支持用户自定义修改模型结构、奖励函数、训练超参等。
-- 通过训练和推理权重在线快速自动重排，MindRLHF实现了训推共部署，避免权重文件落盘操作，节省离线转换保存权重文件的时间开销。
-- 通过异构内存Swap技术，MindRLHF按需加载模型至显存，避免训练和推理的权重同时存在，支持更大规模模型的训练任务。
 
-MindRLHF架构图如下：
-
-![framework](https://github.com/mindspore-lab/mindrlhf/blob/master/images/framework.jpg)
+* MindRLHF中集成了`增量推理`以提升推理性能，通过状态复用，相比于全量推理，推理性能可提升`30%`以上。
+* MindRLHF组件化解耦训练流程与模型定义，支持用户自定义修改模型结构、奖励函数、训练超参等。
+* 通过训练和推理权重在线快速自动重排，MindRLHF实现了训推共部署，避免权重文件落盘操作，节省离线转换保存权重文件的时间开销。
+* 通过异构内存Swap技术，MindRLHF按需加载模型至显存，避免训练和推理的权重同时存在，支持更大规模模型的训练任务。
 
 ## 新闻
-- [2025.2] 🚀🚀🚀 MindRLHF与鹏城实验室基于Qwen2.5-7B、32B打通[GRPO强化学习训练全流程](https://mp.weixin.qq.com/s/up7vYWn3NmNiW9KA_n4P4w) 🚀🚀🚀
+
+* [2025.3] 🚀🚀🚀 MindRLHF已实现[DeepSeek V3 + GRPO强化学习训练全流程支持](https://mp.weixin.qq.com/s?__biz=MzkxMTM2MjMzNg==&mid=2247630704&idx=1&sn=e340c4170b1ea13865fcf6325ef07d92&chksm=c0fbe4f3f595138cbf561f7f840a99a4d38b2237b67faadd3d79298365e0f42e589629bce868&scene=126&sessionid=1743684839#rd) 🚀🚀🚀
+* [2025.2] 🚀🚀🚀 MindRLHF与鹏城实验室基于Qwen2.5-7B、32B打通[GRPO强化学习训练全流程](https://mp.weixin.qq.com/s/up7vYWn3NmNiW9KA_n4P4w) 🚀🚀🚀
 
 ## 安装
 
+MindRLHF支持源码安装或通过Docker镜像安装。
+
 ### 源码安装
+
 当前版本`0.3.0`支持源码安装：
+
 ```bash
 git clone https://gitee.com/mindspore/mindrlhf.git
 cd mindrlhf
@@ -66,117 +69,109 @@ pip install -e .
 | MindRLHF | master, commit id：90977955470ea04f0e2256d6b73bc71ff62cf092 |
 
 ### 镜像安装
+
 用户也可以通过Docker镜像一键安装MindRLHF和所有相关依赖：
+
 1. 下载[Docker镜像](https://openi.pcl.ac.cn/PCL-Reasoner/GRPO-Training-Container.git)(推荐使用`git LFS`下载)。
 2. 基于镜像创建容器
-```bash
-docker run -itd  --privileged  --network=host \
-       --shm-size 500g \
-       --device=/dev/davinci0 \
-       --device=/dev/davinci1 \
-       --device=/dev/davinci2 \
-       --device=/dev/davinci3 \
-       --device=/dev/davinci4 \
-       --device=/dev/davinci5 \
-       --device=/dev/davinci6 \
-       --device=/dev/davinci7 \
-       --device=/dev/davinci_manager \
-       --device=/dev/hisi_hdc \
-       --device /dev/devmm_svm \
-       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
-       -v /usr/local/Ascend/firmware:/usr/local/Ascend/firmware \
-       -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
-       -v /usr/local/sbin:/usr/local/sbin \
-       -v /etc/hccn.conf:/etc/hccn.conf \
-       CONTAINER_NAME:TAG \
-       bash
-```
+
+    ```bash
+    docker run -itd  --privileged  --network=host \
+           --shm-size 500g \
+           --device=/dev/davinci0 \
+           --device=/dev/davinci1 \
+           --device=/dev/davinci2 \
+           --device=/dev/davinci3 \
+           --device=/dev/davinci4 \
+           --device=/dev/davinci5 \
+           --device=/dev/davinci6 \
+           --device=/dev/davinci7 \
+           --device=/dev/davinci_manager \
+           --device=/dev/hisi_hdc \
+           --device /dev/devmm_svm \
+           -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+           -v /usr/local/Ascend/firmware:/usr/local/Ascend/firmware \
+           -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+           -v /usr/local/sbin:/usr/local/sbin \
+           -v /etc/hccn.conf:/etc/hccn.conf \
+           CONTAINER_NAME:TAG \
+           bash
+    ```
+
 3. 进入容器
-```bash
-docker exec -it CONTAINER_ID bash
-```
+
+    ```bash
+    docker exec -it CONTAINER_ID bash
+    ```
 
 ## 支持列表
 
-当前 MindRLHF 版本：`0.3.0`
+当前版本集成了`Qwen2_5`、`DeepSeek V3`、`Glm4`等模型，用户可以基于这些模型进行探索。未来，我们将提供更多模型如`LLAMA3`、`Pangu`等，帮助用户快速实现自己的应用。
 
-当前版本集成了`Qwen2_5`,`Glm4`,等模型，用户可以基于这些模型进行探索。未来，我们将提供更多模型如`LLAMA3`、`DeepSeek V3`等，帮助用户快速实现自己的应用。具体支持列表如下所示：
+MindSpore RLHF中不同模型对不同训练阶段的支持情况如下表所示：
 
-表 1： 当前MindSpore RLHF支持的模型和规模
-
-| 模型   | Qwen2_5 | Glm4 |     |
-|------|---------|------|-----|
-| 规模   | 7B      | 9B   |     |
-| 支持并行 | ✅       | ✅    |     |
-| 硬件   | NPU     | NPU  |     |
-
-当前流程下，不同模型对不同训练阶段的支持情况如下表所示：
-
-表 2： 当前MindSpore RLHF支持的模型和阶段
+表 1： MindSpore RLHF支持的模型和阶段
 
 | 训练阶段                             | Qwen2_5  | DeepSeek V3 | Glm4 |
 |----------------------------------|----------|-------------|------|
-| [奖励模型训练](examples/reward_model)  | ❌        | ❌           | ❌    | 
+| [奖励模型训练](examples/reward_model)  | ❌        | ❌           | ❌    |
 | [DPO偏好微调训练](examples/dpo)        | ✅        | ❌           | ✅    |
 | [PPO强化学习训练](examples/ppo)        | ✅        | ❌           | ❌    |
-| [GRPO强化学习训练](examples/grpo)      | ✅        | ❌           | ❌    |
-
-
-未来，我们将打通更多的模型，如`LLAMA3`、`DeepSeek V3`等，敬请期待。
-
-
+| [GRPO强化学习训练](examples/grpo)      | ✅        | ✅           | ❌    |
 
 ## 快速入门
 
-* 奖励模型训练: 在`examples/reward_model_train_tutorial`文件夹中展示了如何使用`Llama2`模型进行奖励模型微调的过程。
+* 奖励模型训练: 在[`examples/reward_model_train_tutorial`](examples/reward_model)文件夹中展示了如何使用`Llama2`、`Glm4`模型进行奖励模型微调的过程。
 
-* DPO偏好微调训练：在`examples/dpo`文件夹中展示了如何使用`GLM4`，`Qwen2`和`Qwen2.5`模型进行DPO偏好微调训练的过程。
+* DPO偏好微调训练：在[`examples/dpo`](examples/dpo)文件夹中展示了如何使用`GLM4`、`Qwen2`和`Qwen2.5`模型进行DPO偏好微调训练的过程。
 
-* PPO强化学习训练: 在[`examples/ppo/qwen_ppo_tutorial/README.md`](examples/ppo/qwen_ppo_tutorial/README.md)中展示了如何使用`Qwen2.5`模型进行PPO强化学习训练的过程，包括模型与数据集获得，
-模型切分，数据集处理，配置设置以及拉起训练任务。
-下面是`MindRLHF`中使用PPOTrainer拉起训练任务的主要代码步骤。
+* PPO强化学习训练: 在[`examples/ppo/qwen_ppo_tutorial/README.md`](examples/ppo/qwen_ppo_tutorial/README.md)中展示了如何利用MindRLHF中的`PPOTrainer`组件使用`Qwen2.5`模型进行PPO强化学习训练的过程，包括模型与数据集获得、
+  模型切分、数据集处理、配置设置以及拉起训练任务。
 
-```python
-ppo_config, sft_model_config, ref_model_config, critic_model_config, rm_model_config = init_configs(
-    args)
-trainer = PPOTrainer(ppo_config=ppo_config, sft_model_config=sft_model_config, ref_model_config=ref_model_config,
-                        critic_model_config=critic_model_config, rm_model_config=rm_model_config)
-ppo_with_grad = init_network_and_optimizer(trainer)
-for epoch in range(ppo_config.epochs):
-    # sampling
-    trainer.make_experience(num_rollouts=ppo_config.num_rollouts)
-    dataset = init_ppo_dataset(trainer)
-    # use data sink to accelerate
-    trainer.train(ppo_with_grad, dataset, epoch)
-    trainer.save_checkpoint(rank_id, epoch)
-```
+下面是`MindRLHF`中使用`PPOTrainer`拉起训练任务的主要代码步骤。
 
-* GRPO强化学习训练: 在[`examples/grpo/qwen_grpo_tutorial/README.md`](examples/grpo/qwen_grpo_tutorial/README.md)中展示了如何使用`Qwen2.5`模型进行GRPO强化学习训练的过程，包括模型与数据集获得，
-模型切分，数据集处理，配置设置以及拉起训练任务。
-下面是`MindRLHF`中使用GRPOTrainer拉起训练任务的主要代码步骤。
+   ```python
+   ppo_config, sft_model_config, ref_model_config, critic_model_config, rm_model_config = init_configs(
+       args)
+   trainer = PPOTrainer(ppo_config=ppo_config, sft_model_config=sft_model_config, ref_model_config=ref_model_config,
+                           critic_model_config=critic_model_config, rm_model_config=rm_model_config)
+   ppo_with_grad = init_network_and_optimizer(trainer)
+   for epoch in range(ppo_config.epochs):
+       # sampling
+       trainer.make_experience(num_rollouts=ppo_config.num_rollouts)
+       dataset = init_ppo_dataset(trainer)
+       # use data sink to accelerate
+       trainer.train(ppo_with_grad, dataset, epoch)
+       trainer.save_checkpoint(rank_id, epoch)
+   ```
 
-```python
-grpo_config = GRPOConfig()
-sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
-sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
-ref_model_config = LlamaConfig(**ref_config.model.model_config)
-tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
-trainer = GRPOTrainer(
-    grpo_config=grpo_config,
-    sft_model_config_infer=sft_model_config_infer,
-    sft_model_config_train=sft_model_config_train,
-    ref_model_config=ref_model_config,
-    reward_funcs=[accuracy_reward, format_reward],
-    tokenizer=tokenizer,
-)
-grpo_with_grad = init_grpo_network_and_optimizer(trainer)
-for n in range(grpo_config.epochs):
-    steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
-    for i in range(steps):
-        trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
-        dataset = init_grpo_dataset(trainer)
-        trainer.train(grpo_with_grad, dataset)
-```
+* GRPO强化学习训练: 在[`examples/grpo/qwen_grpo_tutorial/README.md`](examples/grpo/qwen_grpo_tutorial/README.md)中展示了如何利用MindRLHF中的`GRPOOTrainer`组件使用`Qwen2.5`模型进行GRPO强化学习训练的过程，包括模型与数据集获得、
+  模型切分、数据集处理、配置设置以及拉起训练任务。
+
+下面是`MindRLHF`中使用`GRPOTrainer`拉起训练任务的主要代码步骤。
+
+   ```python
+   grpo_config = GRPOConfig()
+   sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+   sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+   ref_model_config = LlamaConfig(**ref_config.model.model_config)
+   tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+   trainer = GRPOTrainer(
+       grpo_config=grpo_config,
+       sft_model_config_infer=sft_model_config_infer,
+       sft_model_config_train=sft_model_config_train,
+       ref_model_config=ref_model_config,
+       reward_funcs=[accuracy_reward, format_reward],
+       tokenizer=tokenizer,
+   )
+   grpo_with_grad = init_grpo_network_and_optimizer(trainer)
+   for n in range(grpo_config.epochs):
+       steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
+       for i in range(steps):
+           trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
+           dataset = init_grpo_dataset(trainer)
+           trainer.train(grpo_with_grad, dataset)
+   ```
 
 ## 贡献
 
