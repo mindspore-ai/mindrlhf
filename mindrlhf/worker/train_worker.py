@@ -285,8 +285,9 @@ class TrainWorker(Worker):
 
     def offload_optimizer(self):
         if self.optimizer_on_device is False:
+            logger.info(f'no need for offload_optimizer because optimizer_on_device is False ')
             return
-        logger.info(f'before offload stf train ')
+        logger.info(f'before offload stf train optimizer {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.optimizer.moments1:
             param._offload()
         for param in self.grpo_with_grad.optimizer.moments2:
@@ -294,11 +295,12 @@ class TrainWorker(Worker):
         if self.train_pp_stage > 1:
             for param in self.grpo_with_grad.accu_grads:
                 param._offload()
-        logger.info(f'after offload stf train ')
+        logger.info(f'after offload stf train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = False
 
     def load_optimizer(self):
         if self.optimizer_on_device:
+            logger.info(f'no need for load_optimizer because optimizer_on_device is True ')
             return
         logger.info(f'before load stf train ')
         for param in self.grpo_with_grad.optimizer.moments1:

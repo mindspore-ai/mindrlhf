@@ -86,9 +86,12 @@ class TransformWorker(Worker):
                                                                src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
         ms.communication.comm_func.barrier()
 
-    def reshard_params(self, step_num):
+    def reshard_params(self, updata_ref=False):
         start_time = time.time()
         self.reshard_param_policy2infer.transform()
-        if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
+        logger.info(f"Total time for transfering policy to infer：{format_time_delta(time.time() - start_time)}")
+        if updata_ref:
+            start_time = time.time()
             self.reshard_param_policy2ref.transform()
-        logger.info(f"权重倒换执行：{format_time_delta(time.time() - start_time)}")
+            logger.info(f"Total time for transfering policy to ref{format_time_delta(time.time() - start_time)}")
+

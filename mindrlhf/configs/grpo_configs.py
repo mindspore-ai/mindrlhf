@@ -91,7 +91,7 @@ class GRPOConfig:
     is_shared_backbone: bool = True
     only_save_strategy: bool = False
     use_parallel: bool = False
-    sync_ref_model: bool = True
+    sync_ref_model: bool = False
     # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
     ref_model_sync_steps: int = 50
     ref_model_batch_size: int = 1
