@@ -20,6 +20,7 @@ import math
 
 # mindspore
 import mindspore as ms
+from mindspore import Tensor
 from mindspore.dataset.transforms import TypeCast
 from mindspore.dataset import GeneratorDataset
 from mindspore.communication import get_rank
@@ -230,6 +231,7 @@ class TrainWorker(Worker):
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
         grpo_with_grad = self.grpo_with_grad
         sink_process = ms.data_sink(grpo_with_grad, dataset, sink_size=self.grpo_config.sink_size)
+        formatter = lambda out: out.asnumpy() if isinstance(out, Tensor) else out
         steps = dataset.dataset_size // self.grpo_config.sink_size
         logger.info(
             f"dataset size is {dataset.dataset_size}, sink size is {self.grpo_config.sink_size}, "
@@ -241,7 +243,7 @@ class TrainWorker(Worker):
             logger.info("step {}, end at {}, elapsed time {} \n------------------------------- "
                         .format(step, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
-                        .format(out[0], out[1], out[2], out[3]))
+                        .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
 
     def offload_optimizer(self):
         """ offload optimizer """
