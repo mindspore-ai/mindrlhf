@@ -191,7 +191,8 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len-1]
         per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len-1]
         per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len-1]
-        masked_per_token_loss = per_token_loss * responses_mask[:, 1:]  # [bs, seq_len-1]
+        responses_mask = responses_mask[:, 1:]
+        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len-1]
         deno = masked_per_token_loss.sum(axis=-1)  #  [bs]
         nume = responses_mask.sum(axis=-1)  #  [bs]
         loss = (deno/nume).mean()
