@@ -11,13 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+""" Transform Worker """
 
 # python
-import os
 import time
 
 # mindspore
-import mindspore
 import mindspore as ms
 from mindspore.communication import get_rank
 from mindspore.communication.management import get_group_size
@@ -56,28 +55,34 @@ def match_func_vllm(s1, s2):
 
 
 class TransformWorker(Worker):
+    """ TransformWorker """
     def __init__(self, grpo_config, sft_train_model, sft_infer_model, ref_model):
+        super(TransformWorker, self).__init__()
         logger.info("Start prepare for parameter resharding in sft training.")
         self.sync_ref_model = grpo_config.sync_ref_model
         self.ref_model_sync_steps = grpo_config.ref_model_sync_steps
+        self.save_strategy_dir = grpo_config.save_strategy_dir
         # TODO: save strategy
         src_merged_stra = "../../merge_strategy/train_policy_merged_strategy.ckpt"
         dst_merged_stra = "../../merge_strategy/infer_policy_merged_strategy.ckpt"
         ref_merged_stra = "../../merge_strategy/infer_ref_merged_strategy.ckpt"
-        if get_rank() in list(range(0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages"))):
-            ms.merge_pipeline_strategys("../../strategy/train_policy_strategy/", src_merged_stra)
-            ms.merge_pipeline_strategys("../../strategy/infer_policy_strategy/", dst_merged_stra)
-            ms.merge_pipeline_strategys("../../strategy/infer_ref_strategy/", ref_merged_stra)
+        if get_rank() in list(range(
+                0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages")
+        )):
+            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/train_policy_strategy/", src_merged_stra)
+            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_policy_strategy/", dst_merged_stra)
+            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_ref_strategy/", ref_merged_stra)
         ms.mint.distributed.barrier()
         if grpo_config.use_vllm == VllmMode.ORIGIN:
             self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                 src_merged_stra, dst_merged_stra, match_func)
+                                                                     src_merged_stra, dst_merged_stra, match_func)
         else:
             self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                    src_merged_stra, dst_merged_stra, match_func_vllm)
+                                                                     src_merged_stra, dst_merged_stra, match_func_vllm)
         ms.communication.comm_func.barrier()
         self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
-                                                               src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
+                                                               src_merged_stra, ref_merged_stra,
+                                                               match_func=match_func_policy2ref)
         ms.communication.comm_func.barrier()
 
     def reshard_params(self, step_num):

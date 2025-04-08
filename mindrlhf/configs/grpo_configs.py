@@ -84,6 +84,7 @@ class GRPOConfig:
     inference_micro_size: int = 1
     save_ckpt_dir: str = "./"
     save_data_file: str = ""
+    save_strategy_dir: str = "../../strategy/"
     sft_model_path: str = "/path/model.yaml"
     critic_model_path: str = "/path/model.yaml"
     reward_model_path: str = "/path/model.yaml"
@@ -93,7 +94,7 @@ class GRPOConfig:
     sync_ref_model: bool = True
     # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
     ref_model_sync_steps: int = 50
-    ref_model_batch_size: int = 2
+    ref_model_batch_size: int = 1
 
     # vllm config
     use_vllm: int = 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
