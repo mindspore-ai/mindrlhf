@@ -253,9 +253,7 @@ class GRPOTrainer:
         responses_mask = np.concatenate(
             (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
 
-        # Generate outputs.
-        prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=ms.int32)
-        return prompt_completion_ids_tensor, responses_mask, prompts_mask
+        return prompt_completion_ids, responses_mask, prompts_mask
 
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
         """ make experience """
@@ -298,7 +296,7 @@ class GRPOTrainer:
         all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
                                       dtype=np.int32)
         all_ref_per_token_logps = np.zeros(
-            (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length-1), dtype=np.float32)
+            (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.float32)
 
         self.infer.load()
         # Step 1: generate responses and masks.
@@ -343,7 +341,7 @@ class GRPOTrainer:
         logger.info(f"ref model total steps: {ref_step_num}")
         for idx in range(ref_step_num):
             # responses_mask will be updated before ref model infer.
-            prompt_completion_ids_tensor, responses_mask, prompts_mask = (
+            prompt_completion_ids, responses_mask, prompts_mask = (
                 self._construct_inputs_for_ref_model(
                     right_padding_responses,
                     responses_mask_gather,
@@ -354,13 +352,20 @@ class GRPOTrainer:
                 )
             )
 
+            input_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
+                               constant_values=self.grpo_config.pad_token_id)
+            prompt_completion_ids_tensor = Tensor(input_ids[:, :-1],
+                                                  dtype=ms.int32)  # [n_questions, seq_length]
+            sampels_tensor = Tensor(input_ids[:, 1:], dtype=ms.int32)  # [n_questions, seq_length]
+
             # Step 2: run ref model.
             start_time = time.time()
             logger.info("reference model step {} start at {}-------------------------------".format(
                 idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
 
             ref_per_token_logps = self.ref.compute_ref_log_prob(
-                prompt_completion_ids_tensor, samples=prompt_completion_ids_tensor)
+                prompt_completion_ids_tensor, samples=sampels_tensor)
+            ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
 
             end_time = time.time()
             logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
@@ -421,12 +426,17 @@ class GRPOTrainer:
 
         for i in range(n_questions):
             for j in range(num_generations * num_rollouts):
+                pad_prompt_completion_ids = np.pad(all_prompt_completion_ids[i * (num_generations * num_rollouts) + j],
+                                                   ((0, 1),), 'constant',
+                                                   constant_values=self.grpo_config.pad_token_id).astype(np.int32)
+                pad_prompts_mask = np.pad(all_prompts_mask[i * (num_generations * num_rollouts) + j], ((0, 1),),
+                                          'constant', constant_values=0).astype(np.int32)
+                pad_responses_mask = np.pad(all_responses_mask[i * (num_generations * num_rollouts) + j], ((0, 1),),
+                                            'constant', constant_values=0).astype(np.int32)
                 grpodata = GRPOData(
-                    prompt_completion_ids=all_prompt_completion_ids[i * (num_generations * num_rollouts) + j].astype(
-                        np.int32
-                    ),
-                    prompts_mask=all_prompts_mask[i * (num_generations * num_rollouts) + j].astype(np.int32),
-                    responses_mask=all_responses_mask[i * (num_generations * num_rollouts) + j].astype(np.int32),
+                    prompt_completion_ids=pad_prompt_completion_ids,
+                    prompts_mask=pad_prompts_mask,
+                    responses_mask=pad_responses_mask,
                     ref_per_token_logps=all_ref_per_token_logps[i * (num_generations * num_rollouts) + j].astype(
                         np.float32
                     ),

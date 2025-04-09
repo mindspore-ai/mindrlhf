@@ -89,9 +89,9 @@ class TrainWorker(Worker):
         self.grpo_model_train.grpo_model_train.policy_model.model.set_train(True)
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
         train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
-        fake_data_1 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
+        fake_data_1 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length + 1),
                                 dtype=ms.int32)
-        fake_data_2 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length - 1),
+        fake_data_2 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
                                 dtype=ms.float32)
         fake_data_3 = ms.Tensor(shape=(train_bs,), dtype=ms.int32)
 

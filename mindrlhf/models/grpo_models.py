@@ -41,6 +41,7 @@ class CausalLMHybrid(BaseModel):
         self.lm_head.pipeline_stage = model_config.parallel_config.pipeline_stage - 1
         dp = model_config.parallel_config.data_parallel
         mp = model_config.parallel_config.model_parallel
+        cp = model_config.parallel_config.context_parallel
 
         self.vocab_size = model_config.vocab_size
         self.chunk_size = grpo_config.chunk_size
@@ -51,11 +52,13 @@ class CausalLMHybrid(BaseModel):
         )
 
         self.squeeze = P.Squeeze(axis=-1).shard(((dp, 1, 1),))
-        self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1, 1),))
+        self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1),))
         self.unsqueeze = P.ExpandDims().shard(((dp, 1),))
         self.reshape = P.Reshape()
         self.gather = P.Gather().shard(((dp, mp), (1,),))
-        self.gatherd = P.GatherD().shard(((dp, 1, 1), (dp, 1, 1)))
+        self.gatherd = P.GatherD().shard(((dp*mp*cp, 1), (dp*mp*cp, 1)))
+        self.expaned = P.ExpandDims().shard(((dp, mp),))
+        self.logsoftmax = P.LogSoftmax().shard(((dp*mp*cp, 1),))
         self.logsoftmax_1 = P.LogSoftmax().shard(((dp, 1, 1),))
         self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1),))
 
@@ -86,12 +89,14 @@ class CausalLMHybrid(BaseModel):
         """
         Calculate the log value of the label
         """
-        logits = logits[:, :-1, :]  # [bs, seq_len-1, vocab_size]
-        samples = samples[:, 1:]  # [bs, seq_len-1]
-        logprobs = self.logsoftmax_1(logits)  # [bs, seq_len-1, vocab_size]
+        bs, seq_len = samples.shape
+        logprobs = self.logsoftmax(logits)  # [bs*seq_len, vocab_size]
+        samples = self.expaned(samples, -1)
+        samples = self.reshape(samples, (bs*seq_len, -1))
         logprobs = self.squeeze_no_shard(
-            self.gatherd(logprobs, -1, self.unsqueeze(samples, -1))
-        )  # [bs, seq_len-1]
+            self.gatherd(logprobs, -1, samples)
+        )  # [bs, seq_len]
+        logprobs = self.reshape(logprobs, (bs, seq_len))
 
         return logprobs  # [bs, seq_len-1]
 
@@ -144,7 +149,7 @@ class CausalLMHybrid(BaseModel):
         else:
             raise NotImplementedError("only support {}".format(" ".join(self.model_type)))
 
-        logits = self.reshape(logits_2d, (batch_size, seq_length, -1))
+        logits = self.reshape(logits_2d, (batch_size * seq_length, -1))
         # used in inference of make_experience and grpo
         if samples is not None:
             if is_ref:
@@ -187,14 +192,16 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         """
         GRPOModel
         """
-        per_token_logps = self.policy_model(prompt_completion_ids, samples=prompt_completion_ids) # [bs, seq_len-1]
-        per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len-1]
-        per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len-1]
-        per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len-1]
+        input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
+        samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
+        per_token_logps = self.policy_model(input_ids, samples=samples)  # [bs, seq_len]
+        per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len]
+        per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages  # [bs, seq_len]
+        per_token_loss = -(per_token_loss - self.beta * per_token_kl)  # [bs, seq_len]
         responses_mask = responses_mask[:, 1:]
-        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len-1]
-        deno = masked_per_token_loss.sum(axis=-1)  #  [bs]
-        nume = responses_mask.sum(axis=-1)  #  [bs]
+        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len]
+        deno = masked_per_token_loss.sum(axis=-1)  # [bs]
+        nume = responses_mask.sum(axis=-1)  # [bs]
         loss = (deno/nume).mean()
         return loss
 
