@@ -255,6 +255,17 @@ class GRPOTrainer:
 
         return prompt_completion_ids, responses_mask, prompts_mask
 
+    def compute_advantages(self, rewards, eps=1e-4):
+        mean_grouped_rewards = rewards.mean()
+        if rewards.shape[0] == 1:
+            std_grouped_rewards = rewards.std()
+        else:
+            std_grouped_rewards = rewards.std(ddof=1)
+        advantages = (rewards - mean_grouped_rewards) / (std_grouped_rewards + eps)
+        logger.info(f"mean_grouped_rewards: \n {mean_grouped_rewards}")
+
+        return advantages, mean_grouped_rewards
+
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
         """ make experience """
         ep_begin_time = time.time()
@@ -272,14 +283,11 @@ class GRPOTrainer:
         all_elements_compeltion_len = []
 
         batch = self._get_batch(num_rollouts)
-        prompt_tensors = Tensor(batch[0], mstype.int32).asnumpy()
-        solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
-        prompt_tensors_full = prompt_tensors
-        repeat_solution_ids = solution_ids
-        for i in range(num_generations - 1):
-            prompt_tensors_full = np.concatenate((prompt_tensors_full, prompt_tensors))
-            repeat_solution_ids = np.concatenate((repeat_solution_ids, solution_ids))
-        input_ids_numpy = self._split_for_data_parallel(prompt_tensors_full, self.infer_dp)
+        prompts_data = batch[0].to(mstype.int32).asnumpy()
+        solution_ids = batch[1].to(mstype.int32).asnumpy()
+        repeat_prompts_data = np.repeat(prompts_data, num_generations, axis=0)
+        repeat_solution_ids = np.repeat(solution_ids, num_generations, axis=0)
+        input_ids_numpy = self._split_for_data_parallel(repeat_prompts_data, self.infer_dp)
         solution_ids = self._remove_right_padding(repeat_solution_ids, padding_token=self.grpo_config.pad_token_id)
         solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
         for i in range(len(solution)):
@@ -418,34 +426,37 @@ class GRPOTrainer:
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
 
-        mean_grouped_rewards = all_rewards.mean()
-        std_grouped_rewards = all_rewards.std(ddof=1)
-        advantages = (all_rewards - mean_grouped_rewards) / (std_grouped_rewards + 1e-4)
-        logger.info(f"mean_grouped_rewards: \n {mean_grouped_rewards}")
-        all_mean_grouped_rewards = mean_grouped_rewards.tolist()
+        total_size = all_rewards.shape[0]
+        advantages = np.zeros((total_size,))
+        tmp_all_rewards = all_rewards.copy()
+        samples_per_step = total_size // num_generations
+        for i in range(samples_per_step):
+            temp_rewards = tmp_all_rewards[i * num_generations : (i + 1) * num_generations]
+            adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
+            all_mean_grouped_rewards.append(mean_grouped_rewards)
+            advantages[i * num_generations : (i + 1) * num_generations] = adv_tem.reshape((-1,))
 
-        for i in range(n_questions):
-            for j in range(num_generations * num_rollouts):
-                pad_prompt_completion_ids = np.pad(all_prompt_completion_ids[i * (num_generations * num_rollouts) + j],
-                                                   ((0, 1),), 'constant',
-                                                   constant_values=self.grpo_config.pad_token_id).astype(np.int32)
-                pad_prompts_mask = np.pad(all_prompts_mask[i * (num_generations * num_rollouts) + j], ((0, 1),),
-                                          'constant', constant_values=0).astype(np.int32)
-                pad_responses_mask = np.pad(all_responses_mask[i * (num_generations * num_rollouts) + j], ((0, 1),),
-                                            'constant', constant_values=0).astype(np.int32)
-                grpodata = GRPOData(
-                    prompt_completion_ids=pad_prompt_completion_ids,
-                    prompts_mask=pad_prompts_mask,
-                    responses_mask=pad_responses_mask,
-                    ref_per_token_logps=all_ref_per_token_logps[i * (num_generations * num_rollouts) + j].astype(
-                        np.float32
-                    ),
-                    advantages=np.array(advantages[i * (num_generations * num_rollouts) + j]).astype(np.float32)
-                )
-                logger.info(
-                    f"precision grpo data is {all_prompt_completion_ids}\n=== {all_prompts_mask}\n=== "
-                    f"{all_responses_mask}\n=== {all_ref_per_token_logps}\n=== {advantages}\n")
-                grpo_rl_elements.append(grpodata)
+        logger.info(f"advantages: {advantages}")
+        logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
+
+        for i in range(num_rollouts * n_questions * num_generations):
+            pad_prompt_completion_ids = np.pad(all_prompt_completion_ids[i],
+                                               ((0, 1),), 'constant',
+                                               constant_values=self.grpo_config.pad_token_id).astype(np.int32)
+            pad_prompts_mask = np.pad(all_prompts_mask[i], ((0, 1),),
+                                      'constant', constant_values=0).astype(np.int32)
+            pad_responses_mask = np.pad(all_responses_mask[i], ((0, 1),),
+                                        'constant', constant_values=0).astype(np.int32)
+            grpodata = GRPOData(
+                prompt_completion_ids=pad_prompt_completion_ids,
+                prompts_mask=pad_prompts_mask,
+                responses_mask=pad_responses_mask,
+                ref_per_token_logps=all_ref_per_token_logps[i].astype(
+                    np.float32
+                ),
+                advantages=np.array(advantages[i]).astype(np.float32)
+            )
+            grpo_rl_elements.append(grpodata)
 
         logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
         logger.info(f"all_elements_compeltion_len mean: {np.mean(all_elements_compeltion_len)}")
