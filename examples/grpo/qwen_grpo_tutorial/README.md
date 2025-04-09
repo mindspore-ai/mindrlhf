@@ -19,12 +19,12 @@ cd /{path}/mindformers/research/qwen2_5
 并执行以下脚本：
 
 ```shell
-python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml
+python convert_weight.py --torch_ckpt_dir TORCH_CKPT_DIR --mindspore_ckpt_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml
 
 # 参数说明
 model:       模型名称
-input_path:  下载HuggingFace权重的文件夹路径
-output_path: 转换后的MindSpore权重文件保存路径
+torch_ckpt_dir:  下载HuggingFace权重的文件夹路径
+mindspore_ckpt_path: 转换后的MindSpore权重文件保存路径
 dtype:       转换权重的精度
 config_path: 模型配置文件地址
 ```
