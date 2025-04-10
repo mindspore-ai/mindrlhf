@@ -237,6 +237,7 @@ class TrainWorker(Worker):
         logger.info(
             f"dataset size is {dataset.dataset_size}, sink size is {self.grpo_config.sink_size}, "
             f"total steps is {steps}")
+        train_start_time = time.time()
         for step in range(steps):
             ep_begin_time = time.time()
             out = sink_process()
@@ -244,6 +245,8 @@ class TrainWorker(Worker):
             print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
+        train_end_time = time.time()
+        print_perf_stat(train_start_time, train_end_time, f"train model all steps {steps}")
 
     def offload_optimizer(self):
         """ offload optimizer """
