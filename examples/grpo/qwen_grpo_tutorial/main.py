@@ -11,20 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+""" qwen_grpo """
 
-import time
-import os
 import argparse
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
-def main(args):
-    trainer = GRPOTrainer(args)
+def main(input_args):
+    trainer = GRPOTrainer(input_args)
     trainer.run_grpo_train()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="qwen make experience")
     parser.add_argument("--config", type=str, default=None, help="configs path", required=True)
     parser.add_argument("--sft_path_infer", type=str, default=None, help="sft model path", required=True)
+    parser.add_argument("--sft_path_ref", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--sft_path_train", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--vocab_path", required=True, help="path to vocab.json")
     parser.add_argument("--merges_file_path", required=True, help="path to merges.txt")
@@ -41,5 +41,9 @@ if __name__ == '__main__':
     parser.add_argument("--reward_funcs", nargs='*', type=str, help="reward_funcs")
     parser.add_argument("--reward_weights", nargs='*', type=float, help="reward_weights")
     parser.add_argument("--save_strategy_dir", type=str, default="../../strategy/", help="save_strategy_dir")
+    parser.add_argument("--custom_model_name", type=str, default="qwen", help="model name")
+    parser.add_argument("--tensorboard_dir", type=str, default="", help="set tensorboard log dir")
+    parser.add_argument("--tensorboard_queue_size", type=int, default=10, help="set tensorboard queue size")
+    parser.add_argument("--load_ckpt_format", type=str, default=None, help="set tensorboard queue size")
     args = parser.parse_args()
     main(args)

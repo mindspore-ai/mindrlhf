@@ -11,15 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Infererence Worker."""
 
 # python
 import os
-import numpy as np
 import time
 from glob import glob
+import numpy as np
 
 # mindspore
-import mindspore
 import mindspore as ms
 from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
@@ -79,7 +79,7 @@ class InferWorker(Worker):
         )
         sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
         sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
-        sft_model_config_infer.model_name = args.custom_model_name
+        sft_model_config_infer.model_name = "llama"
 
         self.grpo_config = combine_grpo_config(grpo_config, sft_model_config_infer)
         self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
@@ -99,15 +99,17 @@ class InferWorker(Worker):
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
             # vllm
-            import vllm_mindspore
-            from ..third_party.vllm.llm import LLM
+            # pylint: disable=W0611
             from vllm import SamplingParams
+            from mindrlhf.third_party.vllm.llm import LLM
             hf_config = self.build_qwen_hf_config()
             self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
             # 初始化vllm
             logger.info(f"init LLM, block_size: {sft_model_config_infer.block_size}, "
-                        f"max_model_len = {self.grpo_config.max_model_len}, max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
-                        f"max_num_seqs: {self.grpo_config.max_num_seqs}, num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
+                        f"max_model_len = {self.grpo_config.max_model_len}, "
+                        f"max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
+                        f"max_num_seqs: {self.grpo_config.max_num_seqs}, "
+                        f"num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
                         f"gpu_memory_utilization: {self.grpo_config.gpu_memory_utilization}")
             vllm_start_time = time.time()
             self.inference_engine = LLM(tokenizer=self.tokenizer,
@@ -126,7 +128,8 @@ class InferWorker(Worker):
             logger.info(f"temperature: {self.grpo_config.temperature}, "
                         f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
                         f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
-                        f"stop_token_ids: {self.grpo_config.eos_token_id}, max_tokens: {self.grpo_config.max_decode_length}, "
+                        f"stop_token_ids: {self.grpo_config.eos_token_id}, "
+                        f"max_tokens: {self.grpo_config.max_decode_length}, "
                         f"detokenize: {self.grpo_config.detokenize}")
             vllm_start_time = time.time()
             self.sampling_params = SamplingParams(
@@ -179,8 +182,8 @@ class InferWorker(Worker):
             padded_array = [0] * padding_length
             padded_array[:len(array)] = array
             padded_arrays.append(padded_array)
-        padded_arrays = Tensor(padded_arrays).astype(mindspore.int32)
-        lengths = Tensor(lengths).astype(mindspore.int32)
+        padded_arrays = Tensor(padded_arrays).astype(ms.int32)
+        lengths = Tensor(lengths).astype(ms.int32)
         all_padded_arrays, _ = D.comm_func.all_gather_into_tensor(padded_arrays)
         all_lengths, _ = D.comm_func.all_gather_into_tensor(lengths)
 
@@ -198,16 +201,24 @@ class InferWorker(Worker):
         return output_batch
 
     def post_process_infer_outputs(self, results):
+        """ post_process_infer_outputs """
         right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
         # allgather data
-        right_padding_responses_batch = self._allgather_data(right_padding_responses, self.sft_model_config_infer.parallel_config.data_parallel,
+        right_padding_responses_batch = self._allgather_data(right_padding_responses,
+                                                             self.sft_model_config_infer.parallel_config.data_parallel,
                                                              padding_length=self.grpo_config.max_decode_length)
-        responses_mask_batch = self._allgather_data(responses_mask, self.sft_model_config_infer.parallel_config.data_parallel,
+        responses_mask_batch = self._allgather_data(responses_mask,
+                                                    self.sft_model_config_infer.parallel_config.data_parallel,
                                                     padding_length=self.grpo_config.max_decode_length)
-        left_padding_prompts_batch = self._allgather_data(left_padding_prompts, self.sft_model_config_infer.parallel_config.data_parallel,
-                                                          padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
-        prompts_mask_batch = self._allgather_data(prompts_mask, self.sft_model_config_infer.parallel_config.data_parallel,
-                                                  padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length)
+        left_padding_prompts_batch = self._allgather_data(
+            left_padding_prompts,
+            self.sft_model_config_infer.parallel_config.data_parallel,
+            padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length
+        )
+        prompts_mask_batch = self._allgather_data(
+            prompts_mask, self.sft_model_config_infer.parallel_config.data_parallel,
+            padding_length=self.grpo_config.seq_length - self.grpo_config.max_decode_length
+        )
         right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
         responses_mask = np.array(responses_mask_batch).astype(np.int32)
         left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
@@ -218,6 +229,7 @@ class InferWorker(Worker):
     # For SPMD, developer could call 'post_process_infer_outputs' to process data.
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
     def generate(self, input_ids_numpy, max_decode_length=0):
+        """ Policy model generates responses for a batch of prompts. """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
         np.set_printoptions(threshold=1024)
@@ -226,8 +238,8 @@ class InferWorker(Worker):
             decoded_str2 = tokenizer.decode(data)
             logger.info(f"{name} strs are {decoded_str2}")
 
+        logger.info("input ids are {}".format(print_data(input_ids_numpy.tolist(), self.tokenizer, "input_ids")))
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
-        """ Policy model generates responses for a batch of prompts. """
 
         valid_length_each_example, max_valid_length = get_valid_length_each_example(
             input_ids_numpy, self.grpo_model_infer.grpo_model.pad_token_id)  # get valid length and max length in a batch
@@ -241,17 +253,19 @@ class InferWorker(Worker):
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                             max_new_tokens=max_decode_length,
-                                                                             min_new_tokens=min_decode_length,
-                                                                             do_sample=True)
+            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(
+                input_ids_numpy[:, :max_valid_length],
+                max_new_tokens=self.grpo_config.max_decode_length,
+                do_sample=True
+            )
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                                   max_new_tokens=max_decode_length,
-                                                                                   min_new_tokens=min_decode_length,
-                                                                                   do_sample=True)
+            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
+                input_ids_numpy[:, :max_valid_length],
+                max_new_tokens=self.grpo_config.max_decode_length,
+                do_sample=True
+            )
             logger.info("infer without vllm end, not use vllm model")
         else:
             logger.info("start vllm")
@@ -292,9 +306,13 @@ class InferWorker(Worker):
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
 
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
-        return right_padding_responses.astype(np.int32), responses_mask, left_padding_prompts.astype(np.int32), prompts_mask
+        return (
+            right_padding_responses.astype(np.int32), responses_mask,
+            left_padding_prompts.astype(np.int32), prompts_mask
+        )
 
     def generate_strategy(self):
+        """ generate_strategy """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
         stage_name = 'infer'
@@ -303,7 +321,8 @@ class InferWorker(Worker):
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
         else:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model)
-        save_strategy_file(static_dict, f"{strategy_path}/strategy_file/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
+        save_strategy_file(static_dict,
+                           f"{strategy_path}/strategy_file/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={
@@ -312,19 +331,23 @@ class InferWorker(Worker):
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
+        """offload infer checkpoint"""
         if self.on_device is False:
             return
         logger.info(f'before offload stf infer')
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            # pylint: disable=W0212
             param._offload()
         logger.info(f'after offload stf infer')
         self.on_device = False
 
     def load(self):
+        """ load infer checkpoint """
         if self.on_device:
             return
         logger.info(f'before load stf infer {ms.hal.memory_stats()}')
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            # pylint: disable=W0212
             param._load()
             # if "paged_attention_mgr.key_cache" in param.name or "paged_attention_mgr.value_cache":
             #     continue
@@ -333,7 +356,10 @@ class InferWorker(Worker):
         logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 
+    # pylint: disable=E0402
+    # pylint: disable=R1710
     def load_checkpoint(self):
+        """ load infer checkpoint """
         if self.args.load_ckpt_format == "safetensors":
             self.on_device = True
             return self._load_checkpoint_safetensors()
@@ -357,8 +383,9 @@ class InferWorker(Worker):
                                                                    new_param_dict)
             logger.info(f"param not load: {param_not_load}")
             logger.info(f"ckpt not load: {ckpt_not_load}")
-    
+
     def build_qwen_hf_config(self):
+        """ build_qwen_hf_config """
         import json
         from transformers import AutoConfig
         # build qwen hf config 硬编码
@@ -401,6 +428,7 @@ class InferWorker(Worker):
         return hf_config
 
     def _load_checkpoint_safetensors(self):
+        """ load infer checkpoint safetensors """
         network = self.grpo_model_infer.grpo_model.policy_model
         name_map = None
         try:
@@ -414,7 +442,8 @@ class InferWorker(Worker):
         except Exception as e:
             raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
 
-        strategy_path = os.path.join(self.grpo_config.save_strategy_dir, 'merge_strategy/infer_policy_merged_strategy.ckpt')
+        strategy_path = os.path.join(self.grpo_config.save_strategy_dir,
+                                     'merge_strategy/infer_policy_merged_strategy.ckpt')
         ms.load_distributed_checkpoint(
             network=network,
             predict_strategy=strategy_path,
