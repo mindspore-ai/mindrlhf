@@ -37,11 +37,11 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.utils.adam import AdamWeightDecayOp
-from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
+from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, print_perf_stat
 from mindrlhf.wrapper import TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
-from mindrlhf.worker.worker import Worker, format_time_delta
+from mindrlhf.worker.worker import Worker
 
 
 class TrainWorker(Worker):
@@ -111,7 +111,8 @@ class TrainWorker(Worker):
             strategy_ckpt_config={
                 "save_file":
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
-        logger.info(f"grpo_with_grad time: {format_time_delta(time.time() - start_time)}")
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "train model compile")
 
     def load_checkpoint(self):
         """ load checkpoint """
@@ -240,8 +241,7 @@ class TrainWorker(Worker):
             ep_begin_time = time.time()
             out = sink_process()
             end_time = time.time()
-            logger.info("step {}, end at {}, elapsed time {} \n------------------------------- "
-                        .format(step, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
+            print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
 
@@ -250,6 +250,7 @@ class TrainWorker(Worker):
         if self.optimizer_on_device is False:
             return
         logger.info(f'before offload stf train {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.optimizer.moments1:
             # pylint: disable=W0212
             param._offload()
@@ -260,6 +261,8 @@ class TrainWorker(Worker):
             for param in self.grpo_with_grad.accu_grads:
                 # pylint: disable=W0212
                 param._offload()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "offload stf train optimizer")
         logger.info(f'after offload stf train {ms.hal.memory_stats()}')
         self.optimizer_on_device = False
 
@@ -268,6 +271,7 @@ class TrainWorker(Worker):
         if self.optimizer_on_device:
             return
         logger.info(f'before load stf train {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.optimizer.moments1:
             # pylint: disable=W0212
             param._load()
@@ -278,23 +282,31 @@ class TrainWorker(Worker):
             for param in self.grpo_with_grad.accu_grads:
                 # pylint: disable=W0212
                 param._load()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "load stf train optimizer")
         logger.info(f'after load stf train {ms.hal.memory_stats()}')
         self.optimizer_on_device = True
 
     def load_model(self):
         if self.model_on_device:
             return
+        start_time = time.time()
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "load stf train model")
         self.model_on_device = True
 
     def offload_model(self):
         if self.model_on_device is False:
             return
+        start_time = time.time()
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "offload stf train model")
         self.model_on_device = False
 
     def push_to_store(self, data):

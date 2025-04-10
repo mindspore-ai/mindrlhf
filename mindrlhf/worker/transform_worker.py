@@ -26,9 +26,9 @@ from mindspore import context
 from mindformers import logger
 
 # mindrlhf
-from mindrlhf.utils import TransformParametersD2D
+from mindrlhf.utils import TransformParametersD2D, print_perf_stat
 from mindrlhf.configs.grpo_configs import VllmMode
-from mindrlhf.worker.worker import Worker, format_time_delta
+from mindrlhf.worker.worker import Worker
 
 
 def match_func(s1, s2):
@@ -66,6 +66,7 @@ class TransformWorker(Worker):
         src_merged_stra = "../../merge_strategy/train_policy_merged_strategy.ckpt"
         dst_merged_stra = "../../merge_strategy/infer_policy_merged_strategy.ckpt"
         ref_merged_stra = "../../merge_strategy/infer_ref_merged_strategy.ckpt"
+        start_time = time.time()
         if get_rank() in list(range(
                 0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages")
         )):
@@ -84,10 +85,13 @@ class TransformWorker(Worker):
                                                                src_merged_stra, ref_merged_stra,
                                                                match_func=match_func_policy2ref)
         ms.communication.comm_func.barrier()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "TransformWorker init")
 
     def reshard_params(self, step_num):
         start_time = time.time()
         self.reshard_param_policy2infer.transform()
         if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
             self.reshard_param_policy2ref.transform()
-        logger.info(f"权重倒换执行：{format_time_delta(time.time() - start_time)}")
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "reshard params")

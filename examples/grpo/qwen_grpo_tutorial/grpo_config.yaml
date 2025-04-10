@@ -66,6 +66,7 @@ sync_ref_model: True
 # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`"
 ref_model_sync_steps: 50
 ref_model_batch_size: 1
+performance_stats: False
 
 # vllm config
 use_vllm: 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers

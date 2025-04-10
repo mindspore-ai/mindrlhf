@@ -36,7 +36,7 @@ from mindformers.experimental.parallel_core.pynative.utils import save_strategy_
 from mindformers import logger
 
 # mindrlhf
-from mindrlhf.utils import transfer_from_str_to_bool
+from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.utils.configs import (
@@ -197,6 +197,7 @@ class InferWorker(Worker):
 
     def post_process_infer_outputs(self, results):
         """ post_process_infer_outputs """
+        start_time = time.time()
         right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
         # allgather data
         right_padding_responses_batch = self._allgather_data(right_padding_responses,
@@ -218,6 +219,8 @@ class InferWorker(Worker):
         responses_mask = np.array(responses_mask_batch).astype(np.int32)
         left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
         prompts_mask = np.array(prompts_mask_batch).astype(np.int32)
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "post process infer outputs")
 
         return right_padding_responses, responses_mask, left_padding_prompts, prompts_mask
 
@@ -337,22 +340,30 @@ class InferWorker(Worker):
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
+        """ offload stf infer """
         if self.on_device is False:
             return
         logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "offload stf infer")
         logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
         self.on_device = False
 
     def load(self):
+        """ load stf infer """
         if self.on_device:
             return
         logger.info(f'before load stf infer {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "load stf infer")
         logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 

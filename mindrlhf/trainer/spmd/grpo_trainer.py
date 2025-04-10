@@ -33,7 +33,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass
+from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 # mindrlhf
@@ -86,6 +86,7 @@ class GRPOTrainer:
         grpo_config.save_strategy_dir = args.save_strategy_dir
         grpo_config.align_type = "rlhf_stages"
         grpo_config.use_parallel = use_parallel
+        set_perf_stats(grpo_config)
         if grpo_config.use_vllm not in range(len(VllmMode)):
             logger.warning(f"use_vllm should be 0, 1 or 2, but got {grpo_config.use_vllm}. Reset to 0.")
             grpo_config.use_vllm = 0
@@ -154,14 +155,20 @@ class GRPOTrainer:
             logger.info("In main task, there is not dataset for making experience")
 
     def _compile(self):
+        start_time = time.time()
         self.infer.generate_strategy()
         self.ref.compile()
         self.train.compile()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "GRPOTrainer compile")
 
     def _load_checkpoint(self):
+        start_time = time.time()
         self.infer.load_checkpoint()
         self.ref.load_checkpoint()
         self.train.load_checkpoint()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
 
     def _get_batch(self, num_rollouts):
         """ get batch """
@@ -317,12 +324,14 @@ class GRPOTrainer:
         else:
             results = self.infer.generate(input_ids_numpy)
 
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "infer generate")
+
+        logger.info("generation end at {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(start_time))))
+
         self.infer.offload()
         logger.info("model_infer offload")
-
-        end_time = time.time()
-        logger.info("generate end at {}, elapsed time {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
         for i, ele in enumerate(results):
@@ -339,6 +348,7 @@ class GRPOTrainer:
         logger.info(f"total_ref_model_batch_size: {total_ref_model_batch_size}")
         ref_step_num = (num_generations * n_questions * num_rollouts) // total_ref_model_batch_size
         logger.info(f"ref model total steps: {ref_step_num}")
+        all_ref_start_time = time.time()
         for idx in range(ref_step_num):
             # responses_mask will be updated before ref model infer.
             prompt_completion_ids, responses_mask, prompts_mask = (
@@ -368,8 +378,9 @@ class GRPOTrainer:
             ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
 
             end_time = time.time()
-            logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
-                idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+            print_perf_stat(start_time, end_time, f"reference model step {idx}")
+            logger.info("reference model step {} end at {}-------------------------------".format(
+                idx, time.strftime('%H:%M:%S', time.localtime(end_time))))
             logger.info(f"Ref log probs {ref_per_token_logps}")
 
             start_index = idx * total_ref_model_batch_size
@@ -378,6 +389,9 @@ class GRPOTrainer:
             all_prompts_mask[start_index : end_index, :] = prompts_mask
             all_responses_mask[start_index : end_index, :] = responses_mask
             all_ref_per_token_logps[start_index : end_index, :] = ref_per_token_logps
+
+        all_ref_end_time = time.time()
+        print_perf_stat(all_ref_start_time, all_ref_end_time, f"reference model all steps {ref_step_num}")
 
         self.ref.offload()
         logger.info("ref_model offload")
@@ -412,8 +426,9 @@ class GRPOTrainer:
         logger.info(f"precision rewards are {rewards}")
 
         end_time = time.time()
-        logger.info("calculate reward end at {}, elapsed time {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+        print_perf_stat(start_time, end_time, "calculate reward")
+        logger.info("calculate reward end at {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(end_time))))
 
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
@@ -454,8 +469,9 @@ class GRPOTrainer:
         logger.info(f"Avg scores:\n {np.mean(np.array(all_mean_grouped_rewards))}")
 
         end_time = time.time()
-        logger.info("Make experience, end at {}, elapsed time {} ------------------------------- ".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
+        print_perf_stat(ep_begin_time, end_time, "Make experience")
+        logger.info("Make experience, end at {} ------------------------------- ".format(
+            time.strftime('%H:%M:%S', time.localtime(end_time))))
         if self.grpo_config.save_data_file:
             if get_rank() % 8 == 0:
                 self._save_grpoelement(self.grpo_config.save_data_file)
@@ -521,8 +537,9 @@ class GRPOTrainer:
                 self.ref.offload()
 
                 step_end_time = time.time()
-                logger.info("step end at  {}, elapsed time {} \n------------------------------- ".format(
-                    time.strftime('%H:%M:%S', time.localtime(step_end_time)), step_end_time - step_begin_time))
+                print_perf_stat(step_begin_time, step_end_time, f"epoch {n} step {i}")
+                logger.info("step end at  {}\n------------------------------- ".format(
+                    time.strftime('%H:%M:%S', time.localtime(step_end_time))))
 
         # save checkpoint
         self.train.load_model()
