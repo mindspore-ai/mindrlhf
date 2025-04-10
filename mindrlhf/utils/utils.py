@@ -18,8 +18,8 @@ MindRLHF utils
 import os
 import time
 import hashlib
-import numpy as np
 import yaml
+import numpy as np
 import mindspore.nn as nn
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
@@ -40,11 +40,15 @@ from mindspore import context
 import mindspore.common.dtype as mstype
 
 from mindformers.tools.ckpt_transform import TransformCkpt
+from mindformers import logger
 
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_generate", "yaml_to_dataclass"]
+           "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
+           "print_perf_stat"]
+
+PERF_STATS = False
 
 def yaml_to_dataclass(file_path, dataclass_type):
     """
@@ -462,3 +466,16 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
         dst_strategy="./generate_policy_strategy/",
         prefix="./generate_policy_"
     )
+
+
+def set_perf_stats(grpo_config):
+    global PERF_STATS
+    if grpo_config.performance_stats:
+        logger.info("grpo performance statistics is on")
+        PERF_STATS = True
+
+
+def print_perf_stat(start_time, end_time, perf_object_str):
+    global PERF_STATS
+    if PERF_STATS:
+        logger.info(f"Performance Statistics: {perf_object_str} costs {end_time - start_time}s")

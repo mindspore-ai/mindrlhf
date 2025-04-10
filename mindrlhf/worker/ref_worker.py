@@ -14,6 +14,7 @@
 """ Reference Worker """
 
 # python
+import time
 import numpy as np
 
 # mindspore
@@ -30,6 +31,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
+from mindrlhf.utils import print_perf_stat
 
 
 class RefWorker(Worker):
@@ -76,6 +78,7 @@ class RefWorker(Worker):
         total_ref_model_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
         fake_data = ms.Tensor(shape=(total_ref_model_batch_size, self.grpo_config.seq_length),
                               dtype=ms.int32)
+        start_time = time.time()
         stage_name = 'infer'
         context.set_auto_parallel_context(
             strategy_ckpt_config={
@@ -87,6 +90,8 @@ class RefWorker(Worker):
             strategy_ckpt_config={
                 "save_file":
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "reference model compile")
 
     def compute_ref_log_prob(self, prompt_completion_ids_tensor, samples):
         np.set_printoptions(threshold=1024)
@@ -100,22 +105,30 @@ class RefWorker(Worker):
         return ref_per_token_logps
 
     def offload(self):
+        """ offload ref model """
         if self.on_device is False:
             return
         logger.info(f'before offload ref model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.ref_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "offload ref model")
         logger.info(f'after offload ref model {ms.hal.memory_stats()}')
         self.on_device = False
 
     def load(self):
+        """ load ref model """
         if self.on_device:
             return
         logger.info(f'before load ref model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.ref_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "load ref model")
         logger.info(f'after load ref model {ms.hal.memory_stats()}')
         self.on_device = True
 

@@ -161,6 +161,17 @@ sync_ref_model:         是否每隔若干步将ref model的权重更新为最�
 ref_model_sync_steps:   若sync_ref_model=True, ref model权重更新的间隔步数
 ```
 
+### GRPO性能统计配置
+
+GRPO性能统计相关配置可以在`examples/grpo/qwen_grpo_tutorial/grpo_config.yaml`内进行修改，包括以下参数：
+
+```shell
+performance_stats: bool = False
+
+# 参数说明
+performance_stats:                   是否在日志中打印各流程的执行时间
+```
+
 ## 三、启动GRPO训练脚本
 
 首先进入MindRLHF路径
