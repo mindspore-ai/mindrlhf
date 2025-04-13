@@ -285,10 +285,9 @@ class TrainPipelineWithLossScaleCell(nn.Cell):
             else:
                 self.optimizer(grads)
         return loss, lr, overflow, scaling_sens.value()
-    
 
 
-class TrainOneStepWithLossScale_GRPO(TrainOneStepWithLossScaleCell):
+class TrainOneStepWithLossScaleGRPO(TrainOneStepWithLossScaleCell):
     """
     Encapsulation class of PanguAlpha network training.
 
@@ -307,7 +306,7 @@ class TrainOneStepWithLossScale_GRPO(TrainOneStepWithLossScaleCell):
                  scale_update_cell=None,
                  enable_global_norm=False,
                  config=None):
-        super(TrainOneStepWithLossScale_GRPO,
+        super(TrainOneStepWithLossScaleGRPO,
               self).__init__(network, optimizer, scale_update_cell)
         self.network = network
         self.config = config
@@ -368,7 +367,7 @@ class TrainOneStepWithLossScale_GRPO(TrainOneStepWithLossScaleCell):
         return loss, lr, cond, scaling_sens.value()
 
 
-class TrainPipelineWithLossScaleCell_GRPO(nn.Cell):
+class TrainPipelineWithLossScaleCellGRPO(nn.Cell):
     """
     Encapsulation class of network training.
 
@@ -382,7 +381,7 @@ class TrainPipelineWithLossScaleCell_GRPO(nn.Cell):
     """
 
     def __init__(self, network, optimizer, config, scale_update_cell=None, enable_global_norm=True):
-        super(TrainPipelineWithLossScaleCell_GRPO, self).__init__(auto_prefix=False)
+        super(TrainPipelineWithLossScaleCellGRPO, self).__init__(auto_prefix=False)
         self.config = config
         self.network = network
         self.network.add_flags(defer_inline=True)
@@ -475,9 +474,7 @@ class TrainPipelineWithLossScaleCell_GRPO(nn.Cell):
             grads = self.hyper_map(
                 F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE),
                 grads)
-        overflow = cond
-        if sens is None:
-            overflow = self.loss_scaling_manager(self.loss_scale, cond)
+        overflow = loss.isnan()
         if not overflow:
             if self.enable_offload:
                 self.optimizer(grads, clip_value)
