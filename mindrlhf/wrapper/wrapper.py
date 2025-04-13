@@ -474,7 +474,10 @@ class TrainPipelineWithLossScaleCellGRPO(nn.Cell):
             grads = self.hyper_map(
                 F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE),
                 grads)
-        overflow = loss.isnan()
+        overflow = cond
+        if sens is None:
+            overflow = self.loss_scaling_manager(self.loss_scale, cond)
+        overflow = overflow or loss.isnan()
         if not overflow:
             if self.enable_offload:
                 self.optimizer(grads, clip_value)
