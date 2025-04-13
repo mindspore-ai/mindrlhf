@@ -38,7 +38,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, print_perf_stat
-from mindrlhf.wrapper import TrainOneStepWithLossScale_GRPO, TrainPipelineWithLossScaleCell_GRPO
+from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLossScaleCellGRPO
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.worker.worker import Worker
@@ -184,14 +184,14 @@ class TrainWorker(Worker):
 
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
-            grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer,
-                                                                 config=sft_model_config,
-                                                                 scale_update_cell=update_cell)
+            grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(grpo_with_loss, optimizer=optimizer,
+                                                                config=sft_model_config,
+                                                                scale_update_cell=update_cell)
         else:
             logger.info("non-pipeline cell")
-            grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer,
-                                                            config=sft_model_config, scale_update_cell=update_cell,
-                                                            enable_global_norm=True)
+            grpo_with_grad = TrainOneStepWithLossScaleGRPO(grpo_with_loss, optimizer=optimizer,
+                                                           config=sft_model_config, scale_update_cell=update_cell,
+                                                           enable_global_norm=True)
         return grpo_with_grad
 
     def _init_grpo_dataset_before_train(self):

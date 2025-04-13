@@ -34,8 +34,8 @@ from mindrlhf.configs.ppo_configs import PPOConfig
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay
-from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO, \
-    TrainPipelineWithLossScaleCell_GRPO
+from mindrlhf.wrapper import TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScaleGRPO, \
+    TrainPipelineWithLossScaleCellGRPO
 
 __all__ = ['combine_config', 'init_configs']
 
@@ -300,10 +300,10 @@ def init_grpo_network_and_optimizer(trainer):
 
     if sft_model_config.parallel_config.pipeline_stage > 1:
         print("pipeline cell")
-        grpo_with_grad = TrainPipelineWithLossScaleCell_GRPO(grpo_with_loss, optimizer=optimizer,
-                                                             config=sft_model_config, scale_update_cell=update_cell)
+        grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(grpo_with_loss, optimizer=optimizer,
+                                                            config=sft_model_config, scale_update_cell=update_cell)
     else:
         print("non-pipeline cell")
-        grpo_with_grad = TrainOneStepWithLossScale_GRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                        scale_update_cell=update_cell, enable_global_norm=True)
+        grpo_with_grad = TrainOneStepWithLossScaleGRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
+                                                       scale_update_cell=update_cell, enable_global_norm=True)
     return grpo_with_grad
