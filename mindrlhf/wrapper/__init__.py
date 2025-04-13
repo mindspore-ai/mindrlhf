@@ -14,11 +14,11 @@
 # ============================================================================
 
 """MindRLHF Init"""
-from .wrapper import (TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScale_GRPO,
-                      TrainPipelineWithLossScaleCell_GRPO)
+from .wrapper import (TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScaleGRPO,
+                      TrainPipelineWithLossScaleCellGRPO)
 
 
 __all__ = ['TrainOneStepWithLossScale',
            'TrainPipelineWithLossScaleCell',
-           'TrainOneStepWithLossScale_GRPO',
-           'TrainPipelineWithLossScaleCell_GRPO']
+           'TrainOneStepWithLossScaleGRPO',
+           'TrainPipelineWithLossScaleCellGRPO']
