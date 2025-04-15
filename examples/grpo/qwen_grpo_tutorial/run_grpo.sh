@@ -5,6 +5,7 @@ export GLOG_v=2
 export MS_DEV_DUMP_IR_PASSES="hwopt_d_after_stream_assign,valid,graph_build"
 export MS_DEV_RUNTIME_CONF="memory_statistics:False"
 export MS_ENABLE_LCCL=on  # turn off on A3
+export HCCL_IF_BASEE_PORT=60009
 
 root_path="$(realpath "$(dirname "$0")")"
 root_path=$root_path/../../../
@@ -21,8 +22,8 @@ msrun --worker_num=32 --local_worker_num=8 --node_rank=$noderank --master_addr=$
 --master_port=9190 --join=False --log_dir=./qwen2_one_log_$noderank \
 examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
---sft_path_infer model_configs/qwen_grpo/predict_qwen2_5_32b_instruct_481.yaml \
---sft_path_train model_configs/qwen_grpo/finetune_qwen2_5_32b_8k_184.yaml \
+--sft_path_infer /path/to/predict_xxx.yaml \
+--sft_path_train /path/to/finetune_xxx.yaml \
 --vocab_path /path/to/vocab.json \
 --merges_file_path /path/to/merges.txt \
 --mind_dataset_dir /path/to/grpo_data/cvalues_one.mindrecord \
