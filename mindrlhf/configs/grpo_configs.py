@@ -96,6 +96,7 @@ class GRPOConfig:
     ref_model_sync_steps: int = 50
     ref_model_batch_size: int = 1
     performance_stats: bool = False
+    enable_reshard_optimizer: bool = False
 
     # vllm config
     use_vllm: int = 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
