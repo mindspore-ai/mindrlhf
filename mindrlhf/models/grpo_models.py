@@ -16,10 +16,11 @@
 import numpy as np
 import mindspore.common.dtype as mstype
 import mindspore.nn as nn
-from mindspore import Tensor, ops
+from mindspore import Tensor, ops, mint
 from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
 from mindformers.models.utils import lazy_inline
+from mindformers import logger
 from .base_model import BaseModel
 
 __all__ = [
@@ -200,8 +201,12 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.beta = grpo_config.beta
         self.pad_token_id = Tensor(grpo_config.pad_token_id, mstype.int32)
         self.policy_model = policy_model
+        self.num_iterations = self.grpo_config.num_iterations
+        self.epsilon_high = self.grpo_config.epsilon_high
+        self.epsilon_low = self.grpo_config.epsilon_low
+        logger.info(f"num_iterations: {self.num_iterations}, "
+                    f"epsilon_low: {self.epsilon_low}, epsilon_high: {self.epsilon_high}")
 
-        self.concat = P.Concat(1)
         self.exp = P.Exp()
         self.gamma = 1
         self.lam = 0.95
@@ -209,6 +214,19 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.dp = self.policy_model.dp
         self.cast = P.Cast()
         self.dump = P.TensorDump()
+
+    def masked_mean(self, tensor, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
+        if mask is None:
+            return tensor.mean(axis=dim)
+        deno = self.batch_unsorted_segment_sum((tensor * mask), sample_index, pack_sample_num)  # [bs, packed_sample_num]
+        nume = sample_valid_len  #  [bs, packed_sample_num]
+        return deno / nume
+
+    def compute_approx_kl(self, log_probs, log_probs_base):
+        log_ratio = self.cast(log_probs, mstype.float32) - self.cast(log_probs_base, mstype.float32)
+        log_ratio = -log_ratio
+        log_ratio = self.exp(log_ratio) - 1 - log_ratio
+        return log_ratio
 
     def batch_unsorted_segment_sum(self, input_ids, segments_ids, num_segments):
         """
@@ -253,6 +271,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
             actual_seq_length,  # [bs, packed_sample_num]
             sample_index, #[bs, seq_len]
             sample_valid_len,  #[bs, packed_sample_num]
+            old_per_token_logps # [bs, seq_len]
         ):
         """ construct function for GRPOModel """
         # bs, seq_len = prompt_completion_ids.shape
@@ -265,13 +284,29 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         per_token_logps = self.policy_model(input_ids, None, None, None, False, False,
                                             samples, actual_seq_length, False, False) # [bs, seq_len]
         per_token_logps = per_token_logps * responses_mask
-        per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len]
-        per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len]
-        per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len]
-        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len-1]
-        deno = self.batch_unsorted_segment_sum(masked_per_token_loss, sample_index, pack_sample_num)  # [bs, packed_sample_num]
-        nume = sample_valid_len  #  [bs, packed_sample_num]
-        loss = (deno/nume).sum()/real_sample_num
+        log_ratio = self.compute_approx_kl(per_token_logps, ref_per_token_logps)
+
+        kl_mean = self.masked_mean(log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_len, dim=-1)
+        kl_loss = kl_mean.sum() / real_sample_num
+
+        if self.num_iterations <= 1:
+            old_per_token_logps = ops.stop_gradient(per_token_logps)
+        old_per_token_logps = self.cast(old_per_token_logps, per_token_logps.dtype)
+        ratio = self.exp(per_token_logps - old_per_token_logps)
+        surr1 = ratio * advantages
+        if self.num_iterations > 1:
+            surr2 = mint.clamp(
+                ratio,
+                min=(1.0 - self.epsilon_low),
+                max=(1.0 + self.epsilon_high)
+            ) * advantages
+            loss = -mint.min(surr1, surr2)
+        else:
+            loss = -surr1
+        actor_loss = self.masked_mean(loss, responses_mask, sample_index, pack_sample_num,
+                                      sample_valid_len, dim=-1).sum() / real_sample_num
+
+        loss = actor_loss + kl_loss * self.beta
         return loss
 
 

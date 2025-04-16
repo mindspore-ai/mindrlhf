@@ -167,6 +167,9 @@ class TrainWorker(Worker):
         sample_valid_len = ms.Tensor(
             shape=(train_bs, self.grpo_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
+        old_per_token_logps = ms.Tensor(
+            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.float16
+        )  # [bs, seq_len]
 
         start_time = time.time()
         stage_name = "train"
@@ -187,6 +190,7 @@ class TrainWorker(Worker):
             actual_seq_length,
             sample_index,
             sample_valid_len,
+            old_per_token_logps
         )
         stage_name = "other"
         context.set_auto_parallel_context(
@@ -208,6 +212,7 @@ class TrainWorker(Worker):
                 actual_seq_length=actual_seq_length,
                 sample_index=sample_index,
                 sample_valid_len=sample_valid_len,
+                old_per_token_logps=old_per_token_logps
             )
             logger.info(f"dryrun finished")
             exit(0)
@@ -331,6 +336,7 @@ class TrainWorker(Worker):
             "actual_sequence_length",
             "sample_index",
             "sample_valid_length",
+            "old_per_token_logps"
         ]
         logger.info(f"store.length: {len(self.store)}")
         pipeline = GRPOIteratorStore(self.store)
@@ -356,6 +362,9 @@ class TrainWorker(Worker):
         )
         dataset = dataset.map(
             operations=type_cast_op_int32, input_columns="sample_valid_length"
+        )
+        dataset = dataset.map(
+            operations=type_cast_op_fp16, input_columns="old_per_token_logps"
         )
         micro_batch_num = 1
         if self.sft_model_config_train.parallel_config.pipeline_stage > 1:
@@ -390,48 +399,49 @@ class TrainWorker(Worker):
         iterator = dataset.create_dict_iterator()
         logger.info(f"dataset size is {len(dataset)}")
         train_start_time = time.time()
-        for step, databatch in enumerate(iterator):
+        for epoch in range(self.grpo_config.num_iterations):
+            for step, databatch in enumerate(iterator):
 
-            ep_begin_time = time.time()
-            out = self.grpo_with_grad(**databatch)
-            end_time = time.time()
-            print_perf_stat(ep_begin_time, end_time, f"train step {step}")
-            logger.info(
-                " loss: {} | lr: {} | is overflow: {} | loss scale: {}".format(
-                    formatter(out[0]),
-                    formatter(out[1]),
-                    formatter(out[2]),
-                    formatter(out[3]),
-                )
-            )
-            if self.args.custom_model_name == "deepseek":
-                if self.topk_bias_balance_callback.update_topk_bias_flag:
-                    policy_model = (
-                        self.grpo_model_train.grpo_model_train.policy_model.model
+                ep_begin_time = time.time()
+                out = self.grpo_with_grad(**databatch)
+                end_time = time.time()
+                print_perf_stat(ep_begin_time, end_time, f"train epoch {epoch} step {step}")
+                logger.info(
+                    " loss: {} | lr: {} | is overflow: {} | loss scale: {}".format(
+                        formatter(out[0]),
+                        formatter(out[1]),
+                        formatter(out[2]),
+                        formatter(out[3]),
                     )
-                    # pylint: disable=W0212
-                    self.topk_bias_balance_callback._update_topk_bias(policy_model)
-            if self.tensor_writer:
-                self.tensor_writer.add_scalar(
-                    "loss", out[0].asnumpy(), global_step=self.global_training_step
                 )
-                self.tensor_writer.add_scalar(
-                    "lr", out[1].asnumpy(), global_step=self.global_training_step
-                )
-                self.tensor_writer.add_scalar(
-                    "overflow", out[2].asnumpy(), global_step=self.global_training_step
-                )
-                self.tensor_writer.add_scalar(
-                    "loss-scale",
-                    out[3].asnumpy(),
-                    global_step=self.global_training_step,
-                )
-            self.global_training_step += 1
+                if self.args.custom_model_name == "deepseek":
+                    if self.topk_bias_balance_callback.update_topk_bias_flag:
+                        policy_model = (
+                            self.grpo_model_train.grpo_model_train.policy_model.model
+                        )
+                        # pylint: disable=W0212
+                        self.topk_bias_balance_callback._update_topk_bias(policy_model)
+                if self.tensor_writer:
+                    self.tensor_writer.add_scalar(
+                        "loss", out[0].asnumpy(), global_step=self.global_training_step
+                    )
+                    self.tensor_writer.add_scalar(
+                        "lr", out[1].asnumpy(), global_step=self.global_training_step
+                    )
+                    self.tensor_writer.add_scalar(
+                        "overflow", out[2].asnumpy(), global_step=self.global_training_step
+                    )
+                    self.tensor_writer.add_scalar(
+                        "loss-scale",
+                        out[3].asnumpy(),
+                        global_step=self.global_training_step,
+                    )
+                self.global_training_step += 1
         train_end_time = time.time()
         print_perf_stat(
             train_start_time,
             train_end_time,
-            f"train model all steps {dataset.dataset_size}"
+            f"train model {dataset.dataset_size} epochs and {self.grpo_config.num_iterations} steps"
         )
 
     def offload_optimizer(self):

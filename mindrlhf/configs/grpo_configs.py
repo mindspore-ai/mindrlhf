@@ -103,6 +103,10 @@ class GRPOConfig:
     # 0: do not optimize mem during resharding
     # 1: offload all src and dst param during resharding
     reshard_mem_opt_level: int = 0
+    # clip higher
+    num_iterations: int = 2
+    epsilon_low: float = 0.2
+    epsilon_high: float = 0.2
 
     # vllm config
     use_vllm: int = 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers

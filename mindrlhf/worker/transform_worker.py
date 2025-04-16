@@ -137,9 +137,11 @@ def match_func_dkv3_vllm(s1, s2):
 
 class TransformWorker(Worker):
     """ TransformWorker """
-    def __init__(self, grpo_config, sft_model_config_train, sft_train_model, sft_infer_model, ref_model):
+    def __init__(self, grpo_config, sft_model_config_train, sft_train_model, sft_infer_model,
+                 ref_model, old_policy_model):
         super(TransformWorker, self).__init__()
         logger.info("Start prepare for parameter resharding in sft training.")
+        self.grpo_config = grpo_config
         self.sync_ref_model = grpo_config.sync_ref_model
         self.ref_model_sync_steps = grpo_config.ref_model_sync_steps
         self.save_strategy_dir = grpo_config.save_strategy_dir
@@ -148,12 +150,17 @@ class TransformWorker(Worker):
         src_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
         dst_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
         ref_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
+        if grpo_config.num_iterations > 1:
+            old_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
 
         start_time = time.time()
         if get_rank() == 0:
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "train_policy_strategy"), src_merged_stra)
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra)
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
+            if grpo_config.num_iterations > 1:
+                ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "old_policy_strategy"),
+                                            old_merged_stra)
         else:
             print("Waiting for main worker to merge strategies.")
             time.sleep(10)
@@ -184,6 +191,10 @@ class TransformWorker(Worker):
         self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
                                                                src_merged_stra, ref_merged_stra,
                                                                match_func=match_func_policy2ref)
+        if grpo_config.num_iterations > 1:
+            self.old_policy_param_policy2old = TransformParametersD2D(sft_train_model, old_policy_model,
+                                                                      src_merged_stra, old_merged_stra,
+                                                                      match_func=match_func_policy2ref)
 
         ms.communication.comm_func.barrier()
         end_time = time.time()
@@ -194,13 +205,17 @@ class TransformWorker(Worker):
         reshard parameter from src to dst
         """
         if input_on_device_flag_dict is None:
-            input_on_device_flag_dict = {"policy2infer": (True, True), "policy2ref": (True, True)}
+            input_on_device_flag_dict = {"policy2infer": (True, True), "policy2ref": (True, True),
+                                         "policy2old": (True, True)}
         policy2infer_flag = input_on_device_flag_dict.get("policy2infer")
         policy2ref_flag = input_on_device_flag_dict.get("policy2ref")
-        if policy2infer_flag is None or policy2ref_flag is None:
-            raise ValueError("Key in input_on_device_flag_dict must be policy2infer or policy2ref")
+        policy2old_flag = input_on_device_flag_dict.get("policy2old")
+        if policy2infer_flag is None or policy2ref_flag is None or policy2old_flag is None:
+            raise ValueError("Key in input_on_device_flag_dict must be policy2infer, policy2ref or policy2old")
         start_time = time.time()
         self.reshard_param_policy2infer.transform(policy2infer_flag)
+        if self.grpo_config.num_iterations > 1:
+            self.old_policy_param_policy2old.transform(policy2old_flag)
         if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
             self.reshard_param_policy2ref.transform(policy2ref_flag)
         end_time = time.time()

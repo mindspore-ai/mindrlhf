@@ -31,6 +31,7 @@ class GRPOData:
     actual_sequence_length: np.array
     sample_index: np.array
     sample_valid_length: np.array
+    old_per_token_logps: np.array
 
 
 # 占位，后续扩展基类功能

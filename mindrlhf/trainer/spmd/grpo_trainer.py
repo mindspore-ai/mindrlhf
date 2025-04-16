@@ -43,6 +43,7 @@ from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_fun
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
+from mindrlhf.worker.old_policy_worker import OldPolicyWorker
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.worker.worker import GRPOData
@@ -95,6 +96,9 @@ class GRPOTrainer:
                              sft_path_ref=self.sft_path_ref,
                              args=self.args)
         self.ref_dp = self.ref.get_ref_dp()
+        self.old_policy = OldPolicyWorker(grpo_config=self.grpo_config,
+                                          sft_path_train=self.sft_path_train,
+                                          args=self.args)
         self.train = TrainWorker(grpo_config=self.grpo_config,
                                  sft_path_train=self.sft_path_train,
                                  args=self.args)
@@ -115,7 +119,8 @@ class GRPOTrainer:
 
         self._compile()
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
-                                         self.train.model(), self.infer.model(), self.ref.model())
+                                         self.train.model(), self.infer.model(), self.ref.model(),
+                                         self.old_policy.model())
         self._load_checkpoint()
         if not args.load_sft_checkpoint_infer:
             self.transform.reshard_params(0)
@@ -244,6 +249,7 @@ class GRPOTrainer:
         start_time = time.time()
         self.infer.generate_strategy(self.reshard_optimizer)
         self.ref.compile()
+        self.old_policy.compile()
         self.train.compile()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "GRPOTrainer compile")
@@ -252,6 +258,7 @@ class GRPOTrainer:
         start_time = time.time()
         self.infer.load_checkpoint()
         self.ref.load_checkpoint()
+        self.old_policy.load_checkpoint()
         self.train.load_checkpoint()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
@@ -347,14 +354,14 @@ class GRPOTrainer:
         attention_mask_tensor = Tensor(attention_mask, dtype=ms.int32)
         return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
 
-    def _construct_inputs_packing(self, all_packed, ref_model_batch_size=None, idx=None):
+    def _construct_inputs_packing(self, all_packed, batch_size=None, idx=None):
         """ construct inputs for packing """
-        if ref_model_batch_size:
+        if batch_size:
             tmp_ids = []
             tmp_actual_seq_len = []
-            for i in range(ref_model_batch_size):
-                tmp_ids.append(all_packed[i + idx * ref_model_batch_size]["prompt_completion_ids"])
-                tmp_actual_seq_len.append(all_packed[i + idx * ref_model_batch_size]["actual_sequence_length"])
+            for i in range(batch_size):
+                tmp_ids.append(all_packed[i + idx * batch_size]["prompt_completion_ids"])
+                tmp_actual_seq_len.append(all_packed[i + idx * batch_size]["actual_sequence_length"])
 
         tmp_ids = np.array(tmp_ids)
         tmp_actual_seq_len = np.array(tmp_actual_seq_len)
@@ -502,6 +509,55 @@ class GRPOTrainer:
         logger.info(f"mean_grouped_rewards: \n {mean_grouped_rewards}")
 
         return advantages, mean_grouped_rewards
+
+    def _generate_old_logps(self, all_packed):
+        """ generate old log probs """
+        all_old_per_token_logps = np.zeros(
+            (len(all_packed), self.grpo_config.seq_length), dtype=np.float32)
+
+        self.old_policy.load()
+        logger.info("old_policy load")
+
+        batch_size = self.grpo_config.batch_size
+        logger.info(f"old_policy_bs batch_size: {batch_size}")
+        step_num = len(all_packed) // batch_size
+        logger.info(f"old policy model total steps: {step_num}")
+        all_old_policy_start_time = time.time()
+        for idx in range(step_num):
+            prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                all_packed, batch_size=batch_size, idx=idx)
+
+            prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
+                                           constant_values=self.grpo_config.pad_token_id)
+            samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
+            input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
+            actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
+
+            # Step 2: run old policy model.
+            start_time = time.time()
+            logger.info("old policy model step {} start at {}-------------------------------".format(
+                idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
+
+            old_per_token_logps = self.old_policy.compute_old_log_prob(
+                input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length)
+            old_per_token_logps = old_per_token_logps.asnumpy().astype(np.float32)
+
+            end_time = time.time()
+            print_perf_stat(start_time, end_time, f"old policy model step {idx}")
+            logger.info("old policy model step {} end at {}-------------------------------".format(
+                idx, time.strftime('%H:%M:%S', time.localtime(end_time))))
+
+            start_index = idx * batch_size
+            end_index = (idx + 1) * batch_size
+            all_old_per_token_logps[start_index : end_index, :] = old_per_token_logps
+
+        all_old_policy_end_time = time.time()
+        print_perf_stat(all_old_policy_start_time, all_old_policy_end_time, f"old_policy model all steps {step_num}")
+
+        self.old_policy.offload()
+        logger.info("old_policy offload")
+
+        return all_old_per_token_logps
 
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
         """ make experience """
@@ -718,7 +774,7 @@ class GRPOTrainer:
             for idx in range(ref_step_num):
                 # responses_mask will be updated before ref model infer.
                 prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
-                    all_packed, ref_model_batch_size=total_ref_batch_size, idx=idx)
+                    all_packed, batch_size=total_ref_batch_size, idx=idx)
 
                 prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
                                                constant_values=self.grpo_config.pad_token_id)
@@ -743,6 +799,13 @@ class GRPOTrainer:
 
             self.ref.offload()
             logger.info("ref_model offload")
+
+            # generate old log probs
+            if self.grpo_config.num_iterations > 1:
+                all_old_per_token_logps = self._generate_old_logps(all_packed)
+            else:
+                all_old_per_token_logps = np.zeros((len(all_packed),
+                                                    self.grpo_config.seq_length), dtype=np.float32)
 
             if (self.grpo_config.save_prompt_completions_data and
                     self.make_exp_step % self.grpo_config.save_prompt_completions_interval == 0):
@@ -771,6 +834,10 @@ class GRPOTrainer:
                 ref_per_token_logps = ref_per_token_logps * responses_mask_temp
                 ref_per_token_logps[np.isnan(ref_per_token_logps)] = 0.0
 
+                old_per_token_logps = all_old_per_token_logps[i].astype(np.float32)
+                old_per_token_logps = old_per_token_logps * responses_mask_temp
+                old_per_token_logps[np.isnan(old_per_token_logps)] = 0.0
+
                 grpodata = GRPOData(
                     prompt_completion_ids=prompt_completion_ids_temp.astype(np.int32),
                     responses_mask=responses_mask_temp.astype(np.int32),
@@ -779,6 +846,7 @@ class GRPOTrainer:
                     actual_sequence_length=all_packed[i]["actual_sequence_length"].astype(np.int32),
                     sample_index=all_packed[i]["sample_index"].astype(np.int32),
                     sample_valid_length=all_packed[i]["sample_valid_length"].astype(np.int32),
+                    old_per_token_logps=old_per_token_logps.astype(np.float32),
                 )
                 grpo_rl_elements.append(grpodata)
 
@@ -823,6 +891,7 @@ class GRPOTrainer:
                 "actual_sequence_length": {"type": "int32", "shape": [-1]},
                 "sample_index": {"type": "int32", "shape": [-1]},
                 "sample_valid_length": {"type": "int32", "shape": [-1]},
+                "old_per_token_logps": {"type": "float32", "shape": [-1]},
             }
 
             writer = FileWriter(file_name=save_path, shard_num=1, overwrite=True)
@@ -867,12 +936,15 @@ class GRPOTrainer:
                                                             "train model must not on device before transform param")
                     assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
                                                       "infer model must not on device before transform param")
+                    self.old_policy.check_not_on_device()
                 else:
                     self.infer.load()
+                    self.old_policy.load()
                     assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                        "train model must not on device before transform param")
+                                                        "train model must on device before transform param")
                     assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                  "infer model must not on device before transform param")
+                                                  "infer model must on device before transform param")
+                    self.old_policy.check_on_device()
 
                 if self.transform.sync_ref_model and \
                         ((i + 1) % self.transform.ref_model_sync_steps == 0):
@@ -880,13 +952,15 @@ class GRPOTrainer:
                     if self.reshard_mem_opt_level == 0:
                         self.ref.load()
                     input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
-                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                                                 "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
                     self.transform.reshard_params(i, input_on_device_flag_dict)
                     if self.reshard_mem_opt_level == 0:
                         self.ref.offload()
                 else:
                     input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
-                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                                                 "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
                     self.transform.reshard_params(i, input_on_device_flag_dict)
                 if self.reshard_mem_opt_level == 0:
                     assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
@@ -894,11 +968,14 @@ class GRPOTrainer:
                     assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
                                                   "infer model must on device after transform param")
                     self.train.offload_model()
+                    self.old_policy.check_on_device()
+                    self.old_policy.offload()
                 else:
                     assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
                                                             "train model must not on device after transform param")
                     assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
                                                       "infer model must not on device after transform param")
+                    self.old_policy.check_not_on_device()
 
                 step_end_time = time.time()
                 print_perf_stat(step_begin_time, step_end_time, f"epoch {n} step {i}")
@@ -924,6 +1001,7 @@ class GRPOTrainer:
             convert_func_lst = []
             convert_func_lst.append(self.infer.convert_map_dict)
             convert_func_lst.append(self.ref.convert_map_dict)
+            convert_func_lst.append(self.old_policy.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
             convert_index_json_total(config.load_checkpoint,
                                      config.load_checkpoint, convert_func_lst, False)
