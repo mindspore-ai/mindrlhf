@@ -24,6 +24,7 @@ from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
 from mindspore import context
 from mindspore import communication as D
+from mindspore.common.api import _pynative_executor
 
 # mindformers
 from mindformers import MindFormerConfig
@@ -95,8 +96,11 @@ class InferWorker(Worker):
             # vllm
             # pylint: disable=W0611
             import vllm_mindspore
+            _pynative_executor.set_async_for_graph(False)
             # pylint: disable=W0611
             import mindrlhf.third_party.vllm.ascend
+            # pylint: disable=W0611
+            import mindrlhf.third_party.vllm.qwen2
             from mindrlhf.third_party.vllm.llm import LLM
             from vllm import SamplingParams
             hf_config = self.build_qwen_hf_config()
