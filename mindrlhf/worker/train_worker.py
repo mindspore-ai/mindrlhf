@@ -88,12 +88,16 @@ class TrainWorker(Worker):
         self.grpo_with_grad.set_train(True)
         self.grpo_model_train.grpo_model_train.policy_model.model.set_train(True)
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
-        train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
+        if self.train_pp_stage == 1:
+            # for pipeline stage 1, the micro_batch_num is not used
+            train_bs = self.grpo_config.batch_size
+        else:
+            train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
         fake_data_1 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length + 1),
                                 dtype=ms.int32)
         fake_data_2 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.float32)
-        fake_data_3 = ms.Tensor(shape=(train_bs,), dtype=ms.int32)
+                                dtype=ms.float16)
+        fake_data_3 = ms.Tensor(shape=(train_bs,), dtype=ms.float16)
 
         start_time = time.time()
         stage_name = 'train'
@@ -103,9 +107,9 @@ class TrainWorker(Worker):
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"},
             pipeline_stages=self.train_pp_stage
         )
-        self.grpo_with_grad.compile(prompt_completion_ids=fake_data_1, prompts_mask=fake_data_1,
-                                    responses_mask=fake_data_1, ref_per_token_logps=fake_data_2,
-                                    advantages=fake_data_3)
+        # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
+        # use positional arguments instead of keyword arguments
+        self.grpo_with_grad.compile(fake_data_1, fake_data_1, fake_data_1, fake_data_2, fake_data_3)
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={
@@ -113,6 +117,15 @@ class TrainWorker(Worker):
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         end_time = time.time()
         print_perf_stat(start_time, end_time, "train model compile")
+
+        sim_level = os.getenv('MS_SIMULATION_LEVEL')
+        if sim_level:
+            logger.info(f"start dryrun with sim_level: {sim_level}")
+            self.grpo_with_grad(prompt_completion_ids=fake_data_1, prompts_mask=fake_data_1,
+                                responses_mask=fake_data_1, ref_per_token_logps=fake_data_2,
+                                advantages=fake_data_3)
+            logger.info(f"dryrun finished")
+            exit(0)
 
     def load_checkpoint(self):
         """ load checkpoint """
@@ -230,23 +243,20 @@ class TrainWorker(Worker):
         """ train """
         dataset = self._init_grpo_dataset_before_train()
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
-        grpo_with_grad = self.grpo_with_grad
-        sink_process = ms.data_sink(grpo_with_grad, dataset, sink_size=self.grpo_config.sink_size)
-        formatter = lambda out: out.asnumpy() if isinstance(out, Tensor) else out
-        steps = dataset.dataset_size // self.grpo_config.sink_size
-        logger.info(
-            f"dataset size is {dataset.dataset_size}, sink size is {self.grpo_config.sink_size}, "
-            f"total steps is {steps}")
+        def formatter(out):
+            return out.asnumpy() if isinstance(out, Tensor) else out
+        iterator = dataset.create_dict_iterator()
+        logger.info(f"dataset size is {dataset.dataset_size}")
         train_start_time = time.time()
-        for step in range(steps):
+        for step, databatch in enumerate(iterator):
             ep_begin_time = time.time()
-            out = sink_process()
+            out = self.grpo_with_grad(**databatch)
             end_time = time.time()
             print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
         train_end_time = time.time()
-        print_perf_stat(train_start_time, train_end_time, f"train model all steps {steps}")
+        print_perf_stat(train_start_time, train_end_time, f"train model all steps {dataset.dataset_size}")
 
     def offload_optimizer(self):
         """ offload optimizer """
