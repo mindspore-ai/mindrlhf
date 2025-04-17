@@ -84,7 +84,9 @@ class RefWorker(Worker):
             strategy_ckpt_config={
                 "save_file":
                     f"{self.save_strategy_dir}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"})
-        self.ref_model.compile(fake_data, samples=fake_data, is_ref=False)
+        # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
+        # use positional arguments instead of keyword arguments
+        self.ref_model.compile(fake_data, None, None, None, False, False, fake_data, False, False)
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={

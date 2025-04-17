@@ -90,7 +90,12 @@ class InferWorker(Worker):
                                         add_bos_token=False, add_eos_token=False)
 
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
-        self.use_vllm = grpo_config.use_vllm
+        sim_level = os.getenv('MS_SIMULATION_LEVEL')
+        if sim_level:
+            logger.warning(f"MS_SIMULATION_LEVEL is set to {sim_level}, will not use vllm")
+            self.use_vllm = VllmMode.ORIGIN
+        else:
+            self.use_vllm = grpo_config.use_vllm
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
             # vllm
