@@ -46,7 +46,7 @@ __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
            "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
-           "print_perf_stat"]
+           "print_perf_stat", "_get_pipeline_group"]
 
 PERF_STATS = False
 

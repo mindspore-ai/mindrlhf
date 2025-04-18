@@ -102,10 +102,10 @@ parallel:
 # default parallel of device num = 16 for Atlas 800
 parallel_config:
   data_parallel: 1
-  model_parallel: 2
-  pipeline_stage: 2
+  model_parallel: 16
+  pipeline_stage: 1
   expert_parallel: 1
-  micro_batch_num: &micro_batch_num 2
+  micro_batch_num: &micro_batch_num 1
   vocab_emb_dp: True
   use_seq_parallel: True
   gradient_aggregation_group: 4
@@ -194,7 +194,7 @@ moe_config:
   aux_loss_types: ["expert"]
   z_loss_factor: 0.0
   expert_model_parallel: 1
-  use_gmm: True
+  use_gmm: False
 
 processor:
   return_tensors: ms

@@ -19,6 +19,7 @@ import mindspore.nn as nn
 from mindspore import Tensor, ops
 from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
+from mindformers.models.utils import lazy_inline
 from .base_model import BaseModel
 
 __all__ = [
@@ -30,7 +31,6 @@ class CausalLMHybrid(BaseModel):
     """
     CausalLMHybrid
     """
-
     def __init__(self, model_config, grpo_config, is_training=True):
         super(CausalLMHybrid, self).__init__()
         if not is_training:
@@ -170,6 +170,7 @@ class CausalLMHybrid(BaseModel):
 class GRPOModel(nn.Cell, GeneratorMixin):
     """ GRPOModel """
 
+    @lazy_inline
     def __init__(self, grpo_config, policy_model):
         super(GRPOModel, self).__init__()
         self.grpo_config = grpo_config

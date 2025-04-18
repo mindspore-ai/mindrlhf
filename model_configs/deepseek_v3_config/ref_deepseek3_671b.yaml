@@ -10,11 +10,12 @@ auto_trans_ckpt: True # If true, auto transform load_checkpoint to load in distr
 # trainer config
 trainer:
   type: CausalLanguageModelingTrainer
-  model_name: 'DeepSeekV3'
+  model_name: 'DeepseekV3'
 
 # default parallel of device num = 32 for Atlas 800T A2
 parallel_config:
-  model_parallel: 32
+  data_parallel: 1
+  model_parallel: 16 #32
   pipeline_stage: 1
   expert_parallel: 1
   vocab_emb_dp: False
@@ -22,17 +23,12 @@ parallel_config:
 # mindspore context init config
 context:
   mode: 0 # 0--Graph Mode; 1--Pynative Mode
-  max_device_memory: "59GB"
+  max_device_memory: "58GB"
   device_id: 0
-  affinity_cpu_list: None
-
-kernel_launch_group:
-  thread_num: 4
-  kernel_group_num: 16
 
 # parallel context config
 parallel:
-  parallel_mode: "STAND_ALONE" # use 'STAND_ALONE' mode for inference with parallelism in frontend
+  parallel_mode: 1
   full_batch: False
   strategy_ckpt_save_file: "./ckpt_strategy.ckpt"
 
@@ -43,17 +39,18 @@ model:
     auto_register: deepseek3_config.DeepseekV3Config
     batch_size: 1 # add for incre predict
     seq_length: 4096
-    hidden_size: 7168
-    num_layers: 61
-    num_heads: 128
+    hidden_size: 2048
+    num_layers: 3 #61
+    num_heads: 64
     max_position_embeddings: 163840
     intermediate_size: 18432
     kv_lora_rank:  512
     q_lora_rank: 1536
     qk_rope_head_dim: 64
-    v_head_dim: 128
-    qk_nope_head_dim: 128
-    vocab_size: 129280
+    v_head_dim: 64
+    qk_nope_head_dim: 64
+    # vocab_size: 129280
+    vocab_size: 152064
     multiple_of: 256
     rms_norm_eps: 1.0e-6
     bos_token_id: 0
@@ -87,8 +84,6 @@ model:
     theta: 10000.0
     do_sample: False
     is_dynamic: True
-    qkv_concat: False
-    ffn_concat: False
     auto_map:
       AutoConfig: deepseek3_config.DeepseekV3Config
       AutoModel: deepseek3.DeepseekV3ForCausalLM
@@ -97,15 +92,15 @@ model:
     auto_register: deepseek3.DeepseekV3ForCausalLM
 
 moe_config:
-  expert_num: 256
-  num_experts_chosen: 8
+  expert_num: 4
+  num_experts_chosen: 2
   routing_policy: "TopkRouterV2"
   shared_expert_num: 1
   routed_scaling_factor: 2.5
-  first_k_dense_replace: 3
+  first_k_dense_replace: 1
   moe_intermediate_size: 2048
-  topk_group: 4
-  n_group: 8
+  topk_group: 2
+  n_group: 2
 
 processor:
   return_tensors: ms

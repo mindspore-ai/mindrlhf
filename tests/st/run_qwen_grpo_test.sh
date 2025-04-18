@@ -44,6 +44,7 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 ./qwen2_5/grpo_train.py \
 --config ./qwen2_5/grpo_config_st.yaml \
 --sft_path_infer ./qwen2_5/predict_qwen2_5_7b_instruct_st.yaml \
+--sft_path_ref ./qwen2_5/ref_qwen2_5_7b_instruct_st.yaml \
 --sft_path_train ./qwen2_5/finetune_qwen2_5_7b_st.yaml \
 --vocab_path $vocab_path \
 --merges_file_path $merges_path \
