@@ -230,23 +230,21 @@ class TrainWorker(Worker):
         """ train """
         dataset = self._init_grpo_dataset_before_train()
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
-        grpo_with_grad = self.grpo_with_grad
-        sink_process = ms.data_sink(grpo_with_grad, dataset, sink_size=self.grpo_config.sink_size)
         formatter = lambda out: out.asnumpy() if isinstance(out, Tensor) else out
-        steps = dataset.dataset_size // self.grpo_config.sink_size
-        logger.info(
-            f"dataset size is {dataset.dataset_size}, sink size is {self.grpo_config.sink_size}, "
-            f"total steps is {steps}")
+
         train_start_time = time.time()
-        for step in range(steps):
+        iterator = dataset.create_dict_iterator()
+        logger.info(f"dataset size is {dataset.dataset_size}")
+
+        for step, databatch in enumerate(iterator):
             ep_begin_time = time.time()
-            out = sink_process()
+            out = self.grpo_with_grad(**databatch)
             end_time = time.time()
             print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
         train_end_time = time.time()
-        print_perf_stat(train_start_time, train_end_time, f"train model all steps {steps}")
+        print_perf_stat(train_start_time, train_end_time, "train model all steps")
 
     def offload_optimizer(self):
         """ offload optimizer """
