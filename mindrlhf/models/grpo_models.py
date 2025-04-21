@@ -21,6 +21,7 @@ from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
 from .base_model import BaseModel
 from mindformers.models.modeling_utils import PreTrainedModel
+from mindformers.models.utils import lazy_inline
 
 __all__ = [
     "GRPOModel",
@@ -240,7 +241,7 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
 
 class GRPOModel(nn.Cell, GeneratorMixin):
     """ GRPOModel """
-
+    @lazy_inline
     def __init__(self, grpo_config, policy_model):
         super(GRPOModel, self).__init__()
         self.grpo_config = grpo_config
@@ -308,6 +309,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
         per_token_logps = self.policy_model(input_ids, None, None, None, False, False,
                                             samples, actual_seq_length, False, False) # [bs, seq_len]
+        per_token_logps = per_token_logps * responses_mask
         per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len]
         per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len]
         per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len]

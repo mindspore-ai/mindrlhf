@@ -61,8 +61,11 @@ class ModelRunner(ModelRunner):
     def load_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
         with DeviceMemoryProfiler() as m:
+            import mindspore as ms
             self.model = get_model(vllm_config=self.vllm_config)
             self.model.network.set_dynamic_inputs()
+            dynamic_hidden_status = ms.Tensor(shape=[None, None], dtype=self.model.mf_model_config.compute_dtype)
+            self.model.network.lm_head.set_inputs(dynamic_hidden_status)
 
         self.model_memory_usage = m.consumed_memory
         logger.info("Loading model weights took %.4f GB",
