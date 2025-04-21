@@ -15,26 +15,64 @@
 
 # python
 import time
-
 # mindspore
 import mindspore as ms
+from mindspore import context
 from mindspore.communication import get_rank
 from mindspore.communication.management import get_group_size
-from mindspore import context
-
 # mindformers
 from mindformers import logger
-
 # mindrlhf
-from mindrlhf.utils import TransformParametersD2D, print_perf_stat
-from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.worker.worker import Worker
-
+from mindrlhf.configs.grpo_configs import VllmMode
+from mindrlhf.utils import TransformParametersD2D, TransformParametersD2DForDSv3, print_perf_stat
 
 def match_func(s1, s2):
     s1 = s1[s1.find('.')+1:]
     s2 = s2[s2.find('.')+1:]
     return s1 == s2
+
+
+def match_func_dkv3(s1, s2):
+    """
+    match_func_dkv3
+    """
+    s1 = s1[s1.find('.') + 1:]
+    s2 = s2[s2.find('.') + 1:]
+
+    def match_layout_num(s1, s2):
+        split_s1 = s1.split('.')
+        split_s2 = s2.split('.')
+        s1_layer_num = -1
+        s2_layer_num = -1
+        for i, value in enumerate(split_s1):
+            if value == "layers":
+                s1_layer_num = split_s1[i + 1]
+        for i, value in enumerate(split_s2):
+            if value == "layers":
+                s2_layer_num = split_s2[i + 1]
+        return int(s1_layer_num) == int(s2_layer_num)
+
+    if "attention.l2q_nope_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.l2q_pe_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.kv2l_k_pe.weight" in s1 and "attention.kv2l.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.kv2l_latent_kv.weight" in s1 and "attention.kv2l.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "routed_experts.topk_bias" in s1 and "router.e_score_correction_bias" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w1" in s1 and "ffn.w1.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w2" in s1 and "ffn.w2.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w3" in s1 and "ffn.w3.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "router_dense.weight" in s1 and "router.dense.weight" in s2:
+        return match_layout_num(s1, s2)
+    return s1 == s2
+
 
 
 def match_func_policy2ref(s1, s2):
@@ -54,18 +92,63 @@ def match_func_vllm(s1, s2):
     return s1 == s2
 
 
+def match_func_dkv3_vllm(s1, s2):
+    """
+    match_func_dkv3_vllm
+    """
+    s1 = s1[s1.find('.') + 1:]
+    # get rid of the first 'model'
+    # eg. policy_model.model.model.layer -> policy_model.model.layer
+    tmp1 = s1[:s1.find('.')]
+    tmp2 = s1[s1.find('.model') + 6:]
+    s1 = tmp1 + tmp2
+    s2 = s2[s2.find('.') + 1:]
+    def match_layout_num(s1, s2):
+        split_s1 = s1.split('.')
+        split_s2 = s2.split('.')
+        s1_layer_num = -1
+        s2_layer_num = -1
+        for i, value in enumerate(split_s1):
+            if value == "layers":
+                s1_layer_num = split_s1[i + 1]
+        for i, value in enumerate(split_s2):
+            if value == "layers":
+                s2_layer_num = split_s2[i + 1]
+        return int(s1_layer_num) == int(s2_layer_num)
+
+    if "attention.l2q_nope_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.l2q_pe_proj.weight" in s1 and "attention.l2q_proj.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.kv2l_k_pe.weight" in s1 and "attention.kv2l.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "attention.kv2l_latent_kv.weight" in s1 and "attention.kv2l.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "routed_experts.topk_bias" in s1 and "router.e_score_correction_bias" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w1" in s1 and "ffn.w1.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w2" in s1 and "ffn.w2.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "ffn.w3" in s1 and "ffn.w3.weight" in s2:
+        return match_layout_num(s1, s2)
+    if "router_dense.weight" in s1 and "router.dense.weight" in s2:
+        return match_layout_num(s1, s2)
+    return s1 == s2
+
 class TransformWorker(Worker):
     """ TransformWorker """
-    def __init__(self, grpo_config, sft_train_model, sft_infer_model, ref_model):
+    def __init__(self, grpo_config, sft_model_config_train, sft_train_model, sft_infer_model, ref_model):
         super(TransformWorker, self).__init__()
         logger.info("Start prepare for parameter resharding in sft training.")
         self.sync_ref_model = grpo_config.sync_ref_model
         self.ref_model_sync_steps = grpo_config.ref_model_sync_steps
         self.save_strategy_dir = grpo_config.save_strategy_dir
         # TODO: save strategy
-        src_merged_stra = "../../merge_strategy/train_policy_merged_strategy.ckpt"
-        dst_merged_stra = "../../merge_strategy/infer_policy_merged_strategy.ckpt"
-        ref_merged_stra = "../../merge_strategy/infer_ref_merged_strategy.ckpt"
+        ms.mint.distributed.barrier()
+        src_merged_stra = f"{self.save_strategy_dir}/merge_strategy/train_policy_merged_strategy.ckpt"
+        dst_merged_stra = f"{self.save_strategy_dir}/merge_strategy/infer_policy_merged_strategy.ckpt"
+        ref_merged_stra = f"{self.save_strategy_dir}/merge_strategy/infer_ref_merged_strategy.ckpt"
         start_time = time.time()
         if get_rank() in list(range(
                 0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages")
@@ -73,17 +156,42 @@ class TransformWorker(Worker):
             ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/train_policy_strategy/", src_merged_stra)
             ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_policy_strategy/", dst_merged_stra)
             ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_ref_strategy/", ref_merged_stra)
-        ms.mint.distributed.barrier()
-        if grpo_config.use_vllm == VllmMode.ORIGIN:
-            self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                     src_merged_stra, dst_merged_stra, match_func)
         else:
-            self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                     src_merged_stra, dst_merged_stra, match_func_vllm)
+            time.sleep(20)
+        ms.mint.distributed.barrier()
+        if grpo_config.model_type == "deepseekv3":
+            transform_args = {"n_head": sft_model_config_train.num_heads,
+                              "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
+                              "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim}
+        if grpo_config.use_vllm == VllmMode.ORIGIN:
+            if grpo_config.model_type == "deepseekv3":
+                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(sft_train_model, sft_infer_model,
+                                                                                transform_args, src_merged_stra,
+                                                                                dst_merged_stra, match_func_dkv3)
+            else:
+                self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
+                                                                         src_merged_stra, dst_merged_stra, match_func)
+        else:
+            if grpo_config.model_type == "deepseekv3":
+                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(sft_train_model, sft_infer_model,
+                                                                                transform_args, src_merged_stra,
+                                                                                dst_merged_stra, match_func_dkv3_vllm)
+            else:
+                self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
+                                                                         src_merged_stra, dst_merged_stra,
+                                                                         match_func_vllm)
         ms.communication.comm_func.barrier()
-        self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
-                                                               src_merged_stra, ref_merged_stra,
-                                                               match_func=match_func_policy2ref)
+
+        if grpo_config.model_type == "deepseekv3":
+            self.reshard_param_policy2ref = TransformParametersD2DForDSv3(sft_train_model, ref_model,
+                                                                          transform_args, src_merged_stra,
+                                                                          ref_merged_stra,
+                                                                          match_func=match_func_policy2ref)
+        else:
+            self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
+                                                                   src_merged_stra, ref_merged_stra,
+                                                                   match_func=match_func_policy2ref)
+
         ms.communication.comm_func.barrier()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "TransformWorker init")

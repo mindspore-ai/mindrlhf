@@ -32,8 +32,10 @@ from mindspore import nn
 # mindformers
 from mindformers import MindFormerConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
+from mindformers.core.callback.callback import TopkBiasBalanceCallback
 from mindformers import LlamaConfig
 from mindformers import logger
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 # mindrlhf
 from mindrlhf.utils.adam import AdamWeightDecayOp
@@ -42,7 +44,7 @@ from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLos
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.worker.worker import Worker
-
+from mindrlhf.utils.configs import set_weight_decay
 
 class TrainWorker(Worker):
     '''
@@ -61,9 +63,27 @@ class TrainWorker(Worker):
             sft_config_train.parallel_config
         )
         sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
-        sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+        if args.custom_model_name in ["qwen", "llama"]:
+            sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+            sft_model_config_train.model_name = "llama"
+        elif args.custom_model_name == "deepseek":
+            sft_config_train.model.model_config.moe_config = (
+                sft_config_train.moe_config
+            )
+            sft_model_config_train = DeepseekV3Config(**sft_config_train.model.model_config)
+            sft_model_config_train.model_name = "deepseek_training"
+            self.topk_bias_balance_callback = TopkBiasBalanceCallback(
+                sft_model_config_train.moe_config.balance_via_topk_bias,
+                sft_model_config_train.moe_config.topk_bias_update_rate,
+                sft_model_config_train.num_layers,
+                sft_model_config_train.mtp_depth,
+                sft_model_config_train.moe_config.expert_num,
+                sft_model_config_train.parallel_config.micro_batch_num
+            )
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
         sft_model_config_train.checkpoint_name_or_path = args.load_sft_checkpoint_train
-        sft_model_config_train.model_name = "llama"
         self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
         sft_model_config_train.checkpoint_name_or_path = None
 
@@ -148,22 +168,6 @@ class TrainWorker(Worker):
         """
         Build train network.
         """
-        def set_weight_decay(params):
-            def decay_filter(x):
-                return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
-
-            decay_params = list(filter(decay_filter, params))
-            other_params = list(filter(lambda x: not decay_filter(x), params))
-            group_params = [{
-                'params': decay_params,
-                'weight_decay': 1e-1
-            }, {
-                'params': other_params,
-                'weight_decay': 0.0
-            }, {
-                'order_params': params
-            }]
-            return group_params
 
         sft_model_config = self.sft_model_config_train
         grpo_model_train = self.grpo_model_train
@@ -180,7 +184,10 @@ class TrainWorker(Worker):
         lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
                           warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
         params = grpo_with_loss.trainable_params()
-        group_params = set_weight_decay(params)
+        if self.args.custom_model_name == "deepseek":
+            group_params = set_weight_decay(params, is_use_other_params=False)
+        else:
+            group_params = set_weight_decay(params)
 
         if grpo_config.optimizer == "lamb":
             optimizer = nn.Lamb(group_params, learning_rate=lr)
@@ -255,6 +262,11 @@ class TrainWorker(Worker):
             print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
+            if self.args.custom_model_name == "deepseek":
+                if self.topk_bias_balance_callback.update_topk_bias_flag:
+                    policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
+                    # pylint: disable=W0212
+                    self.topk_bias_balance_callback._update_topk_bias(policy_model)
         train_end_time = time.time()
         print_perf_stat(train_start_time, train_end_time, f"train model all steps {dataset.dataset_size}")
 

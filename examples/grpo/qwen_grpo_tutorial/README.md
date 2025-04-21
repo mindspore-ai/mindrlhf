@@ -197,7 +197,7 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```shell
 msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=False --log_dir=./qwen2_5_one_log \
-examples/grpo/qwen_grpo_tutorial/grpo_one_stage.py \
+examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
 --sft_path_infer ./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
 --sft_path_train ./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
@@ -220,7 +220,7 @@ master_addr:                  主节点地址
 master_port:                  主节点端口
 join:                         是否等待所有worker退出
 log_dir:                      日志路径
-# grpo_one_stage.py 参数
+# main.py 参数
 config:                       grpo的配置文件
 sft_path_infer:               推理用的模型配置文件
 sft_path_train:               训练用的模型配置文件

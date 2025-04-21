@@ -29,6 +29,7 @@ from mindspore import communication as D
 
 # mindformers
 from mindformers import logger
+from mindformers.models.llama import LlamaTokenizerFast
 
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
@@ -61,7 +62,7 @@ class GRPOTrainer:
         self._init_grpo_infer_dataset()
 
         self.ref = RefWorker(grpo_config=self.grpo_config,
-                             sft_path_infer=self.sft_path_infer,
+                             sft_path_ref=self.sft_path_ref,
                              args=self.args)
         self.ref_dp = self.ref.get_ref_dp()
         self.train = TrainWorker(grpo_config=self.grpo_config,
@@ -71,8 +72,8 @@ class GRPOTrainer:
 
         self._compile()
         self._load_checkpoint()
-        self.transform = TransformWorker(self.grpo_config, self.train.model(),
-                                         self.infer.model(), self.ref.model())
+        self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
+                                         self.train.model(), self.infer.model(), self.ref.model())
 
     def _init_grpo_configs(self, args):
         """ init grpo configs """
@@ -94,12 +95,21 @@ class GRPOTrainer:
         logger.info(f"vllm mode: {grpo_config.use_vllm}, hf_config_path: {grpo_config.hf_config_path}")
 
         # for worker
-        self.tokenizer = Qwen2Tokenizer(
-            args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+        if args.custom_model_name == "qwen":
+            self.tokenizer = Qwen2Tokenizer(
+                args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+        elif args.custom_model_name == "deepseek":
+            self.tokenizer = LlamaTokenizerFast(
+                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
+            )
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'deepseek'], but get {model_name}")
         self.grpo_config = grpo_config
         self.args.use_parallel = use_parallel
         self.use_parallel = use_parallel
         self.sft_path_infer = args.sft_path_infer
+        self.sft_path_ref = args.sft_path_ref
         self.sft_path_train = args.sft_path_train
 
     def _init_reward_fn(self, args):
@@ -303,7 +313,6 @@ class GRPOTrainer:
         logger.info(f"solution: {solution}")
 
         n_questions = batch[0].shape[0] // num_rollouts
-        all_rewards = np.zeros((num_generations * num_rollouts * n_questions), dtype=np.float32)
         all_prompt_completion_ids = np.zeros(
             (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
         all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
@@ -541,11 +550,16 @@ class GRPOTrainer:
 
                 # load for reshard
                 self.infer.load()
-                self.ref.load()
-                self.transform.reshard_params(i)
 
+                if self.transform.sync_ref_model and \
+                    ((i + 1) % self.transform.ref_model_sync_steps == 0):
+                    # in some work, ref update may have a 'bad' effect
+                    self.ref.load()
+                    self.transform.reshard_params(i)
+                    self.ref.offload()
+                else:
+                    self.transform.reshard_params(i)
                 self.train.offload_model()
-                self.ref.offload()
 
                 step_end_time = time.time()
                 print_perf_stat(step_begin_time, step_end_time, f"epoch {n} step {i}")

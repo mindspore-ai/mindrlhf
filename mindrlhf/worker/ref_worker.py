@@ -19,14 +19,15 @@ import numpy as np
 
 # mindspore
 import mindspore as ms
-from mindspore.communication import get_rank
 from mindspore import context
+from mindspore.communication.management import get_rank
 
 # mindformers
 from mindformers import MindFormerConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers import LlamaConfig
 from mindformers import logger
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 # mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
@@ -39,18 +40,28 @@ class RefWorker(Worker):
     This class generates responses.
     '''
 
-    def __init__(self, grpo_config, sft_path_infer, args):
+    def __init__(self, grpo_config, sft_path_ref, args):
         super().__init__()
         logger.info("init RefWorker")
         self.use_parallel = grpo_config.use_parallel
-        ref_config = MindFormerConfig(sft_path_infer)
+        ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = args.use_parallel
         ref_config.model.model_config.parallel_config = ref_config.parallel_config
+        self.ref_config = ref_config
         ref_config.model.model_config.use_past = False
-        ref_model_config = LlamaConfig(**ref_config.model.model_config)
+        if args.custom_model_name in ["qwen", "llama"]:
+            ref_model_config = LlamaConfig(**ref_config.model.model_config)
+            ref_model_config.model_name = "llama"
+        elif args.custom_model_name == "deepseek":
+            ref_config.model.model_config.moe_config = (
+                ref_config.moe_config
+            )
+            ref_model_config = DeepseekV3Config(**ref_config.model.model_config)
+            ref_model_config.model_name = "deepseek_training"
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
         ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
-        ref_model_config.model_name = "llama"
-
         self.ref_model_config = ref_model_config
         self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
         ref_model_config.checkpoint_name_or_path = None
@@ -102,7 +113,6 @@ class RefWorker(Worker):
 
         ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,
                                              samples=samples, is_ref=False)
-
         logger.info(f"ref_logprobs precision is {ref_per_token_logps}")
         return ref_per_token_logps
 

@@ -34,7 +34,9 @@ from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.experimental.infer.core.utils import generate_state_dict
 from mindformers.experimental.parallel_core.pynative.utils import save_strategy_file
+from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import logger
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 # mindrlhf
 from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
@@ -76,9 +78,22 @@ class InferWorker(Worker):
         sft_config_infer.model.model_config.parallel_config = (
             sft_config_infer.parallel_config
         )
-        sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+
+        if args.custom_model_name in ["qwen", "llama"]:
+            sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+            sft_model_config_infer.model_name = "llama"
+        elif args.custom_model_name == "deepseek":
+            sft_config_infer.model.model_config.moe_config = (
+                sft_config_infer.moe_config
+            )
+            sft_model_config_infer = DeepseekV3Config(**sft_config_infer.model.model_config)
+            sft_model_config_infer.model_name = "deepseek_infer"
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
+
         sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
-        sft_model_config_infer.model_name = "llama"
+
 
         self.grpo_config = combine_grpo_config(grpo_config, sft_model_config_infer)
         self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
@@ -86,9 +101,15 @@ class InferWorker(Worker):
         sft_model_config_infer.checkpoint_name_or_path = None
         self.sft_model_config_infer = sft_model_config_infer
 
-        self.tokenizer = Qwen2Tokenizer(self.args.vocab_path, self.args.merges_file_path,
-                                        add_bos_token=False, add_eos_token=False)
-
+        if self.args.custom_model_name == "qwen":
+            self.tokenizer = Qwen2Tokenizer(
+                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False)
+        elif self.args.custom_model_name == "deepseek":
+            self.tokenizer = LlamaTokenizerFast(
+                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False)
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'deepseek'], but get {model_name}")
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         sim_level = os.getenv('MS_SIMULATION_LEVEL')
         if sim_level:
@@ -99,55 +120,7 @@ class InferWorker(Worker):
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
             # vllm
-            # pylint: disable=W0611
-            import vllm_mindspore
-            _pynative_executor.set_async_for_graph(False)
-            # pylint: disable=W0611
-            import mindrlhf.third_party.vllm.ascend
-            # pylint: disable=W0611
-            import mindrlhf.third_party.vllm.qwen2
-            from mindrlhf.third_party.vllm.llm import LLM
-            from vllm import SamplingParams
-            hf_config = self.build_qwen_hf_config()
-            self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
-            # 初始化vllm
-            logger.info(f"init LLM, block_size: {sft_model_config_infer.block_size}, "
-                        f"max_model_len = {self.grpo_config.max_model_len}, "
-                        f"max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
-                        f"max_num_seqs: {self.grpo_config.max_num_seqs}, "
-                        f"num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
-                        f"gpu_memory_utilization: {self.grpo_config.gpu_memory_utilization}")
-            vllm_start_time = time.time()
-            self.inference_engine = LLM(tokenizer=self.tokenizer,
-                                        model_hf_config=hf_config,
-                                        tensor_parallel_size=sft_model_config_infer.parallel_config.model_parallel,
-                                        dtype="bfloat16",
-                                        block_size=sft_model_config_infer.block_size,
-                                        skip_tokenizer_init=False,
-                                        max_model_len=self.grpo_config.max_model_len,             # 上下文总长，影响prompt长度和生成长度，小于max_num_batched_tokens
-                                        max_num_batched_tokens=self.grpo_config.max_num_batched_tokens,
-                                        max_num_seqs=self.grpo_config.max_num_seqs,
-                                        num_scheduler_steps=self.grpo_config.num_scheduler_steps,
-                                        gpu_memory_utilization=self.grpo_config.gpu_memory_utilization
-                                        )
-            logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
-            logger.info(f"temperature: {self.grpo_config.temperature}, "
-                        f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
-                        f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
-                        f"stop_token_ids: {self.grpo_config.eos_token_id}, "
-                        f"max_tokens: {self.grpo_config.max_decode_length}, "
-                        f"detokenize: {self.grpo_config.detokenize}")
-            vllm_start_time = time.time()
-            self.sampling_params = SamplingParams(
-                repetition_penalty=self.grpo_config.repetition_penalty,
-                temperature=self.grpo_config.temperature,
-                top_p=self.grpo_config.top_p,
-                top_k=self.grpo_config.top_k,
-                stop_token_ids=self.grpo_config.eos_token_id,
-                max_tokens=self.grpo_config.max_decode_length,
-                detokenize=self.grpo_config.detokenize
-            )
-            logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
+            self.__init_use_vllm()
             policy_model = self.inference_engine.get_model()
         else:
             # no vllm
@@ -164,6 +137,68 @@ class InferWorker(Worker):
             self.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.on_device = True
         self.save_strategy_dir = grpo_config.save_strategy_dir
+
+    def __init_use_vllm(self):
+        """
+        init_vllm
+        """
+        # pylint: disable=W0611
+        import vllm_mindspore
+        _pynative_executor.set_async_for_graph(False)
+        # pylint: disable=W0611
+        import mindrlhf.third_party.vllm.ascend
+        # pylint: disable=W0611
+        import mindrlhf.third_party.vllm.qwen2
+        from mindrlhf.third_party.vllm.llm import LLM
+        from vllm import SamplingParams
+        if self.sft_model_config_infer.model_name == "deepseek_infer":
+            hf_config = self.build_deepseek_hf_config()
+        elif self.sft_model_config_infer.model_name == "llama":
+            hf_config = self.build_qwen_hf_config()
+        else:
+            raise ValueError(
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
+
+        self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
+        # 初始化vllm
+        logger.info(f"init LLM, block_size: {self.sft_model_config_infer.block_size}, "
+                    f"max_model_len = {self.grpo_config.max_model_len}, "
+                    f"max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
+                    f"max_num_seqs: {self.grpo_config.max_num_seqs}, "
+                    f"num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
+                    f"gpu_memory_utilization: {self.grpo_config.gpu_memory_utilization}")
+        vllm_start_time = time.time()
+        self.inference_engine = LLM(tokenizer=self.tokenizer,
+                                    model_hf_config=hf_config,
+                                    tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
+                                    dtype="bfloat16",
+                                    block_size=self.sft_model_config_infer.block_size,
+                                    skip_tokenizer_init=False,
+                                    max_model_len=self.grpo_config.max_model_len,
+                                    # 上下文总长，影响prompt长度和生成长度，小于max_num_batched_tokens
+                                    max_num_batched_tokens=self.grpo_config.max_num_batched_tokens,
+                                    max_num_seqs=self.grpo_config.max_num_seqs,
+                                    num_scheduler_steps=self.grpo_config.num_scheduler_steps,
+                                    gpu_memory_utilization=self.grpo_config.gpu_memory_utilization
+                                    )
+        logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
+        logger.info(f"temperature: {self.grpo_config.temperature}, "
+                    f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
+                    f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
+                    f"stop_token_ids: {self.grpo_config.eos_token_id}, "
+                    f"max_tokens: {self.grpo_config.max_decode_length}, "
+                    f"detokenize: {self.grpo_config.detokenize}")
+        vllm_start_time = time.time()
+        self.sampling_params = SamplingParams(
+            repetition_penalty=self.grpo_config.repetition_penalty,
+            temperature=self.grpo_config.temperature,
+            top_p=self.grpo_config.top_p,
+            top_k=self.grpo_config.top_k,
+            stop_token_ids=self.grpo_config.eos_token_id,
+            max_tokens=self.grpo_config.max_decode_length,
+            detokenize=self.grpo_config.detokenize
+        )
+        logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
 
     def model(self):
         return self.grpo_model_infer
@@ -432,6 +467,90 @@ class InferWorker(Worker):
         qwen_hf_config["vocab_size"] = self.sft_model_config_infer.vocab_size
 
         json_str = json.dumps(qwen_hf_config, indent=4)
+        if get_rank() == 0:
+            with open(self.grpo_config.hf_config_path, "w", encoding="utf-8") as f:
+                f.write(json_str)
+        ms.mint.distributed.barrier()
+
+        hf_config = AutoConfig.from_pretrained(os.path.dirname(self.grpo_config.hf_config_path))
+        print("hf config for vllm: ", hf_config, flush=True)
+
+        return hf_config
+
+    def build_deepseek_hf_config(self):
+        """ build_deepseek_hf_config """
+        import json
+        from transformers import AutoConfig
+
+        print("hf_config_path: ", self.grpo_config.hf_config_path, flush=True)
+        deepseek_hf_config = {}
+        deepseek_hf_config["rope_theta"] = 1000000.0
+        deepseek_hf_config["architectures"] = ["DeepseekV3ForCausalLM"]
+        deepseek_hf_config["attention_bias"] = False
+        deepseek_hf_config["attention_dropout"] = 0.0
+        deepseek_hf_config["auto_map"] = {
+            "AutoConfig": "configuration_deepseek.DeepseekV3Config",
+            "AutoModel": "modeling_deepseek.DeepseekV3Model",
+            "AutoModelForCausalLM": "modeling_deepseek.DeepseekV3ForCausalLM"
+        }
+        deepseek_hf_config["n_group"] = self.sft_model_config_infer.moe_config.n_group
+        deepseek_hf_config["moe_layer_freq"] = 1
+        deepseek_hf_config["kv_lora_rank"] = self.sft_model_config_infer.kv_lora_rank
+        deepseek_hf_config["n_routed_experts"] = self.sft_model_config_infer.moe_config.expert_num
+        deepseek_hf_config["n_shared_experts"] = self.sft_model_config_infer.moe_config.shared_expert_num
+        deepseek_hf_config["norm_topk_prob"] = True
+        deepseek_hf_config["ep_size"] = 1
+        deepseek_hf_config["num_experts_per_tok"] = 8
+        deepseek_hf_config["first_k_dense_replace"] = 3
+        deepseek_hf_config["aux_loss_alpha"] = 0.001
+        deepseek_hf_config["bos_token_id"] = 0  # 硬编码
+        deepseek_hf_config["eos_token_id"] = [1]  # 硬编码
+        deepseek_hf_config["hidden_act"] = "silu"
+        deepseek_hf_config["num_nextn_predict_layers"] = 1
+        deepseek_hf_config["pretraining_tp"] = 1
+        deepseek_hf_config["q_lora_rank"] = self.sft_model_config_infer.q_lora_rank
+        deepseek_hf_config["qk_nope_head_dim"] = self.sft_model_config_infer.qk_nope_head_dim
+        deepseek_hf_config["qk_rope_head_dim"] = self.sft_model_config_infer.qk_rope_head_dim
+        deepseek_hf_config["routed_scaling_factor"] = self.sft_model_config_infer.moe_config.routed_scaling_factor
+        deepseek_hf_config["scoring_func"] = "sigmoid"
+        deepseek_hf_config["seq_aux"] = True
+        deepseek_hf_config["tie_word_embeddings"] = False
+        deepseek_hf_config["topk_group"] = self.sft_model_config_infer.moe_config.topk_group
+        deepseek_hf_config["topk_method"] = "noaux_tc"
+        deepseek_hf_config["torch_dtype"] = "bfloat16"
+        deepseek_hf_config["transformers_version"] = "4.33.1"
+
+        deepseek_hf_config["quantization_config"] = {
+            "activation_scheme": "dynamic",
+            "fmt": "e4m3",
+            "quant_method": "fp8",
+            "weight_block_size": [
+                128,
+                128
+            ]
+        }
+        deepseek_hf_config["rope_scaling"] = {
+            "beta_fast": 32,
+            "beta_slow": 1,
+            "factor": 40,
+            "mscale": 1.0,
+            "mscale_all_dim": 1.0,
+            "original_max_position_embeddings": 4096,
+            "type": "yarn"
+        }
+        deepseek_hf_config["hidden_size"] = self.sft_model_config_infer.hidden_size
+        deepseek_hf_config["initializer_range"] = 0.02  # 硬编码，不知道对应哪一项
+        deepseek_hf_config["intermediate_size"] = self.sft_model_config_infer.intermediate_size
+        deepseek_hf_config["max_position_embeddings"] = self.sft_model_config_infer.max_position_embeddings
+        deepseek_hf_config["model_type"] = "deepseek_v3"
+        deepseek_hf_config["num_attention_heads"] = self.sft_model_config_infer.num_heads
+        deepseek_hf_config["num_hidden_layers"] = self.sft_model_config_infer.num_layers
+        deepseek_hf_config["num_key_value_heads"] = self.sft_model_config_infer.n_kv_heads
+        deepseek_hf_config["rms_norm_eps"] = 1e-06
+        deepseek_hf_config["use_cache"] = True
+        deepseek_hf_config["v_head_dim"] = self.sft_model_config_infer.v_head_dim
+        deepseek_hf_config["vocab_size"] = self.sft_model_config_infer.vocab_size
+        json_str = json.dumps(deepseek_hf_config, indent=4)
         if get_rank() == 0:
             with open(self.grpo_config.hf_config_path, "w", encoding="utf-8") as f:
                 f.write(json_str)
