@@ -156,9 +156,10 @@ class RefWorker(Worker):
         context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
         ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,
                                             attention_mask_tensor, samples=samples, actual_seq_length=actual_sequence_length)
-
+        logger.info(f"ref_logprobs precision before allreduce is {ref_per_token_logps}")
         if self.ref_pp_stage > 1:
             ref_per_token_logps = self.all_reduce(ref_per_token_logps)
+        logger.info(f"ref_logprobs precision after allreduce is {ref_per_token_logps}")
         return ref_per_token_logps
 
     def _get_pipeline_group(self):

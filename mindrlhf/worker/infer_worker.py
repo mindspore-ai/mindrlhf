@@ -314,19 +314,17 @@ class InferWorker(Worker):
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(
-                input_ids_numpy[:, :max_valid_length],
-                max_new_tokens=self.grpo_config.max_decode_length,
-                do_sample=True
-            )
+            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(input_ids_numpy[:, :max_valid_length],
+                                                                             max_new_tokens=max_decode_length,
+                                                                             min_new_tokens=min_decode_length,
+                                                                             do_sample=True)
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
-                input_ids_numpy[:, :max_valid_length],
-                max_new_tokens=self.grpo_config.max_decode_length,
-                do_sample=True
-            )
+            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
+                                                                                   max_new_tokens=max_decode_length,
+                                                                                   min_new_tokens=min_decode_length,
+                                                                                   do_sample=True)
             logger.info("infer without vllm end, not use vllm model")
         else:
             logger.info("start vllm")
@@ -374,6 +372,7 @@ class InferWorker(Worker):
                                           parallel_mode="stand_alone", full_batch=False)
         stage_name = 'infer'
         strategy_path = self.grpo_config.save_strategy_dir
+        ms.mint.distributed.barrier()
         if self.use_vllm == VllmMode.ORIGIN:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
         else:
@@ -390,31 +389,43 @@ class InferWorker(Worker):
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
-    def offload(self):
-        """ offload stf infer """
+    def offload(self, free_kv_cache=False):
+        """offload infer checkpoint"""
         if self.on_device is False:
             return
         logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
-        start_time = time.time()
-        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload stf infer")
+        if self.use_vllm == VllmMode.ORIGIN:
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._offload()
+        else:
+            if free_kv_cache:
+                self.inference_engine.free_cache_engine()
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                if free_kv_cache and "paged_attention_mgr" in param.name:
+                    continue
+                param._offload()
         logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
         self.on_device = False
 
-    def load(self):
-        """ load stf infer """
+    def load(self, init_kv_cache=False):
+        """ load infer checkpoint """
         if self.on_device:
             return
         logger.info(f'before load stf infer {ms.hal.memory_stats()}')
-        start_time = time.time()
-        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load stf infer")
+        if self.use_vllm == VllmMode.ORIGIN:
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._load()
+        else:
+            if init_kv_cache:
+                self.inference_engine.init_cache_engine()
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                if not init_kv_cache and "paged_attention_mgr" in param.name:
+                    continue
+                # pylint: disable=W0212
+                param._load()
         logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 

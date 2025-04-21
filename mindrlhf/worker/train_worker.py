@@ -64,6 +64,7 @@ class TrainWorker(Worker):
         sft_config_train.model.model_config.parallel_config = (
             sft_config_train.parallel_config
         )
+        os.environ["RUN_MODE"] = sft_config_train.run_mode
         sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
         if args.custom_model_name in ["qwen", "llama"]:
             sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
@@ -129,9 +130,9 @@ class TrainWorker(Worker):
         responses_mask = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
                                 dtype=ms.int32)   # [bs, seq_len]
         ref_per_token_logps = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.float32) # [bs, seq_len]
+                                dtype=ms.float16) # [bs, seq_len]
         advantages = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.float32)  # [bs, seq_len]
+                                dtype=ms.float16)  # [bs, seq_len]
         actual_seq_length = ms.Tensor(shape=(train_bs, self.grpo_config.pack_num),
                                 dtype=ms.int32)  # [bs, packed_sample_num]
         sample_index = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
@@ -221,8 +222,7 @@ class TrainWorker(Worker):
         grpo_config = self.grpo_config
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
-            grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(grpo_model_train,
-                                                                    grpo_config.micro_batch_interleaved),
+            grpo_with_loss_net = PipelineCell(grpo_model_train,
                                               sft_model_config.parallel_config.micro_batch_num)
         else:
             logger.info("non-pipeline cell")
@@ -307,6 +307,7 @@ class TrainWorker(Worker):
         logger.info(f"dataset size is {dataset.dataset_size}")
         train_start_time = time.time()
         for step, databatch in enumerate(iterator):
+
             ep_begin_time = time.time()
             out = self.grpo_with_grad(**databatch)
             end_time = time.time()
@@ -358,7 +359,7 @@ class TrainWorker(Worker):
         """ load optimizer """
         if self.optimizer_on_device:
             return
-        logger.info(f'before load stf train {ms.hal.memory_stats()}')
+        logger.info(f'before load stf train optimizer {ms.hal.memory_stats()}')
         start_time = time.time()
         for param in self.grpo_with_grad.optimizer.moments1:
             # pylint: disable=W0212
@@ -372,29 +373,33 @@ class TrainWorker(Worker):
                 param._load()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "load stf train optimizer")
-        logger.info(f'after load stf train {ms.hal.memory_stats()}')
+        logger.info(f'after load stf train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = True
 
     def load_model(self):
         if self.model_on_device:
             return
         start_time = time.time()
+        logger.info(f'before load stf train model {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "load stf train model")
+        logger.info(f'after load stf train model {ms.hal.memory_stats()}')
         self.model_on_device = True
 
     def offload_model(self):
         if self.model_on_device is False:
             return
         start_time = time.time()
+        logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "offload stf train model")
+        logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
         self.model_on_device = False
 
     def push_to_store(self, data):

@@ -37,6 +37,10 @@ from dataclasses import asdict, dataclass, field
 from mindformers import MindFormerConfig
 import json
 import os
+# mindspore
+import mindspore
+import mindspore as ms
+import mindspore.common.dtype as mstype
 # mindformers
 from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
@@ -564,7 +568,7 @@ class GRPOTrainer:
         all_ref_per_token_logps = np.zeros(
             (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.float32)
 
-        self.infer.load()
+        self.infer.load(init_kv_cache=True)
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
@@ -593,7 +597,7 @@ class GRPOTrainer:
         logger.info("generation end at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
 
-        self.infer.offload()
+        self.infer.offload(free_kv_cache=True)
         logger.info("model_infer offload")
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
@@ -687,7 +691,6 @@ class GRPOTrainer:
             all_packed = self.pack_grpo_data(
                 all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
             logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
-            total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.infer_dp
             total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
 
             while len(all_packed) < total_ref_batch_size:
@@ -842,7 +845,7 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load()
+                self.infer.load(init_kv_cache=True)
 
                 # 权重倒换优化
                 self.ref.load()
