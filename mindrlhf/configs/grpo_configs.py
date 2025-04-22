@@ -84,6 +84,9 @@ class GRPOConfig:
     inference_micro_size: int = 1
     save_ckpt_dir: str = "./"
     save_data_file: str = ""
+    save_prompt_completions_data: bool = False
+    save_prompt_completions_interval: int = 10
+    save_prompt_completions_dir: str = "./"
     save_strategy_dir: str = "../../strategy/"
     sft_model_path: str = "/path/model.yaml"
     critic_model_path: str = "/path/model.yaml"
