@@ -35,7 +35,7 @@ class PPOConfig:
     eps: float = 1.0e-8
     weight_decay: float = 0.01
 
-    sceduler_name: str = 'cosine_annealing'
+    scheduler_name: str = 'cosine_annealing'
     t_max: int = 100000
     eta_min: float = 5.0e-6
 

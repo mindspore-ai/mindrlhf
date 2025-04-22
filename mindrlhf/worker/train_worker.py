@@ -80,6 +80,9 @@ class TrainWorker(Worker):
         self.optimizer_on_device = True
         self.save_strategy_dir = grpo_config.save_strategy_dir
 
+        self.tensor_writer = self.args.tensor_writer
+        self.global_training_step = 0
+
     def model(self):
         return self.grpo_model_train
 
@@ -243,6 +246,12 @@ class TrainWorker(Worker):
             print_perf_stat(ep_begin_time, end_time, f"train step {step}")
             logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
                         .format(formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])))
+            if self.tensor_writer:
+                self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=self.global_training_step)
+            self.global_training_step += 1
         train_end_time = time.time()
         print_perf_stat(train_start_time, train_end_time, "train model all steps")
 
