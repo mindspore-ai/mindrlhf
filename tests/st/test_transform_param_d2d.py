@@ -126,3 +126,31 @@ def test_transform_d2d_pp_4():
         "pytest -s transform_param_d2d.py::test_transform_d2d_pp_4 "
     )
     assert return_code == 0
+
+
+def test_transform_d2d_with_reshard_optimizer_tp():
+    """
+    Feature: transform param no pp scenario
+    Description: dpmp transform
+    Expectation: Run success
+    """
+    return_code = os.system(
+        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
+        "--master_port=10801 --join=True --log_dir=./log_test_transform_d2d_with_reshard_optimizer_tp "
+        "pytest -s transform_param_d2d.py::test_transform_d2d_with_reshard_optimizer_tp "
+    )
+    assert return_code == 0
+
+
+def test_transform_d2d_with_reshard_optimizer_tp_zero():
+    """
+    Feature: transform param no pp scenario
+    Description: dpmp transform
+    Expectation: Run success
+    """
+    return_code = os.system(
+        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
+        "--master_port=10801 --join=True --log_dir=./log_test_transform_d2d_with_reshard_optimizer_tp_zero "
+        "pytest -s transform_param_d2d.py::test_transform_d2d_with_reshard_optimizer_tp_zero "
+    )
+    assert return_code == 0

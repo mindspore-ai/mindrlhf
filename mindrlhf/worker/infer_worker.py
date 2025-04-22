@@ -33,7 +33,6 @@ from mindformers import LlamaConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.experimental.infer.core.utils import generate_state_dict
-from mindformers.experimental.parallel_core.pynative.utils import save_strategy_file
 from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import logger
 from research.deepseek3.deepseek3_config import DeepseekV3Config
@@ -48,6 +47,7 @@ from mindrlhf.utils.configs import (
 from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils.utils import get_valid_length_each_example
 from mindrlhf.worker.worker import Worker
+from mindrlhf.utils.strategy_utils import save_strategy_file
 
 
 class InferWorker(Worker):
@@ -359,7 +359,7 @@ class InferWorker(Worker):
             left_padding_prompts.astype(np.int32), prompts_mask
         )
 
-    def generate_strategy(self):
+    def generate_strategy(self, reshard_optimizer):
         """ generate_strategy """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
@@ -374,8 +374,11 @@ class InferWorker(Worker):
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
         else:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model)
-        save_strategy_file(static_dict,
-                           f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt")
+        save_strategy_file(
+            static_dict,
+            reshard_optimizer,
+            f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
+        )
         stage_name = 'other'
         context.set_auto_parallel_context(
             strategy_ckpt_config={

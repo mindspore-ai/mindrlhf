@@ -22,6 +22,7 @@ from mindspore.parallel.shard import Layout
 from mindspore import nn, Tensor, Parameter, context, ops
 
 from mindrlhf.utils import TransformParametersD2D
+from mindrlhf.utils.reshard_optimizer import ReshardOptimizer, Layout as StrategyLayout, Parallel
 
 init()
 
@@ -519,3 +520,154 @@ def test_transform_d2d_pp_4():
     context.reset_auto_parallel_context()
     if get_rank() in [6, 7]:
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_transform_d2d_with_reshard_optimizer_tp():
+    """
+    Feature: transform param no pp scenario
+    Description: dpmp transform
+    Expectation: Run success
+    """
+    init()
+
+    context.set_context(
+        mode=context.GRAPH_MODE,
+        save_graphs=True,
+        save_graphs_path="./graphs_reshard_optimizer_tp",
+    )
+    context.set_auto_parallel_context(
+        device_num=8,
+        parallel_mode="semi_auto_parallel",
+        full_batch=True,
+        strategy_ckpt_config={
+            "save_file": f"./reshard_optimizer_src_tp/src_strategy_{get_rank()}.ckpt"
+        },
+    )
+    np.random.seed(10)
+    x = Tensor(np.random.rand(8, 8), ms.float32)
+
+    reshard_optimizer = ReshardOptimizer(
+        src_parallel=Parallel(dp=2, tp=4, pp=1), dst_parallel=Parallel(dp=4, tp=2, pp=1)
+    )
+    src_strategy_layout = StrategyLayout(dev_mat=[2, 4], tensor_map=[-1, 0])
+    print(f"src_strategy_layout: {src_strategy_layout}")
+
+    src_layout = Layout(tuple(src_strategy_layout.dev_mat), ("a", "b"))
+    src_matmul_in_strategy = (src_layout("None", "None"), src_layout("None", "b"))
+
+    src_net = SrcNet(src_matmul_in_strategy, (src_layout("None", "None"), src_layout("None", "None")), 5)
+    src_out = src_net(x)
+    context.reset_auto_parallel_context()
+    context.set_auto_parallel_context(
+        device_num=8,
+        parallel_mode="semi_auto_parallel",
+        full_batch=True,
+        strategy_ckpt_config={
+            "save_file": f"./reshard_optimizer_dst_tp/dst_strategy_{get_rank()}.ckpt"
+        },
+    )
+
+    dst_strategy_layout = reshard_optimizer.get_dst_layout(src_strategy_layout)
+    print(f"dst_strategy_layout: {dst_strategy_layout}")  # dev_mat=[2, 2, 2], tensor_map=[-1, 1]
+
+    dst_layout = Layout(tuple(dst_strategy_layout.dev_mat), ("a", "b", "c"))
+    dst_matmul_in_strategy = (dst_layout("None", "None"), dst_layout("None", "b"))
+
+    dst_net = DstNet(dst_matmul_in_strategy, (src_layout("None", "None"), src_layout("None", "None")), 6)
+    dst_net(x)
+    time.sleep(10)
+    src_merged_stra = "./reshard_optimizer_tp_src_merge/merged_strategy.ckpt"
+    dst_merge_stra = "./reshard_optimizer_tp_dst_merge/merged_strategy.ckpt"
+    ms.merge_pipeline_strategys("./reshard_optimizer_src_tp/", src_merged_stra)
+    ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp/", dst_merge_stra)
+    time.sleep(10)
+
+    transform_param_d2d = TransformParametersD2D(
+        src_net, dst_net, src_merged_stra, dst_merge_stra, match_func
+    )
+    transform_param_d2d.transform()
+    dst_out = dst_net(x)
+    context.reset_auto_parallel_context()
+    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_transform_d2d_with_reshard_optimizer_tp_zero():
+    """
+    Feature: transform param no pp scenario
+    Description: dpmp transform
+    Expectation: Run success
+    """
+    init()
+
+    context.set_context(
+        mode=context.GRAPH_MODE,
+        save_graphs=True,
+        save_graphs_path="./graphs_reshard_optimizer_tp_zero",
+    )
+    context.set_auto_parallel_context(
+        device_num=8,
+        parallel_mode="semi_auto_parallel",
+        full_batch=True,
+        strategy_ckpt_config={
+            "save_file": f"./reshard_optimizer_src_tp_zero/src_strategy_{get_rank()}.ckpt"
+        },
+        enable_parallel_optimizer=True,
+        parallel_optimizer_config={
+            "parallel_optimizer_threshold": 0,
+            "optimizer_weight_shard_size": 2,
+        },
+    )
+    np.random.seed(10)
+    x = Tensor(np.random.rand(8, 8), ms.float32)
+
+    reshard_optimizer = ReshardOptimizer(
+        src_parallel=Parallel(dp=2, tp=4, pp=1), dst_parallel=Parallel(dp=4, tp=2, pp=1)
+    )
+    src_strategy_layout = StrategyLayout(dev_mat=[2, 4], tensor_map=[0, -1])
+    print(f"src_strategy_layout: {src_strategy_layout}")
+
+    src_layout = Layout(tuple(src_strategy_layout.dev_mat), ("a", "b"))
+    src_matmul_in_strategy = (src_layout("None", "b"), src_layout("b", "None"))
+
+    src_net = SrcNet(
+        src_matmul_in_strategy,
+        (src_layout("None", "None"), src_layout("None", "None")),
+        5,
+    )
+    src_out = src_net(x)
+    context.reset_auto_parallel_context()
+    context.set_auto_parallel_context(
+        device_num=8,
+        parallel_mode="semi_auto_parallel",
+        full_batch=True,
+        strategy_ckpt_config={
+            "save_file": f"./reshard_optimizer_dst_tp_zero/dst_strategy_{get_rank()}.ckpt"
+        },
+    )
+
+    dst_strategy_layout = reshard_optimizer.get_dst_layout(src_strategy_layout)
+    print(f"dst_strategy_layout: {dst_strategy_layout}")  # dev_mat=[2, 2, 2], tensor_map=[1, -1]
+
+    dst_layout = Layout(tuple(dst_strategy_layout.dev_mat), ("a", "b", "c"))
+    dst_matmul_in_strategy = (dst_layout("None", "b"), dst_layout("b", "None"))
+
+    dst_net = DstNet(
+        dst_matmul_in_strategy,
+        (src_layout("None", "None"), src_layout("None", "None")),
+        6,
+    )
+    dst_net(x)
+    time.sleep(10)
+    src_merged_stra = "./reshard_optimizer_tp_zero_src_merge/merged_strategy.ckpt"
+    dst_merge_stra = "./reshard_optimizer_tp_zero_dst_merge/merged_strategy.ckpt"
+    ms.merge_pipeline_strategys("./reshard_optimizer_src_tp_zero/", src_merged_stra)
+    ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp_zero/", dst_merge_stra)
+    time.sleep(10)
+
+    transform_param_d2d = TransformParametersD2D(
+        src_net, dst_net, src_merged_stra, dst_merge_stra, match_func
+    )
+    transform_param_d2d.transform()
+    dst_out = dst_net(x)
+    context.reset_auto_parallel_context()
+    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)

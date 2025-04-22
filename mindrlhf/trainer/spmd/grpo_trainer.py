@@ -30,6 +30,7 @@ from mindspore import communication as D
 # mindformers
 from mindformers import logger
 from mindformers.models.llama import LlamaTokenizerFast
+from mindformers import MindFormerConfig
 
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
@@ -43,6 +44,7 @@ from mindrlhf.worker.train_worker import TrainWorker
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.transform_worker import TransformWorker
+import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 
 
 class GRPOTrainer:
@@ -70,6 +72,7 @@ class GRPOTrainer:
                                  args=self.args)
         logger.info("GRPOTrainer: finish init workers")
 
+        self.reshard_optimizer = None
         self._compile()
         self._load_checkpoint()
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
@@ -165,8 +168,35 @@ class GRPOTrainer:
             logger.info("In main task, there is not dataset for making experience")
 
     def _compile(self):
+        """
+        compile model
+        """
+        if self.grpo_config.enable_reshard_optimizer:
+            logger.info(f"Reshard optimizer is enabled")
+            reshard_optimizer.ENABLE_RESHARD_OPTIMIZER = True
+
+            train_parallel_config = MindFormerConfig(
+                self.sft_path_train
+            ).parallel_config
+            infer_parallel_config = MindFormerConfig(
+                self.sft_path_infer
+            ).parallel_config
+
+            self.reshard_optimizer = reshard_optimizer.ReshardOptimizer(
+                src_parallel=reshard_optimizer.Parallel(
+                    dp=train_parallel_config["data_parallel"],
+                    tp=train_parallel_config["model_parallel"],
+                    pp=train_parallel_config["pipeline_stage"],
+                ),
+                dst_parallel=reshard_optimizer.Parallel(
+                    dp=infer_parallel_config["data_parallel"],
+                    tp=infer_parallel_config["model_parallel"],
+                    pp=infer_parallel_config["pipeline_stage"],
+                ),
+            )
+
         start_time = time.time()
-        self.infer.generate_strategy()
+        self.infer.generate_strategy(self.reshard_optimizer)
         self.ref.compile()
         self.train.compile()
         end_time = time.time()
