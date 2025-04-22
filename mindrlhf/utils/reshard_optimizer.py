@@ -12,26 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-""" Reshard Optimizer """
+"""Reshard Optimizer"""
+
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 import itertools
 from mindformers import logger
 
 
-ENABLE_RESHARD_OPTIMIZER = False
+OPT_COMMUNICATION_GROUPS = None
 
 
 @dataclass
 class Layout:
-    """ Layout """
+    """Layout"""
+
     dev_mat: List
     tensor_map: List
 
 
 @dataclass
 class Parallel:
-    """ Parallel """
+    """Parallel"""
+
     dp: int = 1
     tp: int = 1
     pp: int = 1
@@ -40,7 +43,8 @@ class Parallel:
 
 
 class ReshardOptimizer:
-    """ Reshard Optimizer """
+    """Reshard Optimizer"""
+
     def __init__(self, src_parallel: Parallel, dst_parallel: Parallel):
         """
         Initialize the ReshardOptimizer.
@@ -52,10 +56,10 @@ class ReshardOptimizer:
         if self.world_size != self.src_parallel.dp * self.src_parallel.tp * self.src_parallel.pp:
             raise ValueError("The world size of src_parallel and dst_parallel should be the same")
 
-        self.opt_groups = self._get_opt_groups()
+        self.opt_communication_groups = self._get_opt_communication_groups()
         logger.info(
             f"Reshard Optimizer is created successfully! src_parallel: {src_parallel}, "
-            "dst_parallel: {dst_parallel}, opt_groups: {self.opt_groups}"
+            f"dst_parallel: {dst_parallel}, opt_communication_groups: {self.opt_communication_groups}"
         )
 
     def get_dst_layout(self, layout: Layout) -> Layout:
@@ -71,12 +75,12 @@ class ReshardOptimizer:
             raise ValueError(f"The axis of the layout is cut invalid: {layout}")
 
         if len(cut_axises) == 1:
-            same_data_labels = self._get_same_data_labels(self.opt_groups["tp"])
+            same_data_labels = self._get_same_data_labels(self.opt_communication_groups["tp"])
 
             dev_mat, index = self._find_layout(same_data_labels)
             if not dev_mat:
                 raise ValueError(
-                    f"Find layout failed, please check the communication group: {self.opt_groups['tp']}"
+                    f"Find layout failed, please check the communication group: {self.opt_communication_groups['tp']}"
                 )
 
             tensor_map = [-1] * len(layout.tensor_map)
@@ -127,7 +131,7 @@ class ReshardOptimizer:
                         return dev_matrix, col_idx
         return None, None
 
-    def _get_opt_groups(self) -> Dict:
+    def _get_opt_communication_groups(self) -> Dict:
         """
         get optimal groups based on the source parallelism and destination parallelism.
         """
@@ -153,7 +157,7 @@ class ReshardOptimizer:
                     for k in range(len(ranks)):
                         ranks[k] += j
                     group_ranks.append(ranks)
-        return {"tp": group_ranks}
+        return {"tp": group_ranks, "dp": [list(group) for group in zip(*group_ranks)]}
 
     @staticmethod
     def _get_same_data_labels(tp_groups) -> List:

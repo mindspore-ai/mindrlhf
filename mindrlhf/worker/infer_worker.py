@@ -49,6 +49,7 @@ from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils.utils import get_valid_length_each_example
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils.strategy_utils import save_strategy_file
+import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 
 
 class InferWorker(Worker):
@@ -233,7 +234,13 @@ class InferWorker(Worker):
         world_size = D.get_group_size()
         all_other_group_size = world_size // data_parallel_size
         output_batch = []
-        for i in range(0, world_size * local_bs, all_other_group_size * local_bs):
+
+        if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
+            collect_range = [_ * local_bs for _ in reshard_optimizer.OPT_COMMUNICATION_GROUPS['dp'][0]]
+        else:
+            collect_range = range(0, world_size * local_bs, all_other_group_size * local_bs)
+
+        for i in collect_range:
             for k in range(local_bs):
                 global_idx = i + k
                 output_batch.append(list(all_padded_arrays[global_idx][:all_lengths[global_idx]]))
@@ -360,7 +367,7 @@ class InferWorker(Worker):
             left_padding_prompts.astype(np.int32), prompts_mask
         )
 
-    def generate_strategy(self, reshard_optimizer):
+    def generate_strategy(self, reshard_optimizer_):
         """ generate_strategy """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
@@ -377,7 +384,7 @@ class InferWorker(Worker):
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model)
         save_strategy_file(
             static_dict,
-            reshard_optimizer,
+            reshard_optimizer_,
             f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
         )
         stage_name = 'other'

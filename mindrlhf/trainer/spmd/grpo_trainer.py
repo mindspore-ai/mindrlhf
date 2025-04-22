@@ -82,6 +82,7 @@ class GRPOTrainer:
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
                                          self.train.model(), self.infer.model(), self.ref.model())
         self._load_checkpoint()
+        self.transform.reshard_params(0)
 
     def _init_grpo_configs(self, args):
         """ init grpo configs """
@@ -177,8 +178,7 @@ class GRPOTrainer:
         compile model
         """
         if self.grpo_config.enable_reshard_optimizer:
-            logger.info(f"Reshard optimizer is enabled")
-            reshard_optimizer.ENABLE_RESHARD_OPTIMIZER = True
+            logger.info("Reshard Optimizer is enabled")
 
             train_parallel_config = MindFormerConfig(
                 self.sft_path_train
@@ -199,6 +199,7 @@ class GRPOTrainer:
                     pp=infer_parallel_config["pipeline_stage"],
                 ),
             )
+            reshard_optimizer.OPT_COMMUNICATION_GROUPS = self.reshard_optimizer.opt_communication_groups
 
         start_time = time.time()
         self.infer.generate_strategy(self.reshard_optimizer)
@@ -243,7 +244,18 @@ class GRPOTrainer:
         split_size = (batch_inputs.shape[0] // data_parallel_size)
         all_other_group_size = world_size // data_parallel_size
 
-        dp_rank_id = rank_id // all_other_group_size
+        dp_rank_id = None
+        if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
+            for group in reshard_optimizer.OPT_COMMUNICATION_GROUPS["dp"]:
+                if rank_id in group:
+                    dp_rank_id = group.index(rank_id)
+                    break
+
+            if dp_rank_id is None:
+                raise ValueError(f"Rank {rank_id} not found in any DP group: "
+                                 f"{reshard_optimizer.OPT_COMMUNICATION_GROUPS}")
+        else:
+            dp_rank_id = rank_id // all_other_group_size
 
         start = dp_rank_id * split_size
         stop = (dp_rank_id + 1) * split_size
