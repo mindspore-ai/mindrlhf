@@ -243,7 +243,7 @@ class TrainWorker(Worker):
             f"dp:{self.sft_model_config_train.parallel_config.data_parallel}, "
             f"micro_batch_num:{micro_batch_num}, "
             f"bs in dataset: {batch_size}")
-        dataset = dataset.batch(batch_size=batch_size)
+        dataset = dataset.batch(batch_size=batch_size, drop_remainder=True)
         return dataset
 
     def train(self):
