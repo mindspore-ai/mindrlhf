@@ -21,6 +21,7 @@ from glob import glob
 # mindspore
 import mindspore
 import mindspore as ms
+from mindspore import Tensor
 from mindspore.dataset.transforms import TypeCast
 from mindspore.dataset import GeneratorDataset
 from mindspore.communication import get_rank
@@ -262,20 +263,18 @@ class TrainWorker(Worker):
         dataset = self._init_grpo_dataset_before_train()
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
-        grpo_with_grad = self.grpo_with_grad
-        # logger.info(f"train cell is {grpo_with_grad}")
-        sink_process = mindspore.data_sink(grpo_with_grad, dataset, sink_size=self.grpo_config.sink_size)
-        steps = dataset.dataset_size // self.grpo_config.sink_size
-        logger.info(
-            f"dataset size is {dataset.dataset_size}, sink size is {self.grpo_config.sink_size}, total steps is {steps}")
-        for step in range(steps):
+        formatter = lambda out: out.asnumpy() if isinstance(out, Tensor) else out
+
+        iterator = dataset.create_dict_iterator()
+        logger.info(f"dataset size is {dataset.dataset_size}")
+
+        for step, databatch in enumerate(iterator):
             ep_begin_time = time.time()
-            out = sink_process()
+            out = self.grpo_with_grad(**databatch)
             end_time = time.time()
-            logger.info("step {}, end at {}, elapsed time {} \n------------------------------- "
-                        .format(step, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
-            logger.info(" loss: {} | lr: {} | is overflow: {} | loss scale: {}"
-                        .format(out[0], out[1], out[2], out[3]))
+            logger.info(
+                "step {} | loss: {} | lr: {} | is overflow: {} | loss scale: {} | elapsed time {} \n-------------------------------".format(
+                    step, formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3]), end_time - ep_begin_time))
 
         if self.tensor_writer:
             self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=step)
