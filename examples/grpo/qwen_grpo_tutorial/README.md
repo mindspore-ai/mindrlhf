@@ -210,6 +210,7 @@ examples/grpo/qwen_grpo_tutorial/main.py \
 --load_sft_checkpoint_infer /{path}/infer_ckpt \
 --load_sft_checkpoint_train /{path}/train_ckpt \
 --load_ref_checkpoint /{path}/ref_ckpt \
+--load_ckpt_format 'ckpt' \
 --enable_compile_cache False
 
 # 参数说明
@@ -233,6 +234,7 @@ use_parallel:                 是否并行
 load_sft_checkpoint_infer:    推理模型(分布式)ckpt文件路径
 load_sft_checkpoint_train:    训练模型(分布式)ckpt文件路径
 load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
+load_ckpt_format:             加载权重格式，可选'ckpt'或'safetensors'
 enable_compile_cache:         是否使用编译缓存
 ```
 

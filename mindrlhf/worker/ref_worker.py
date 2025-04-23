@@ -15,7 +15,10 @@
 
 # python
 import time
+import os
+from glob import glob
 import numpy as np
+
 
 # mindspore
 import mindspore as ms
@@ -43,6 +46,7 @@ class RefWorker(Worker):
     def __init__(self, grpo_config, sft_path_ref, args):
         super().__init__()
         logger.info("init RefWorker")
+        self.args = args
         self.use_parallel = grpo_config.use_parallel
         ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = args.use_parallel
@@ -145,7 +149,11 @@ class RefWorker(Worker):
         self.on_device = True
 
     def load_checkpoint(self):
-        """ load checkpoint """
+        """ load_checkpoint """
+        if  self.ref_ckpt_path and self.args.load_ckpt_format == "safetensors":
+            self.on_device = True
+            self._load_checkpoint_safetensors()
+            return
         load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         logger.info(f"self.grpo_config.use_parallel is {self.use_parallel} {load_ckpt_func}")
         if self.ref_ckpt_path:
@@ -159,3 +167,35 @@ class RefWorker(Worker):
             param_not_load, ckpt_not_load = ms.load_param_into_net(self.ref_model, new_param_dict)
             logger.info(f"param not load: {param_not_load}")
             logger.info(f"ckpt not load: {ckpt_not_load}")
+
+    def convert_map_dict(self, source_dict, **kwargs):
+        """ convert_map_dict """
+        network = self.ref_model.model
+        prefix = 'model.'
+        weight_dict = network.convert_map_dict(source_dict, **kwargs)
+        new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
+        return new_weight_dict
+
+    def _load_checkpoint_safetensors(self):
+        """ load safetensors checkpoint """
+        network = self.ref_model.model
+        prefix = 'model.'
+        name_map = None
+        try:
+            load_checkpoint_files = glob(
+                os.path.join(self.ref_ckpt_path, f"*.safetensors"))
+            load_checkpoint_files.sort()
+            name_map = network.obtain_name_map(load_checkpoint_files)
+            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
+        except Exception as e:
+            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
+
+        # TODO: save strategy
+        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
+        ms.load_distributed_checkpoint(
+            network=self.ref_model,
+            predict_strategy=strategy_path,
+            unified_safetensors_dir=self.ref_ckpt_path,
+            format='safetensors',
+            name_map=name_map
+        )

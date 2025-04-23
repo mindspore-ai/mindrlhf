@@ -7,12 +7,15 @@ GRPO（Group Relative Policy Optimization）是针对数学逻辑推理任务提
 ## 一、模型以及数据集获取与预处理
 
 ### 模型权文件和tokenizer获取
+
 用户可以从[魔搭社区](https://www.modelscope.cn/models/deepseek-ai/DeepSeek-R1/files)下载完整预训练权重，模型对应的tokenizer文件`tokenizer.json`也可在上述链接中下载。
 
 模型权重下载完成后，需要转为MindSpore使用的.ckpt文件。首先进入[MindFormers](https://gitee.com/mindspore/mindformers/blob/dev/research/deepseek3/convert_weight.py)路径
+
 ```shell
 cd /{path}/mindformers
 ```
+
 并执行以下脚本：
 
 ```shell
@@ -24,18 +27,23 @@ torch_ckpt_path:  下载HuggingFace权重的文件夹路径
 output_path:      转换后的MindSpore权重文件保存路径
 dtype:            转换权重的精度
 ```
+
 脚本会将完整的.ckpt格式模型权重保存在`{path}/MS_CKPT_NAME.ckpt`路径下。
 
 ### 模型权重离线切分
+
 当前版本的MindRLHF尚不支持权重在线切分，在使用多卡分布式训练时，需要用户手动进行权重切分，可参考[mindformers](https://gitee.com/mindspore/mindformers/blob/dev/research/deepseek3/README.md)教程。
 需要注意，在GRPO算法中存在训练和推理两份模型权重，若训练和推理所使用的分布式策略不同，则需要分别切分两份分布式权重。
 
 ### 数据集文件获取与预处理
+
 用户可以从[GSM8K Github Repo](https://github.com/openai/grade-school-math/blob/master/grade_school_math/data/)下载得到
 `GSM8K Train`数据集`train.jsonl`。下载完成后，需要转为MindSpore使用的.mindrecord文件。首先进入MindRLHF路径
+
 ```shell
 cd /{path}/mindrlhf
 ```
+
 并执行以下脚本：
 
 ```shell
@@ -49,6 +57,7 @@ tokenizer_file:       deepseek模型对应的tokenizer文件tokenizer.json路径
 file_path:        GSM8K Train数据集train.jsonl文件路径
 output_path:      输出.mindrecord文件路径
 ```
+
 其中`tokenizer.json`都可以从Huggingface社区或魔搭社区对应模型页面获取。
 此脚本会将`train.jsonl`转换成mindrecord的形式保存在`/{path}/gsm8k_train.mindrecord`。此数据路径将在训练拉起时作为`mind_dataset_dir`的值被传入。
 
@@ -67,7 +76,9 @@ output_path:      输出.mindrecord文件路径
 | MindFormers | dev, commit id：129f4459b0fc971cfd473759c4a0453120fb58ca |
 
 ### 训练/推理模型配置
+
 训练模型的配置文件默认为`model_configs/deepseek_v3_config/finetune_deepseek3_671b.yaml`,其中用户可以手动配置训练模型的并行策略：
+
 ```shell
 parallel_config:
   data_parallel: 1
@@ -82,12 +93,13 @@ pipeline_stage:               流水线并行切分组数
 expert_parallel:              专家并行切分数
 micro_batch_num:              流水线并行中的micro batch number
 ```
+
 推理模型的配置文件默认为`model_configs/deepseek_v3_config/predict_deepseek3_671b.yaml`,其中用户可以手动配置推理模型的并行策略：
 
 ```shell
 parallel_config:
     data_parallel: 1
-    model_parallel: 4 
+    model_parallel: 4
     pipeline_stage: 1
 # 参数说明
 data_parallel:                数据并行切分组数
@@ -96,13 +108,14 @@ pipeline_stage:               流水线并行切分组数, 必须为1. 当前推
 ```
 
 ### GRPO训练算法配置
+
 GRPO训练算法相关配置可以在`mindrlhf/configs/grpo_configs.py`内进行修改，包括以下参数：
 
 ```shell
 beta: float = 0.01
 num_generations: int = 8
 grpo_epochs: int = 2
-start_lr: float = 5e-7 
+start_lr: float = 5e-7
 end_lr: float = 1e-10
 chunk_size: int = 2
 batch_size: int = 2
@@ -121,13 +134,16 @@ sync_ref_model:         是否每隔若干步将ref model的权重更新为最�
 ref_model_sync_steps:   若sync_ref_model=True, ref model权重更新的间隔步数
 ```
 
-
 ## 三、启动单机8卡GRPO训练脚本
+
 首先进入MindRLHF路径
+
 ```shell
 cd /{path}/mindrlhf
 ```
+
 使用以下命令将本地mindrlhf和mindformers代码库均加入PYTHONPATH，MINDFORMERS_PAT路径中
+
 ```shell
 MINDRLHF_FILE=/{path}/mindrlhf/
 MINDFORMERS_FILE=/{path}/mindformers/
@@ -137,6 +153,7 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```
 
 随后使用以下命令拉起单机4卡GRPO训练任务
+
 ```shell
 msrun --worker_num=4 --local_worker_num=4 --master_addr=127.0.0.1 \
 --master_port=9190 --join=False --log_dir=./deepseek_one_log \
@@ -151,7 +168,8 @@ examples/grpo/deepseek_grpo_tutorial/grpo_one_stage.py \
 --load_sft_checkpoint_infer /{path}/infer_ckpt \
 --load_sft_checkpoint_train /{path}/train_ckpt \
 --load_ref_checkpoint /{path}/ref_ckpt \
---enable_compile_cache False 
+--load_ckpt_format 'ckpt' \
+--enable_compile_cache False
 
 # 参数说明
 # msrun 参数
@@ -172,10 +190,12 @@ use_parallel:                 是否并行
 load_sft_checkpoint_infer:    推理模型(分布式)ckpt文件路径
 load_sft_checkpoint_train:    训练模型(分布式)ckpt文件路径
 load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
+load_ckpt_format:             加载权重格式，可选'ckpt'或'safetensors'
 enable_compile_cache:         是否使用编译缓存
 ```
 
 拉起任务后，通过以下命令查看运行日志
+
 ```shell
 tail -f deepseek_one_log/worker_0.log
 ```

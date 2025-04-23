@@ -51,12 +51,17 @@ def generate_state_dict(network):
     }
     model_state_dict = {}
     _update_sharded_state_dict(network=network, dict_=model_state_dict)
-    state_dict["model"] = model_state_dict
+    # add no shard param
+    model_param_dict = network.parameters_dict()
+    for name in model_param_dict:
+        if name not in model_state_dict:
+            model_state_dict[name] = {'shape': model_param_dict[name].shape,
+                                      'shard': tuple([1] * model_param_dict[name].ndim)}
+    state_dict['model'] = model_state_dict
     return state_dict
 
-
 def save_strategy_file(state_dict, reshard_optimizer, strategy_file_name):
-    """save strategy file"""
+    """save_strategy_file"""
     print(f"----------------start save front parallel strategy---------------")
 
     stra = ckpt_strategy()

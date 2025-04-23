@@ -14,12 +14,11 @@
 """ Transform Worker """
 
 # python
+import os
 import time
 # mindspore
 import mindspore as ms
-from mindspore import context
 from mindspore.communication import get_rank
-from mindspore.communication.management import get_group_size
 # mindformers
 from mindformers import logger
 # mindrlhf
@@ -146,18 +145,18 @@ class TransformWorker(Worker):
         self.save_strategy_dir = grpo_config.save_strategy_dir
         # TODO: save strategy
         ms.mint.distributed.barrier()
-        src_merged_stra = f"{self.save_strategy_dir}/merge_strategy/train_policy_merged_strategy.ckpt"
-        dst_merged_stra = f"{self.save_strategy_dir}/merge_strategy/infer_policy_merged_strategy.ckpt"
-        ref_merged_stra = f"{self.save_strategy_dir}/merge_strategy/infer_ref_merged_strategy.ckpt"
+        src_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
+        dst_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
+        ref_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
+
         start_time = time.time()
-        if get_rank() in list(range(
-                0, get_group_size(), get_group_size() // context.get_auto_parallel_context("pipeline_stages")
-        )):
-            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/train_policy_strategy/", src_merged_stra)
-            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_policy_strategy/", dst_merged_stra)
-            ms.merge_pipeline_strategys(f"{self.save_strategy_dir}/infer_ref_strategy/", ref_merged_stra)
+        if get_rank() == 0:
+            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "train_policy_strategy"), src_merged_stra)
+            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra)
+            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
         else:
-            time.sleep(20)
+            time.sleep(10)
+
         ms.mint.distributed.barrier()
         if grpo_config.model_type == "deepseekv3":
             transform_args = {"n_head": sft_model_config_train.num_heads,
