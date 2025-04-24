@@ -73,14 +73,14 @@ class TransformWorker(Worker):
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "strategy_file/infer_ref_strategy/"), ref_merged_stra)
         else:
             print("Waiting for other workers to merge strategies.")
-            time.sleep(60)
+            time.sleep(10)
         ms.mint.distributed.barrier()
         if grpo_config.use_vllm == VllmMode.ORIGIN:
             self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                 src_merged_stra, dst_merged_stra, match_func)
+                                                                 src_merged_stra, dst_merged_stra, match_func, offload_src=True, load_dst=True)
         else:
             self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                    src_merged_stra, dst_merged_stra, match_func_vllm)
+                                                                    src_merged_stra, dst_merged_stra, match_func_vllm, offload_src=True, load_dst=True)
         ms.communication.comm_func.barrier()
         self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
                                                                src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)

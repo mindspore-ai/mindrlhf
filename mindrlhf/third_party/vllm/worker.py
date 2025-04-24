@@ -177,9 +177,16 @@ class Worker(Worker):
     def _init_cache_engine(self):
         if self.cache_engine is None and self.gpu_cache is None:
             super()._init_cache_engine()
+            if self.num_scheduler_steps > 1:
+                self.model_runner._base_model_runner.model.mf_kvcaches_init=False # mindformers model
+            else:
+                self.model_runner.model.mf_kvcaches_init=False
 
     def free_cache_engine(self):
         # ensure `enforce_eager=True`
+        del self.cache_engine
+        del self.gpu_cache
+        gc.collect()
         self.cache_engine = None
         self.gpu_cache = None
     

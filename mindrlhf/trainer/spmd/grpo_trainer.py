@@ -13,16 +13,16 @@
 # limitations under the License.
 
 
-# mindspore
-import mindspore
-import mindspore as ms
-import mindspore.common.dtype as mstype
 import numpy as np
 import time
 from dataclasses import asdict, dataclass, field
 from mindformers import MindFormerConfig
 import json
 import os
+# mindspore
+import mindspore
+import mindspore as ms
+import mindspore.common.dtype as mstype
 # mindformers
 from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
@@ -499,7 +499,7 @@ class GRPOTrainer:
         all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
         all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
 
-        self.infer.load()
+        self.infer.load(init_kv_cache=True)
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
@@ -522,7 +522,7 @@ class GRPOTrainer:
 
             results = self.infer.generate(input_ids_numpy, max_decode_length)
 
-        self.infer.offload()
+        self.infer.offload(free_kv_cache=True)
         logger.info("model_infer offload")
 
         end_time = time.time()
@@ -609,7 +609,6 @@ class GRPOTrainer:
             all_packed = self.pack_grpo_data(
                 all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
             logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
-            total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.infer_dp
             total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
 
             while len(all_packed) < total_ref_batch_size:
@@ -749,11 +748,12 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load()
+                self.infer.load(init_kv_cache=True)
 
                 if self.transform.sync_ref_model and \
                     ((i + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
+                    logger.info(f"update ref model in epoch: {n}, step: {i}")
                     self.ref.load()
                     self.transform.reshard_params(updata_ref=True)
                     self.ref.offload()
@@ -802,6 +802,6 @@ class GRPOTrainer:
             convert_index_json_total(infer_config.load_checkpoint, infer_config.load_checkpoint, convert_func_lst, False)
         else:
             # 其他进程等待
-            time.sleep(20)
+            time.sleep(10)
         ms.mint.distributed.barrier()
         _pynative_executor.sync()
