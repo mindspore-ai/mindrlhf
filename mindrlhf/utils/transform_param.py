@@ -316,9 +316,9 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     def transform(self):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        self._src_param_name_intersection = self._preprocess_for_train_param()
+        src_param_name_intersection = self._preprocess_for_train_param()
         self._clean_cache()
-        for i, src_param in enumerate(self._src_param_name_intersection):
+        for i, src_param in enumerate(src_param_name_intersection):
             if src_param != "skip":
                 redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
                 redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
@@ -335,93 +335,80 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         """
         preprocess for train param
         """
-
-        def redistribute_and_reshape(src_param, standalone_dtensor_info, shape, transpose_order=None):
-            src_param_obj = _redistribute(src_param, standalone_dtensor_info)
-            if transpose_order:
-                src_param_obj = F.transpose(src_param_obj, transpose_order)
-            src_param_obj._dtensor_info = standalone_dtensor_info
-            return src_param_obj.reshape(shape)
-
         new_src_param_intersection = []
         dev_mat = Layout((get_group_size(),), ("all_dev",))
-        keywords = [
-            "feed_forward.routed_experts.ffn.w1",
-            "feed_forward.routed_experts.ffn.w2",
-            "feed_forward.routed_experts.ffn.w3"
-        ]
-        param_handlers = {
-            "attention.l2q_nope_proj.weight": (self.l2q_nope_proj, "l2q_nope_proj"),
-            "attention.l2q_pe_proj.weight": (self.l2q_pe_proj, "l2q_pe_proj"),
-            "attention.kv2l_k_pe.weight": (self.kv2l_k_pe, "kv2l_k_pe"),
-            "attention.kv2l_latent_kv.weight": (self.kv2l_latent_kv, "kv2l_latent_kv")
-        }
 
         for _, src_param in enumerate(self._src_param_name_intersection):
-            if src_param == "skip" or isinstance(src_param, Tensor):
-                continue
-
             tensor_map = ["None"] * len(src_param.shape)
             standalone_layout = dev_mat(*tensor_map)
             standalone_dtensor_info = _DistributedTensorInfo(standalone_layout)
+            keywords = [
+                "feed_forward.routed_experts.ffn.w1",
+                "feed_forward.routed_experts.ffn.w2",
+                "feed_forward.routed_experts.ffn.w3"
+            ]
 
-            # 检查 src_param.name 是否包含任意一个关键字
             if any(keyword in src_param.name for keyword in keywords):
-                redist_param = redistribute_and_reshape(src_param, standalone_dtensor_info,
-                                                        (-1, src_param.shape[2], src_param.shape[1]), (0, 2, 1))
+                redist_param = _redistribute(src_param, standalone_dtensor_info)
+                redist_param = F.transpose(redist_param, (0, 2, 1))
+                redist_param._dtensor_info = standalone_dtensor_info
                 new_src_param_intersection.append(redist_param)
                 continue
-
-            handler_tuple = param_handlers.get(src_param.name)
-            if handler_tuple:
-                stored_value, attr_name = handler_tuple
-                if stored_value is None:
-                    setattr(self, attr_name, redistribute_and_reshape(src_param, standalone_dtensor_info, (-1,)))
-                else:
-                    raise ValueError(f"{attr_name} has value")
+            elif "attention.l2q_nope_proj.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                self._check_value_is_none("l2q_nope_proj", src_param_obj)
+            elif "attention.l2q_pe_proj.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                self._check_value_is_none("l2q_pe_proj", src_param_obj)
+            elif "attention.kv2l_k_pe.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                self._check_value_is_none("kv2l_k_pe", src_param_obj)
+            elif "attention.kv2l_latent_kv.weight" in src_param.name:
+                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
+                self._check_value_is_none("kv2l_latent_kv", src_param_obj)
             else:
                 new_src_param_intersection.append(src_param)
                 continue
 
-            if (self.l2q_nope_proj is not None and self.l2q_pe_proj is not None):
-                l2q_nope_proj_np = self.l2q_nope_proj.asnumpy().reshape(self._n_head, self._qk_nope_head_dim, -1)
-                l2q_pe_proj_np = self.l2q_pe_proj.asnumpy().reshape(
-                    self._n_head, 2, self._qk_rope_head_dim // 2, -1
-                ).transpose(
-                    0, 2, 1, 3
-                ).reshape(
-                    self._n_head, self._qk_rope_head_dim, -1
+            if ("attention.l2q_nope_proj.weight" in src_param.name or
+                    "attention.l2q_pe_proj.weight" in src_param.name) and \
+                    self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
+                self.l2q_nope_proj = self.l2q_nope_proj.asnumpy()
+                self.l2q_pe_proj = self.l2q_pe_proj.asnumpy()
+                value_nope = self.l2q_nope_proj.reshape(self._n_head, self._qk_nope_head_dim, -1)
+                reshaped_l2q_pe_proj = self.l2q_pe_proj.reshape(
+                    self._n_head,
+                    2,
+                    self._qk_rope_head_dim // 2,
+                    -1
                 )
-                value_merged = np.concatenate(
-                    [l2q_nope_proj_np, l2q_pe_proj_np],
-                    axis=1
-                ).reshape(
-                    -1, l2q_nope_proj_np.shape[-1]
+                transposed_l2q_pe_proj = reshaped_l2q_pe_proj.transpose(0, 2, 1, 3)
+                value_pe = transposed_l2q_pe_proj.reshape(
+                    self._n_head,
+                    self._qk_rope_head_dim,
+                    -1
                 )
+                value_merged = np.concatenate([value_nope, value_pe], axis=1)
+                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
                 self.l2q_nope_proj = None
                 self.l2q_pe_proj = None
-            elif (self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None):
-                kv2l_k_pe_np = self.kv2l_k_pe.asnumpy().reshape(
-                    2, self._qk_rope_head_dim // 2, -1
-                ).transpose(
-                    1, 0, 2
-                ).reshape(
-                    -1, self.kv2l_k_pe.shape[-1]
-                )
-                value_merged = np.concatenate(
-                    [self.kv2l_latent_kv.asnumpy(), kv2l_k_pe_np],
-                    axis=0
-                ).reshape(-1, kv2l_k_pe_np.shape[-1])
+            elif ("attention.kv2l_k_pe.weight" in src_param.name or
+                  "attention.kv2l_latent_kv.weight" in src_param.name) and \
+                    self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
+                self.kv2l_k_pe = self.kv2l_k_pe.asnumpy()
+                self.kv2l_latent_kv = self.kv2l_latent_kv.asnumpy()
+                value_k_pe = self.kv2l_k_pe.reshape(2, self._qk_rope_head_dim // 2, -1)
+                value_k_pe = value_k_pe.transpose(1, 0, 2).reshape(-1, value_k_pe.shape[-1])
+                value_merged = np.concatenate([self.kv2l_latent_kv, value_k_pe], axis=0)
+                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
                 self.kv2l_k_pe = None
                 self.kv2l_latent_kv = None
             else:
                 new_src_param_intersection.append("skip")
                 continue
-
-            value_merged_tensor = Tensor(value_merged)
-            value_merged_tensor._dtensor_info = standalone_dtensor_info
-            new_src_param_intersection.append(value_merged_tensor)
-
+            value_merged = Tensor(value_merged)
+            value_merged._dtensor_info = standalone_dtensor_info
+            new_src_param_intersection.append(value_merged)
         return new_src_param_intersection
 
     def _clean_cache(self):
@@ -429,3 +416,9 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         self.l2q_pe_proj = None
         self.kv2l_k_pe = None
         self.kv2l_latent_kv = None
+
+    def _check_value_is_none(self, input_var, value):
+        if getattr(self, input_var) is None:
+            setattr(self, input_var, value)
+        else:
+            raise ValueError(f"{input_var} has value")

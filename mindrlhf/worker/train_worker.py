@@ -111,9 +111,10 @@ class TrainWorker(Worker):
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
         if self.train_pp_stage == 1:
             # for pipeline stage 1, the micro_batch_num is not used
-            train_bs = self.grpo_config.batch_size
+            train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.data_parallel
         else:
-            train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
+            train_bs = (self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num *
+                        self.sft_model_config_train.parallel_config.data_parallel)
         fake_data_1 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length + 1),
                                 dtype=ms.int32)
         fake_data_2 = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),

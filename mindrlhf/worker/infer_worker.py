@@ -92,7 +92,7 @@ class InferWorker(Worker):
             sft_model_config_infer.model_name = "deepseek_infer"
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
         sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
 
@@ -111,7 +111,7 @@ class InferWorker(Worker):
                 tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False)
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'deepseek'], but get {model_name}")
+                f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         sim_level = os.getenv('MS_SIMULATION_LEVEL')
         if sim_level:
@@ -159,7 +159,7 @@ class InferWorker(Worker):
             hf_config = self.build_qwen_hf_config()
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {self.sft_model_config_infer.model_name}")
 
         self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
         # 初始化vllm
