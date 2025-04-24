@@ -12,34 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import numpy as np
+"""GRPO Trainer"""
 import time
-from dataclasses import asdict, dataclass, field
-from mindformers import MindFormerConfig
-import json
 import os
-# mindspore
-import mindspore
-import mindspore as ms
-import mindspore.common.dtype as mstype
+from dataclasses import asdict
+import numpy as np
 # mindformers
+from mindformers import MindFormerConfig
 from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.tools.utils import is_main_rank
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
+import mindspore as ms
+import mindspore.common.dtype as mstype
 from mindspore import Tensor, mint
 from mindspore import communication as D
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank
 from mindspore.dataset import MindDataset
 from mindspore.mindrecord import FileWriter
-from typing import List, Dict
 
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
+from mindrlhf.reward.kk_reward_fn import kk_reward
 from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, convert_index_json_total
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
@@ -63,6 +60,7 @@ def pad_sequence_to_length(sequence, target_length, pad_value):
 
 
 class GRPOTrainer:
+    """ GRPOTrainer """
     def __init__(self, args=None):
         self.args = args
         self._init_grpo_configs(args)
@@ -75,6 +73,8 @@ class GRPOTrainer:
         self.tensor_writer = get_tensorboard_writer()
         setattr(self.args, 'tensor_writer', self.tensor_writer)
         self.make_exp_step = 0
+        self.total_processed_tokens = 0
+        self.total_time = 0
 
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config,
@@ -100,11 +100,8 @@ class GRPOTrainer:
         logger.info("GRPOTrainer: finish init workers")
 
         if get_rank() == 0:
-            import shutil
+            # remove old strategy dir should be written in the bash commands file
             strategy_ckpt_save_dir = self.grpo_config.save_strategy_dir
-            if os.path.exists(strategy_ckpt_save_dir):
-                shutil.rmtree(strategy_ckpt_save_dir)
-                logger.info(f"Existed strategy directory {strategy_ckpt_save_dir} has been deleted.")
             os.makedirs(strategy_ckpt_save_dir, exist_ok=True)
         ms.communication.comm_func.barrier()
 
@@ -119,6 +116,7 @@ class GRPOTrainer:
         self._load_checkpoint()
 
     def _init_grpo_configs(self, args):
+        """ _init_grpo_configs """
         logger.info(f"GRPOTrainer: _init_grpo_configs {args} in main task")
         use_parallel = transfer_from_str_to_bool(args.use_parallel)
         # init grpo config
@@ -152,6 +150,7 @@ class GRPOTrainer:
         self.sft_path_train = args.sft_path_train
 
     def _init_reward_fn(self, args):
+        """ _init_reward_fn """
         logger.info("GRPOTrainer: _init_reward_fn")
         if args.reward_funcs:
             reward_funcs_list = args.reward_funcs
@@ -170,6 +169,8 @@ class GRPOTrainer:
                 reward_funcs.append(format_reward)
             elif reward_func_str == "reward_func_from_jiaoda":
                 reward_funcs.append(reward_func_from_jiaoda)
+            elif reward_func_str == "kk_reward":
+                reward_funcs.append(kk_reward)
             else:
                 raise ValueError(f"Unsupported reward function {reward_func_str}")
         self.reward_funcs = reward_funcs
@@ -248,7 +249,7 @@ class GRPOTrainer:
         stop = (dp_rank_id + 1) * split_size
         batch_inputs_for_this_rank = batch_inputs[start:stop]
         return batch_inputs_for_this_rank
-    
+
     def _remove_right_padding(self, token_ids, padding_token=0):
         """ remove_right_padding """
         trimmed_sequences = []
@@ -281,10 +282,13 @@ class GRPOTrainer:
                 trimmed_sequences.append([])  # 全为填充时返回空列表
         return trimmed_sequences
 
-    def _construct_inputs_for_ref_model(self, right_padding_responses, responses_mask, left_padding_prompts, prompts_mask,
-                                        ref_model_batch_size=None, idx=None):
+    def _construct_inputs_for_ref_model(self, right_padding_responses, responses_mask, left_padding_prompts,
+                                        prompts_mask, ref_model_batch_size=None, idx=None):
+        """ _construct_inputs_for_ref_model """
         if ref_model_batch_size:
-            right_padding_responses = right_padding_responses[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
+            # pylint: disable=C0330
+            right_padding_responses = right_padding_responses[
+                                      idx * ref_model_batch_size: (idx+1) * ref_model_batch_size]
             responses_mask = responses_mask[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
             left_padding_prompts = left_padding_prompts[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
             prompts_mask = prompts_mask[idx * ref_model_batch_size : (idx+1) * ref_model_batch_size]
@@ -304,22 +308,24 @@ class GRPOTrainer:
 
         # Generate outputs.
         # prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
-        attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)
+        attention_mask_tensor = Tensor(attention_mask, dtype=ms.int32)
         return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
-    
+
     def _construct_inputs_packing(self, all_packed, ref_model_batch_size=None, idx=None):
+        """ _construct_inputs_packing """
         if ref_model_batch_size:
             tmp_ids = []
             tmp_actual_seq_len = []
             for i in range(ref_model_batch_size):
                 tmp_ids.append(all_packed[i + idx * ref_model_batch_size]["prompt_completion_ids"])
                 tmp_actual_seq_len.append(all_packed[i + idx * ref_model_batch_size]["actual_sequence_length"])
-                
+
         tmp_ids = np.array(tmp_ids)
         tmp_actual_seq_len = np.array(tmp_actual_seq_len)
         return tmp_ids, tmp_actual_seq_len
-    
+
     def create_pack_group(self, data_dict_list, pack_num):
+        """ create_pack_group """
         sample_num = len(data_dict_list)
         pack_group, each_group = [], []
         current_group_length = 0
@@ -337,6 +343,7 @@ class GRPOTrainer:
         return pack_group
 
     def pack_grouped_data(self, pack_list, pack_num=1):
+        """ pack_grouped_data """
         real_sample_num = len(pack_list)
         dummy_sample_num = pack_num - real_sample_num
         pad_to_length = self.grpo_config.seq_length - dummy_sample_num
@@ -416,7 +423,7 @@ class GRPOTrainer:
         return result
 
     def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages, pack_num=1):
-
+        """ pack_grpo_data """
         data_dict_list = []
         bs = prompt_completion_ids.shape[0]
         advantages = advantages.reshape(-1)
@@ -425,13 +432,13 @@ class GRPOTrainer:
             sample_prompt_mask = prompts_mask[i]
             sample_response_mask = responses_mask[i]
             indices = np.nonzero(sample_prompt_mask)[0]
-            if len(indices) > 0:
+            if indices.size > 0:
                 prompt_start_idx = indices[0]
             else:
                 logger.warning(f"prompts_mask is all zero for index {i}!")
                 continue
             indices = np.nonzero(sample_response_mask)[0]
-            if len(indices) > 0:
+            if indices.size > 0:
                 response_end_index = indices[-1]
             else:
                 logger.warning(f"responses_mask is all zero for index {i}!")
@@ -462,6 +469,7 @@ class GRPOTrainer:
         return advantages, mean_grouped_rewards
 
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
+        """ _make_experience """
         ep_begin_time = time.time()
         logger.info("Make experience begin at {} \n------------------------------- "
                     .format(time.strftime('%H:%M:%S', time.localtime(ep_begin_time))))
@@ -496,22 +504,24 @@ class GRPOTrainer:
         all_rewards = np.zeros((num_generations * num_rollouts * n_questions), dtype=np.float32)
         all_prompt_completion_ids = np.zeros(
             (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
-        all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
-        all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
+        all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
+                                    dtype=np.int32)
+        all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
+                                      dtype=np.int32)
 
         self.infer.load(init_kv_cache=True)
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
-        
+
         max_decode_length = self.grpo_config.max_decode_length
         if self.infer.use_vllm == VllmMode.ORIGIN:
             results = []
             input_bs = n_questions // self.infer_dp
             max_decode_length = self.grpo_config.max_decode_length
             for idx in range(num_rollouts * num_generations):
-                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], 
+                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :],
                                              max_decode_length=max_decode_length)
                 for res_idx in range(len(result)):
                     if len(results) == len(result):
@@ -530,13 +540,13 @@ class GRPOTrainer:
             time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
-        
-        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(
-            results) # allgather data
+
+        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather \
+            = self.infer.post_process_infer_outputs(results) # allgather data
         all_prompts_mask = np.concatenate((prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)),
                                           axis=1)
-        all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
-                                            axis=1)
+        all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32),
+                                             responses_mask_gather), axis=1)
         all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
                                                    axis=1)
         # Step 3: calculate reward.
@@ -546,11 +556,25 @@ class GRPOTrainer:
 
         logger.info(
             f"left_padding_prompts is {type(left_padding_prompts)}")
-        no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=self.grpo_config.pad_token_id)
+        no_padding_prompts = self._remove_left_padding(left_padding_prompts,
+                                                       padding_token=self.grpo_config.pad_token_id)
         no_padding_responses = self._remove_right_padding(
             right_padding_responses, padding_token=self.grpo_config.pad_token_id)
-        prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
-        completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
+        prompts_length_list = [len(item) for item in no_padding_prompts]
+        responses_length_list = [len(item) for item in no_padding_responses]
+        mean_prompts_length = np.array(prompts_length_list).mean()
+        mean_responses_length = np.array(responses_length_list).mean()
+        total_size = n_questions * num_generations * num_rollouts
+        self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
+        self.total_processed_tokens += self.step_total_tokens
+        logger.info(
+            f"#token_count# mean_prompt_len: {mean_prompts_length}, max_prompt_len: {np.array(prompts_length_list).max()}, min_prompt_len: {np.array(prompts_length_list).min()}")
+        logger.info(
+            f"#token_count# mean_response_len: {mean_responses_length}, max_response_len: {np.array(responses_length_list).max()}, min_response_len: {np.array(responses_length_list).min()}")
+
+
+        prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=False)
+        completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=False)
 
         logger.info(f"prompts: \n {prompts}")
         logger.info(f"completions: \n {completions}")
@@ -558,7 +582,7 @@ class GRPOTrainer:
         mean_len = np.array([len(com) for com in completions]).mean()
         logger.info(f"mean completions.length: \n {mean_len}")
 
-        rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.reward_funcs)), dtype=np.float32)
+        rewards_per_func = np.zeros((total_size, len(self.reward_funcs)), dtype=np.float32)
         for i, reward_func in enumerate(self.reward_funcs):
             # Repeat all input columns (but "prompt" and "completion") to match the number of generations
             output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
@@ -573,20 +597,19 @@ class GRPOTrainer:
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
 
-        total_size = all_rewards.shape[0]
         advantages = np.zeros((total_size,))
         tmp_all_rewards = all_rewards.copy()
         samples_per_step = total_size // num_generations
         for i in range(samples_per_step):
-            listnum =list(range(i, total_size, samples_per_step)) 
+            listnum = list(range(i, total_size, samples_per_step))
             temp_rewards = tmp_all_rewards[listnum]
             adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
             all_mean_grouped_rewards.append(mean_grouped_rewards)
             advantages[i::samples_per_step] = adv_tem.reshape((-1,))
-      
+
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
-        
+
         self.ref.load()
         logger.info("ref_model load")
         # regroup the index of all data
@@ -623,11 +646,11 @@ class GRPOTrainer:
                 prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
                     all_packed, ref_model_batch_size=total_ref_batch_size, idx=idx)
 
-                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0),(0, 1)), 'constant', 
-                                    constant_values=self.grpo_config.pad_token_id)
-                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=mindspore.int32)
-                input_prompt_ids = Tensor(prompt_completion_ids[:,:-1], dtype=mindspore.int32)
-                actual_sequence_length = Tensor(actual_sequence_length, dtype=mindspore.int32)
+                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
+                                               constant_values=self.grpo_config.pad_token_id)
+                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
+                input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
+                actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
 
                 # Step 2: run ref model.
                 start_time = time.time()
@@ -643,17 +666,18 @@ class GRPOTrainer:
                     idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
                 logger.info(f"Ref log probs {ref_per_token_logps}")
 
-                all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
+                all_ref_per_token_logps[idx * total_ref_batch_size:
+                                        (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
 
             self.ref.offload()
             logger.info("ref_model offload")
 
             for i in range(len(all_packed)):
-                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0,1),), 'constant', 
+                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0, 1),), 'constant',
                                                     constant_values=self.grpo_config.pad_token_id).astype(np.int32)
 
-                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0,1),), 'constant', 
-                                                    constant_values=0).astype(np.int32)
+                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0, 1),), 'constant',
+                                             constant_values=0).astype(np.int32)
                 responses_mask_temp = responses_mask_temp[1:]
 
                 ref_per_token_logps = all_ref_per_token_logps[i].astype(np.float32)
@@ -663,7 +687,7 @@ class GRPOTrainer:
                 grpodata = GRPOData(
                     prompt_completion_ids=prompt_completion_ids_temp.astype(np.int32),
                     responses_mask=responses_mask_temp.astype(np.int32),
-                    ref_per_token_logps=ref_per_token_logps,
+                    ref_per_token_logps=ref_per_token_logps.astype(np.float32),
                     advantages=all_packed[i]["advantages"].astype(np.float32),
                     actual_sequence_length=all_packed[i]["actual_sequence_length"].astype(np.int32),
                     sample_index=all_packed[i]["sample_index"].astype(np.int32),
@@ -688,7 +712,7 @@ class GRPOTrainer:
         logger.info("Make experience, end at {}, elapsed time {} ------------------------------- ".format(
             time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
         if self.grpo_config.save_data_file:
-            if get_rank() % 8 == 0:
+            if get_rank() == 0:
                 self._save_grpoelement(self.grpo_config.save_data_file)
         self.make_exp_step += 1
         logger.info('generate over')
@@ -707,7 +731,7 @@ class GRPOTrainer:
                 "ref_per_token_logps": {"type": "float32", "shape": [-1]},
                 "advantages": {"type": "float32", "shape": [-1]},
                 "actual_sequence_length": {"type": "int32", "shape": [-1]},
-                "sample_index":{"type": "int32", "shape": [-1]},
+                "sample_index": {"type": "int32", "shape": [-1]},
                 "sample_valid_length": {"type": "int32", "shape": [-1]},
             }
 
@@ -725,22 +749,22 @@ class GRPOTrainer:
         """
         Main entry of MindRLHF GRPO training.
         """
+        # pylint: disable=C0301
         logger.info(
             f"Start training epoch num:{self.grpo_config.epochs}, step num:{self.step_num}, generation num:{self.grpo_config.num_generations}")
         np.set_printoptions(threshold=1024)
-        """
-        Before the first execution, params are on the host after 'load_model';
-        The params will be automatically loaded to npu device without 'load' or 'offload'.
-        """
+        # Before the first execution, params are on the host after 'load_model';
+        # The params will be automatically loaded to npu device without 'load' or 'offload'.
         for n in range(self.grpo_config.epochs):
             for i in range(self.step_num):
 
                 step_begin_time = time.time()
                 logger.info("step begin at {} \n------------------------------- "
-                    .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
+                            .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
 
                 logger.info(f"epoch: {n}, step: {i}")
-                self._make_experience(num_rollouts=self.grpo_config.num_rollouts, num_generations=self.grpo_config.num_generations)
+                self._make_experience(num_rollouts=self.grpo_config.num_rollouts,
+                                      num_generations=self.grpo_config.num_generations)
                 self.train.load_optimizer()
                 self.train.load_model()
 
@@ -760,10 +784,16 @@ class GRPOTrainer:
                 else:
                     self.transform.reshard_params()
                 self.train.offload_model()
-                
+
                 step_end_time = time.time()
+                step_time = step_end_time - step_begin_time
+                self.total_time += step_time
                 logger.info("step end at  {}, elapsed time {} \n------------------------------- ".format(
-                    time.strftime('%H:%M:%S', time.localtime(step_end_time)), step_end_time - step_begin_time))
+                    time.strftime('%H:%M:%S', time.localtime(step_end_time)), step_time))
+                logger.info("step processed tokens {}, tokens/s {} \n------------------------------- ".format(
+                    self.step_total_tokens, self.step_total_tokens / step_time))
+                logger.info("total processed tokens {}, total tokens/s {} \n------------------------------- ".format(
+                    self.total_processed_tokens, self.total_processed_tokens / self.total_time))
 
         # save checkpoint
         self.train.load_model()
@@ -780,8 +810,8 @@ class GRPOTrainer:
         infer_config.auto_trans_ckpt = True
 
         if infer_config.model.model_config.get("qkv_concat", False):
-            raise ValueError("safetensors only support qkv_concat=False for now")  
-        
+            raise ValueError("safetensors only support qkv_concat=False for now")
+
         if is_main_rank():
             convert_func_lst = []
             infer_network = self.infer.grpo_model_infer.grpo_model.policy_model
@@ -799,7 +829,8 @@ class GRPOTrainer:
             train_network = self.train.grpo_model_train.grpo_model_train.policy_model
             convert_func_lst.append(ref_network.convert_map_dict)
             convert_func_lst.append(train_network.convert_map_dict)
-            convert_index_json_total(infer_config.load_checkpoint, infer_config.load_checkpoint, convert_func_lst, False)
+            convert_index_json_total(infer_config.load_checkpoint,
+                                     infer_config.load_checkpoint, convert_func_lst, False)
         else:
             # 其他进程等待
             time.sleep(10)

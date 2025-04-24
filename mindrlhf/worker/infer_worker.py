@@ -25,7 +25,6 @@ from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
 from mindspore import context
 from mindspore import communication as D
-from mindspore.common.api import _pynative_executor
 
 # mindformers
 from mindformers import MindFormerConfig
@@ -100,11 +99,10 @@ class InferWorker(Worker):
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
             # vllm
-			# pylint: disable=W0611
+            # pylint: disable=W0611
             import vllm_mindspore
-            _pynative_executor.set_async_for_graph(False)
-            import mindrlhf.third_party.vllm.qwen2
-            import mindrlhf.third_party.vllm.ascend
+            # _pynative_executor.set_async_for_graph(False)
+            # import mindrlhf.third_party.vllm.ascend
             from mindrlhf.third_party.vllm.llm import LLM
             from vllm import SamplingParams
             hf_config = self.build_qwen_hf_config()
@@ -240,9 +238,6 @@ class InferWorker(Worker):
                                           parallel_mode="stand_alone", full_batch=False)
         np.set_printoptions(threshold=1024)
 
-        def print_data(data, tokenizer, name):
-            decoded_str2 = tokenizer.decode(data)
-            logger.info(f"{name} strs are {decoded_str2}")
 
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
 
@@ -265,10 +260,11 @@ class InferWorker(Worker):
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                                   max_new_tokens=max_decode_length,
-                                                                                   min_new_tokens=min_decode_length,
-                                                                                   do_sample=True)
+            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
+                input_ids_numpy[:, :max_valid_length],
+                max_new_tokens=max_decode_length,
+                min_new_tokens=min_decode_length,
+                do_sample=True)
             logger.info("infer without vllm end, not use vllm model")
         else:
             logger.info("start vllm")
