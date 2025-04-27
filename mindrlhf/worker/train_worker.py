@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+"""Train worker"""
 # python
 import os
 import time
@@ -19,14 +19,13 @@ import math
 from glob import glob
 
 # mindspore
-import mindspore
 import mindspore as ms
 from mindspore import Tensor
 from mindspore.dataset.transforms import TypeCast
 from mindspore.dataset import GeneratorDataset
 from mindspore.communication import get_rank
 from mindspore import context
-from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell, MicroBatchInterleaved
+from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 from mindspore import nn
 
@@ -70,7 +69,10 @@ class TrainWorker(Worker):
         sft_model_config_train.checkpoint_name_or_path = None
 
         self.train_pp_stage = sft_model_config_train.parallel_config.pipeline_stage or 1
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
+        self.enable_parallel_optimizer = sft_config_train.parallel.enable_parallel_optimizer and\
+                                        sft_model_config_train.parallel_config.data_parallel > 1
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
         self.sft_model_config_train = sft_model_config_train
         sft_model_config_train.name = "grpo_train"
         policy_model = CausalLMHybrid(sft_model_config_train, self.grpo_config)
@@ -88,26 +90,32 @@ class TrainWorker(Worker):
         return self.grpo_model_train
 
     def compile(self):
+        """ compile """
         # compile and save strategy
         self.grpo_with_grad.set_train(True)
         self.grpo_model_train.grpo_model_train.policy_model.model.set_train(True)
 
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
-        train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
-        prompt_completion_ids = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length+1),
-                                dtype=ms.int32) # [bs, seq_len+1]
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
+        if self.train_pp_stage == 1:
+            train_bs = self.grpo_config.batch_size
+        else:
+            train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.micro_batch_num
+        train_bs *= self.sft_model_config_train.parallel_config.data_parallel
+        prompt_completion_ids = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length + 1),
+                                          dtype=ms.int32)  # [bs, seq_len+1]
         responses_mask = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.int32)   # [bs, seq_len]
+                                   dtype=ms.int32)  # [bs, seq_len]
         ref_per_token_logps = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.float16) # [bs, seq_len]
+                                        dtype=ms.float16)  # [bs, seq_len]
         advantages = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.float16)  # [bs, seq_len]
+                               dtype=ms.float16)  # [bs, seq_len]
         actual_seq_length = ms.Tensor(shape=(train_bs, self.grpo_config.pack_num),
-                                dtype=ms.int32)  # [bs, packed_sample_num]
+                                      dtype=ms.int32)  # [bs, packed_sample_num]
         sample_index = ms.Tensor(shape=(train_bs, self.grpo_config.seq_length),
-                                dtype=ms.int32) #[bs, seq_len]
+                                 dtype=ms.int32)  # [bs, seq_len]
         sample_valid_len = ms.Tensor(shape=(train_bs, self.grpo_config.pack_num),
-                                dtype=ms.int32)  #[bs, packed_sample_num]
+                                     dtype=ms.int32)  # [bs, packed_sample_num]
 
         start_time = time.time()
         stage_name = 'train'
@@ -129,26 +137,29 @@ class TrainWorker(Worker):
         logger.info(f"grpo_with_grad time: {format_time_delta(time.time() - start_time)}")
 
     def load_checkpoint(self):
+        """ load checkpoint """
         if self.args.load_ckpt_format == "safetensors":
             self.model_on_device = True
             self.optimizer_on_device = True
-            return self._load_checkpoint_safetensors()
-        load_ckpt_func = load_distributed_checkpoint if self.grpo_config.use_parallel else ms.load_checkpoint
-        logger.info(f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel}, {load_ckpt_func}")
-        if self.sft_ckpt_path_train:
-            self.model_on_device = True
-            self.optimizer_on_device = True
-            param_dict = load_ckpt_func(self.sft_ckpt_path_train)
-            new_param_dict = {'grpo_model_train.policy_model.model.' + k: v for k, v in param_dict.items()}
-            logger.info(f"begin to load train policy model from: {self.sft_ckpt_path_train}")
-            for _, param in self.grpo_model_train.grpo_model_train.policy_model.parameters_and_names():
-                logger.info(f"train model para names:   {param.name}")
-            param_not_load, ckpt_not_load = mindspore.load_param_into_net(
-                self.grpo_model_train.grpo_model_train.policy_model, new_param_dict)
-            logger.info(f"param not load: {param_not_load}")
-            logger.info(f"ckpt not load: {ckpt_not_load}")
-    
+            self._load_checkpoint_safetensors()
+        else:
+            load_ckpt_func = load_distributed_checkpoint if self.grpo_config.use_parallel else ms.load_checkpoint
+            logger.info(f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel}, {load_ckpt_func}")
+            if self.sft_ckpt_path_train:
+                self.model_on_device = True
+                self.optimizer_on_device = True
+                param_dict = load_ckpt_func(self.sft_ckpt_path_train)
+                new_param_dict = {'grpo_model_train.policy_model.model.' + k: v for k, v in param_dict.items()}
+                logger.info(f"begin to load train policy model from: {self.sft_ckpt_path_train}")
+                for _, param in self.grpo_model_train.grpo_model_train.policy_model.parameters_and_names():
+                    logger.info(f"train model para names:   {param.name}")
+                param_not_load, ckpt_not_load = ms.load_param_into_net(
+                    self.grpo_model_train.grpo_model_train.policy_model, new_param_dict)
+                logger.info(f"param not load: {param_not_load}")
+                logger.info(f"ckpt not load: {ckpt_not_load}")
+
     def _load_checkpoint_safetensors(self):
+        """ _load_checkpoint_safetensors """
         network = self.grpo_model_train.grpo_model_train.policy_model
         name_map = None
         try:
@@ -159,7 +170,8 @@ class TrainWorker(Worker):
         except Exception as e:
             raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
 
-        strategy_path =os.path.join(self.grpo_config.save_strategy_dir, 'merge_strategy/train_policy_merged_strategy.ckpt')
+        strategy_path = os.path.join(self.grpo_config.save_strategy_dir,
+                                     'merge_strategy/train_policy_merged_strategy.ckpt')
         ms.load_distributed_checkpoint(
             network=network,
             predict_strategy=strategy_path,
@@ -168,11 +180,11 @@ class TrainWorker(Worker):
             name_map=name_map
         )
 
-
     def _init_grpo_network_and_optimizer(self):
         """
         Build train network.
         """
+
         def set_weight_decay(params):
             def decay_filter(x):
                 return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
@@ -221,8 +233,8 @@ class TrainWorker(Worker):
 
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
-            grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                                scale_update_cell=update_cell)
+            grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(
+                grpo_with_loss, optimizer=optimizer, config=sft_model_config, scale_update_cell=update_cell)
         else:
             logger.info("non-pipeline cell")
             grpo_with_grad = TrainOneStepWithLossScaleGRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
@@ -235,14 +247,14 @@ class TrainWorker(Worker):
         '''
         grpo_config = self.grpo_config
         column_names = ["prompt_completion_ids", "responses_mask",
-                    "ref_per_token_logps", "advantages",
-                    "actual_sequence_length", "sample_index", "sample_valid_length"]
+                        "ref_per_token_logps", "advantages",
+                        "actual_sequence_length", "sample_index", "sample_valid_length"]
         logger.info(f"store.length: {len(self.store)}")
         pipeline = GRPOIteratorStore(self.store)
         dataset = GeneratorDataset(pipeline, column_names=column_names)
         logger.info(f"dataset.len: {len(dataset)}")
-        type_cast_op_int32 = TypeCast(mindspore.int32)
-        type_cast_op_fp16 = TypeCast(mindspore.float16)
+        type_cast_op_int32 = TypeCast(ms.int32)
+        type_cast_op_fp16 = TypeCast(ms.float16)
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompt_completion_ids")
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="responses_mask")
         dataset = dataset.map(operations=type_cast_op_fp16, input_columns="ref_per_token_logps")
@@ -254,15 +266,21 @@ class TrainWorker(Worker):
         if self.sft_model_config_train.parallel_config.pipeline_stage > 1:
             micro_batch_num = self.sft_model_config_train.parallel_config.micro_batch_num
         logger.info(
-            f"##################### bs:{grpo_config.batch_size}, dp:{self.sft_model_config_train.parallel_config.data_parallel}, micro_batch_num:{micro_batch_num}")
+            f'''##################### bs:{grpo_config.batch_size}, \
+            dp:{self.sft_model_config_train.parallel_config.data_parallel}, \
+            micro_batch_num:{micro_batch_num}''')
         dataset = dataset.batch(
-            batch_size=grpo_config.batch_size * self.sft_model_config_train.parallel_config.data_parallel * micro_batch_num, drop_remainder=True)
+            # pylint: disable=C0301
+            batch_size=grpo_config.batch_size * self.sft_model_config_train.parallel_config.data_parallel * micro_batch_num,
+            drop_remainder=True)
         return dataset
 
     def train(self):
+        """ train """
         dataset = self._init_grpo_dataset_before_train()
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
         formatter = lambda out: out.asnumpy() if isinstance(out, Tensor) else out
 
         iterator = dataset.create_dict_iterator()
@@ -271,44 +289,63 @@ class TrainWorker(Worker):
         for step, databatch in enumerate(iterator):
 
             ep_begin_time = time.time()
-            out = self.grpo_with_grad(**databatch)
+            prompt_completion_ids = databatch["prompt_completion_ids"]
+            responses_mask = databatch["responses_mask"]
+            ref_per_token_logps = databatch["ref_per_token_logps"]
+            advantages = databatch["advantages"]
+            actual_sequence_length = databatch["actual_sequence_length"]
+            sample_index = databatch["sample_index"]
+            sample_valid_length = databatch["sample_valid_length"]
+            out = self.grpo_with_grad(prompt_completion_ids, responses_mask, ref_per_token_logps, advantages,
+                                      actual_sequence_length, sample_index, sample_valid_length)
             end_time = time.time()
             logger.info(
+                # pylint: disable=C0301
                 "step {} | loss: {} | lr: {} | is overflow: {} | loss scale: {} | elapsed time {} \n-------------------------------".format(
-                    step, formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3]), end_time - ep_begin_time))
+                    # pylint: disable=C0301
+                    step, formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3]),
+                    end_time - ep_begin_time))
 
-        if self.tensor_writer:
-            self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=step)
-            self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=step)
-            self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=step)
-            self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=step)
+            if self.tensor_writer:
+                self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=step)
+                self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=step)
+                self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=step)
+                self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=step)
 
     def offload_optimizer(self):
+        """ offload_optimizer """
         if self.optimizer_on_device is False:
             logger.info(f'no need for offload_optimizer because optimizer_on_device is False ')
             return
         logger.info(f'before offload stf train optimizer {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.optimizer.moments1:
+            # pylint: disable=W0212
             param._offload()
         for param in self.grpo_with_grad.optimizer.moments2:
+            # pylint: disable=W0212
             param._offload()
         if self.train_pp_stage > 1:
             for param in self.grpo_with_grad.accu_grads:
+                # pylint: disable=W0212
                 param._offload()
         logger.info(f'after offload stf train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = False
 
     def load_optimizer(self):
+        """ load_optimizer """
         if self.optimizer_on_device:
             logger.info(f'no need for load_optimizer because optimizer_on_device is True ')
             return
         logger.info(f'before load stf train optimizer {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.optimizer.moments1:
+            # pylint: disable=W0212
             param._load()
         for param in self.grpo_with_grad.optimizer.moments2:
+            # pylint: disable=W0212
             param._load()
         if self.train_pp_stage > 1:
             for param in self.grpo_with_grad.accu_grads:
+                # pylint: disable=W0212
                 param._load()
         logger.info(f'after load stf train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = True
@@ -318,6 +355,7 @@ class TrainWorker(Worker):
             return
         logger.info(f'before load stf train model {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
+            # pylint: disable=W0212
             param._load()
         logger.info(f'after load stf train model {ms.hal.memory_stats()}')
         self.model_on_device = True
@@ -327,6 +365,7 @@ class TrainWorker(Worker):
             return
         logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
+            # pylint: disable=W0212
             param._offload()
         logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
         self.model_on_device = False

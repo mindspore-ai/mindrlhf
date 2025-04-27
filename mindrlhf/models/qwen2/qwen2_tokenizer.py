@@ -65,8 +65,8 @@ def bytes_to_unicode():
     tables between utf-8 bytes and unicode strings.
     """
     bs = (
-            list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"),
-                                                             ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
+        list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"),
+                                                         ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
     )
     cs = bs[:]
     n = 0
@@ -316,7 +316,7 @@ class Qwen2Tokenizer(PreTrainedTokenizer):
         # and cannot be configured elsewhere, but it should default to False for Qwen2Tokenizer
         # avoid out of vocab
         for i in range(len(token_ids)):
-            valid_token_ids = np.array([x if x <= 151634 else 151634 for x in token_ids[i]])
+            valid_token_ids = np.array([x if x <= 151645 else 151645 for x in token_ids[i]])
             token_ids[i] = valid_token_ids
         return super().decode(
             token_ids,
@@ -333,12 +333,10 @@ class Qwen2Tokenizer(PreTrainedTokenizer):
                 f"Vocabulary path ({save_directory}) should be a directory")
             return None
         vocab_file = os.path.join(
-            save_directory, (filename_prefix + "-" if filename_prefix else "") +
-                            VOCAB_FILES_NAMES["vocab_file"]
+            save_directory, (filename_prefix + "-" if filename_prefix else "") + VOCAB_FILES_NAMES["vocab_file"]
         )
         merge_file = os.path.join(
-            save_directory, (filename_prefix + "-" if filename_prefix else "") +
-                            VOCAB_FILES_NAMES["merges_file"]
+            save_directory, (filename_prefix + "-" if filename_prefix else "") + VOCAB_FILES_NAMES["merges_file"]
         )
         flags_ = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
         with os.fdopen(os.open(vocab_file, flags_, 0o750), "w", encoding="utf-8") as f:

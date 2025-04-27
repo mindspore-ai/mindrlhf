@@ -185,7 +185,7 @@ model:
     do_sample: False
     compute_in_2d: True
     is_dynamic: False
-    qkv_concat: True
+    qkv_concat: False
     # configuration items copied from Qwen
     rotary_pct: 1.0
     rotary_emb_base: 1000000

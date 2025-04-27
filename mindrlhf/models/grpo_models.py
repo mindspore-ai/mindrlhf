@@ -19,9 +19,9 @@ import mindspore.nn as nn
 from mindspore import Tensor, ops
 from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
-from .base_model import BaseModel
 from mindformers.models.modeling_utils import PreTrainedModel
 from mindformers.models.utils import lazy_inline
+from .base_model import BaseModel
 
 __all__ = [
     "GRPOModel",
@@ -46,7 +46,7 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         mp = model_config.parallel_config.model_parallel
         cp = model_config.parallel_config.context_parallel
         self.dp = dp
-        self.lm_head.matmul.shard(in_strategy=((dp*cp, mp), (1, mp)), out_strategy=((dp*cp*mp, 1),))
+        # self.lm_head.matmul.shard(in_strategy=((dp*cp, mp), (1, mp)), out_strategy=((dp*cp*mp, 1),))
 
         self.vocab_size = model_config.vocab_size
         self.chunk_size = grpo_config.chunk_size
@@ -75,8 +75,8 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         self.argmax = P.Argmax(-1).shard(((dp, mp),))
         self.add_shard = P.Add().shard(((1, 1, 1), ()))
 
-        self.pad_logits = ops.Pad(((0,0),(1,0),(0,0))).shard(((dp*mp, 1, 1),))
-        self.pad_samples = ops.Pad(((0,0),(1,0))).shard(((dp*mp, 1),))
+        self.pad_logits = ops.Pad(((0, 0), (1, 0), (0, 0))).shard(((dp*mp, 1, 1),))
+        self.pad_samples = ops.Pad(((0, 0), (1, 0))).shard(((dp*mp, 1),))
 
         self.expaned = P.ExpandDims().shard(((dp, mp),))
 
@@ -97,8 +97,9 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         data = data + offsets
         actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
         return actual_seq_lenth
-    
+
     def convert_weight_dict(self, source_dict, **kwargs):
+        """ convert_weight_dict """
         weight_dict = self.model.convert_weight_dict(source_dict, **kwargs)
         prefix = ''
         if self.model_name == 'grpo_infer':
@@ -111,6 +112,7 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         return new_weight_dict
 
     def convert_map_dict(self, source_dict, **kwargs):
+        """ convert_map_dict """
         weight_dict = self.model.convert_map_dict(source_dict, **kwargs)
         prefix = ''
         if self.model_name == 'grpo_infer':
@@ -123,6 +125,7 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         return new_weight_dict
 
     def obtain_name_map(self, load_checkpoint_files):
+        """ obtain_name_map """
         name_map = self.model.obtain_name_map(load_checkpoint_files)
         prefix = ''
         if self.model_name == 'grpo_infer':
@@ -258,7 +261,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.dp = self.policy_model.dp
         self.cast = P.Cast()
         self.dump = P.TensorDump()
-    
+
     def batch_unsorted_segment_sum(self, input_ids, segments_ids, num_segments):
         """
         GRPOModel
@@ -291,17 +294,18 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         data = data + offsets
         actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
         return actual_seq_lenth
-    
+
     def construct(
-        self,
-        prompt_completion_ids, # [bs, seq_len]
-        responses_mask,  # [bs, seq_len]
-        ref_per_token_logps, # [bs, seq_len]
-        advantages,  # [bs, seq_len]
-        actual_seq_length,  # [bs, packed_sample_num]
-        sample_index, #[bs, seq_len]
-        sample_valid_len,  #[bs, packed_sample_num]
+            self,
+            prompt_completion_ids,  # [bs, seq_len]
+            responses_mask,  # [bs, seq_len]
+            ref_per_token_logps,  # [bs, seq_len]
+            advantages,  # [bs, seq_len]
+            actual_seq_length,  # [bs, packed_sample_num]
+            sample_index,  # [bs, seq_len]
+            sample_valid_len,  # [bs, packed_sample_num]
     ):
+        """ construct """
         pack_sample_num = sample_valid_len.shape[1]
         real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
