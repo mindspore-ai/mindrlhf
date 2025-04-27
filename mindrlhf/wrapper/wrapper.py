@@ -467,7 +467,6 @@ class TrainPipelineWithLossScaleCellGRPO(nn.TrainOneStepWithLossScaleCell):
                 F.partial(clip_grad, GRADIENT_CLIP_TYPE, GRADIENT_CLIP_VALUE),
                 grads)
         cond = self.get_overflow_status(self.status, grads)
-        cond = F.depend(cond, grads)
         overflow = self.process_loss_scale(cond)
         if not overflow:
             if self.enable_offload:
