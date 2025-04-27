@@ -14,7 +14,7 @@ trainer:
 
 # default parallel of device num = 32 for Atlas 800T A2
 parallel_config:
-  model_parallel: 32
+  model_parallel: 16
   pipeline_stage: 1
   expert_parallel: 1
   vocab_emb_dp: False
@@ -44,7 +44,7 @@ model:
     batch_size: 1 # add for incre predict
     seq_length: 4096
     hidden_size: 7168
-    num_layers: 61
+    num_layers: 3
     num_heads: 128
     max_position_embeddings: 163840
     intermediate_size: 18432
@@ -57,7 +57,7 @@ model:
     multiple_of: 256
     rms_norm_eps: 1.0e-6
     bos_token_id: 0
-    eos_token_id: 1
+    eos_token_id: [1]
     pad_token_id: 1
     ignore_token_id: -100
     compute_dtype: "bfloat16"
@@ -89,6 +89,7 @@ model:
     is_dynamic: True
     qkv_concat: False
     ffn_concat: False
+    temperature: 1
     auto_map:
       AutoConfig: deepseek3_config.DeepseekV3Config
       AutoModel: deepseek3.DeepseekV3ForCausalLM
