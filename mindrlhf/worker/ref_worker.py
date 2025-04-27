@@ -22,8 +22,8 @@ import numpy as np
 
 # mindspore
 import mindspore as ms
-from mindspore import context
-from mindspore.communication.management import get_rank
+from mindspore import context, ops
+from mindspore.communication.management import get_rank, create_group
 
 # mindformers
 from mindformers import MindFormerConfig
@@ -35,7 +35,7 @@ from research.deepseek3.deepseek3_config import DeepseekV3Config
 # mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
-from mindrlhf.utils import print_perf_stat
+from mindrlhf.utils import print_perf_stat, _get_pipeline_group
 
 
 class RefWorker(Worker):
@@ -51,6 +51,7 @@ class RefWorker(Worker):
         ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = args.use_parallel
         ref_config.model.model_config.parallel_config = ref_config.parallel_config
+        self.ref_pp_stage = ref_config.parallel_config.pipeline_stage
         self.ref_config = ref_config
         ref_config.model.model_config.use_past = False
         if args.custom_model_name in ["qwen", "llama"]:
@@ -65,6 +66,18 @@ class RefWorker(Worker):
         else:
             raise ValueError(
                 f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}")
+
+        # Set pipeline stage
+        context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
+        logger.info(f"ref_model_config:{ref_model_config}")
+        # Set allreduce
+        rank_list, pipeline_group_name = _get_pipeline_group()
+        pipeline_group_name = 'ref_pipeline' + pipeline_group_name
+        logger.info(f'start create pipeline {pipeline_group_name}')
+        create_group(pipeline_group_name, rank_list)
+        logger.info(f'end create pipeline {pipeline_group_name}')
+        self.all_reduce = ops.AllReduce(group=pipeline_group_name)
         ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
         self.ref_model_config = ref_model_config
         self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
@@ -111,12 +124,17 @@ class RefWorker(Worker):
         print_perf_stat(start_time, end_time, "reference model compile")
 
     def compute_ref_log_prob(self, prompt_completion_ids_tensor, samples):
+        """
+        compute ref log prob
+        """
         np.set_printoptions(threshold=1024)
         context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
         logger.info(f"precision refmodel inputs are {prompt_completion_ids_tensor}, {samples}")
 
         ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,
                                              samples=samples, is_ref=False)
+        if self.ref_pp_stage > 1:
+            ref_per_token_logps = self.all_reduce(ref_per_token_logps)
         logger.info(f"ref_logprobs precision is {ref_per_token_logps}")
         return ref_per_token_logps
 
