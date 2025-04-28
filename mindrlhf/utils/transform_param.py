@@ -16,7 +16,7 @@
 import numpy as np
 
 import mindspore.log as logger
-from mindspore import ops, Tensor
+from mindspore import ops, Tensor, Parameter
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 from mindspore.common.api import _pynative_executor
@@ -175,10 +175,7 @@ class TransformParametersD2D:
         ValueError: `src_strategy_path` or `dst_strategy_path` is None.
     """
 
-    def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None,
-                 offload_src=False, load_dst=False):
-        self._offload_src = offload_src
-        self._load_dst = load_dst
+    def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None):
         if src_strategy_path is not None:
             src_strategy = _build_searched_strategy(src_strategy_path)
             src_stra_info = _convert_to_list(src_strategy, get_rank())
@@ -256,19 +253,58 @@ class TransformParametersD2D:
         self._auto_paralell_context_value_map = {}
         self._pipeline_config = {}
 
-    def transform(self):
+    # pylint: disable=W0702
+    def transform(self, input_on_device_flag=(True, True)):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        for i, src_param in enumerate(self._src_param_name_intersection):
+        if not isinstance(input_on_device_flag, tuple) or len(input_on_device_flag) != 2:
+            raise ValueError(f"The input_on_device_flag must be tuple, and its length must be 2."
+                             f"But got {type(input_on_device_flag)}")
+        for i, flag in enumerate(input_on_device_flag):
+            if not isinstance(flag, bool):
+                raise TypeError(f"elements in input_on_device_flag must be bool, but got ")
+        mem_opt_level = self._check_input_flag(input_on_device_flag)
+        logger.info(f"The input on device flag is {input_on_device_flag}, memory optimize level is {mem_opt_level}")
+        src_param_name_intersection = self._preprocess_for_src_param(input_on_device_flag)
+        for i, src_param in enumerate(src_param_name_intersection):
+            if not isinstance(src_param, (Parameter, Tensor)):
+                continue
+            if mem_opt_level in [1]:
+                src_param._load()
             redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
             redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
-            if self._offload_src:
+            if mem_opt_level in [1]:
                 src_param._offload()
             if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
-                if self._load_dst:
-                    self._dst_param_name_intersection[i]._load()
                 _pynative_executor.sync()
+                if mem_opt_level in [1]:
+                    self._dst_param_name_intersection[i]._load()
+                if self._dst_param_name_intersection[i].shape != redist_src_param.shape:
+                    try:
+                        src_layout = redist_src_param._dtensor_info.layout.to_dict()
+                    except:
+                        logger.error("Get src layout has error, src_layout will be set to None")
+                        src_layout = None
+                    try:
+                        dst_layout = self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()
+                    except:
+                        logger.error("Get dst layout has error, dst_layout will be set to None")
+                        dst_layout = None
+                    raise ValueError(f"For param {self._dst_param_name_intersection[i].name}, "
+                                     f"src shape must be equal to dst shape, but got "
+                                     f"src shape {redist_src_param.shape}, "
+                                     f"dst shape {self._dst_param_name_intersection[i].shape}. "
+                                     f"src layout is {src_layout}, "
+                                     f"dst layout is {dst_layout}")
                 self.assign(self._dst_param_name_intersection[i], redist_src_param)
+                if mem_opt_level in [1]:
+                    # to sync dst value
+                    self._dst_param_name_intersection[i].asnumpy()
+                    self._dst_param_name_intersection[i]._offload()
+
+    # pylint: disable=W0613
+    def _preprocess_for_src_param(self, input_on_device_flag):
+        return self._src_param_name_intersection
 
     def _log_not_in_intersection_param(self, param_intersection, all_param, debug_string):
         """find the param in all_param but not in param_intersection"""
@@ -288,6 +324,15 @@ class TransformParametersD2D:
             raise ValueError(f"src network device number must equal to dest network device number,"
                              f"but got src {src_dev_num}, dst {dst_dev_num}")
 
+    def _check_input_flag(self, input_on_device_flag):
+        if input_on_device_flag[0] and input_on_device_flag[1]:
+            return 0
+        elif not (input_on_device_flag[0] or input_on_device_flag[1]):
+            return 1
+        else:
+            raise ValueError(f"The input_on_device_flag must be in following case (True, True), "
+                             f"(False, False), but got {input_on_device_flag}")
+
 
 class TransformParametersD2DForDSv3(TransformParametersD2D):
     """
@@ -296,10 +341,8 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     """
 
     def __init__(self, src_network, dst_network, transform_args, src_strategy_path=None, dst_strategy_path=None,
-                 match_func=None,
-                 offload_src=False, load_dst=False):
-        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func, offload_src,
-                         load_dst)
+                 match_func=None):
+        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func)
         if not isinstance(transform_args, dict):
             raise TypeError("transform args must be dict")
 
@@ -313,28 +356,11 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         if len(self._src_param_name_intersection) != len(self._dst_param_name_intersection):
             raise ValueError("The length of src_param_name_intersection and dst_param_name_intersection is not equal.")
 
-    def transform(self):
-        """transform the parameters from source network layout to dest network layout and assign the parameter to
-        dest network"""
-        src_param_name_intersection = self._preprocess_for_train_param()
-        self._clean_cache()
-        for i, src_param in enumerate(src_param_name_intersection):
-            if src_param != "skip":
-                redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
-                redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
-                if self._offload_src:
-                    src_param._offload()
-                if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
-                    if self._load_dst:
-                        self._dst_param_name_intersection[i]._load()
-                    _pynative_executor.sync()
-                    self.assign(self._dst_param_name_intersection[i], redist_src_param)
-                    _pynative_executor.sync()
-
-    def _preprocess_for_train_param(self):
+    def _preprocess_for_src_param(self, input_on_device_flag):
         """
         preprocess for train param
         """
+        mem_opt_level = self._check_input_flag(input_on_device_flag)
         new_src_param_intersection = []
         dev_mat = Layout((get_group_size(),), ("all_dev",))
 
@@ -349,32 +375,36 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
             ]
 
             if any(keyword in src_param.name for keyword in keywords):
-                redist_param = _redistribute(src_param, standalone_dtensor_info)
+                redist_param = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
                 redist_param = F.transpose(redist_param, (0, 2, 1))
+                if mem_opt_level in [1]:
+                    redist_param._offload()
                 redist_param._dtensor_info = standalone_dtensor_info
                 new_src_param_intersection.append(redist_param)
                 continue
             elif "attention.l2q_nope_proj.weight" in src_param.name:
-                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
-                self._check_value_is_none("l2q_nope_proj", src_param_obj)
+                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
+                self._check_value_is_none("l2q_nope_proj", src_param_obj.asnumpy())
+                del src_param_obj
             elif "attention.l2q_pe_proj.weight" in src_param.name:
-                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
-                self._check_value_is_none("l2q_pe_proj", src_param_obj)
+                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
+                self._check_value_is_none("l2q_pe_proj", src_param_obj.asnumpy())
+                del src_param_obj
             elif "attention.kv2l_k_pe.weight" in src_param.name:
-                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
-                self._check_value_is_none("kv2l_k_pe", src_param_obj)
+                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
+                self._check_value_is_none("kv2l_k_pe", src_param_obj.asnumpy())
+                del src_param_obj
             elif "attention.kv2l_latent_kv.weight" in src_param.name:
-                src_param_obj = _redistribute(src_param, standalone_dtensor_info)
-                self._check_value_is_none("kv2l_latent_kv", src_param_obj)
+                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
+                self._check_value_is_none("kv2l_latent_kv", src_param_obj.asnumpy())
+                del src_param_obj
             else:
                 new_src_param_intersection.append(src_param)
                 continue
 
-            if ("attention.l2q_nope_proj.weight" in src_param.name or
-                    "attention.l2q_pe_proj.weight" in src_param.name) and \
-                    self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
-                self.l2q_nope_proj = self.l2q_nope_proj.asnumpy()
-                self.l2q_pe_proj = self.l2q_pe_proj.asnumpy()
+            if (("attention.l2q_nope_proj.weight" in src_param.name or
+                 "attention.l2q_pe_proj.weight" in src_param.name) and
+                    self.l2q_nope_proj is not None and self.l2q_pe_proj is not None):
                 value_nope = self.l2q_nope_proj.reshape(self._n_head, self._qk_nope_head_dim, -1)
                 reshaped_l2q_pe_proj = self.l2q_pe_proj.reshape(
                     self._n_head,
@@ -395,8 +425,6 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
             elif ("attention.kv2l_k_pe.weight" in src_param.name or
                   "attention.kv2l_latent_kv.weight" in src_param.name) and \
                     self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
-                self.kv2l_k_pe = self.kv2l_k_pe.asnumpy()
-                self.kv2l_latent_kv = self.kv2l_latent_kv.asnumpy()
                 value_k_pe = self.kv2l_k_pe.reshape(2, self._qk_rope_head_dim // 2, -1)
                 value_k_pe = value_k_pe.transpose(1, 0, 2).reshape(-1, value_k_pe.shape[-1])
                 value_merged = np.concatenate([self.kv2l_latent_kv, value_k_pe], axis=0)
@@ -408,7 +436,10 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
                 continue
             value_merged = Tensor(value_merged)
             value_merged._dtensor_info = standalone_dtensor_info
+            if mem_opt_level in [1]:
+                value_merged._offload()
             new_src_param_intersection.append(value_merged)
+        self._clean_cache()
         return new_src_param_intersection
 
     def _clean_cache(self):
@@ -422,3 +453,11 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
             setattr(self, input_var, value)
         else:
             raise ValueError(f"{input_var} has value")
+
+    def _redist_func(self, mem_opt_level, param, dtensor_info):
+        if mem_opt_level in [1]:
+            param._load()
+        param_obj = _redistribute(param, dtensor_info)
+        if mem_opt_level in [1]:
+            param._offload()
+        return param_obj

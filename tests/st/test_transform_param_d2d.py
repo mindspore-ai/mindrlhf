@@ -14,8 +14,13 @@
 # ============================================================================
 """transform param from device to device test case"""
 import os
+import pytest
 
+root_path = os.path.dirname(os.path.abspath(__file__))
 
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend910b_training
+@pytest.mark.env_single
 def test_transform_d2d_no_pp_1():
     """
     Feature: transform param no pp scenario
@@ -23,13 +28,14 @@ def test_transform_d2d_no_pp_1():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10801 --join=True --log_dir=./transform_d2d_no_pp_1 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_no_pp_1 "
+        f"bash {root_path}/run_transform_param_test.sh 10801 test_transform_d2d_no_pp_1"
     )
     assert return_code == 0
 
 
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend910b_training
+@pytest.mark.env_single
 def test_transform_d2d_no_pp_2():
     """
     Feature: transform param no pp scenario
@@ -37,13 +43,14 @@ def test_transform_d2d_no_pp_2():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10802 --join=True --log_dir=./transform_d2d_no_pp_2 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_no_pp_2 "
+        f"bash {root_path}/run_transform_param_test.sh 10802 test_transform_d2d_no_pp_2"
     )
     assert return_code == 0
 
 
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend910b_training
+@pytest.mark.env_single
 def test_transform_d2d_no_pp_3():
     """
     Feature: transform param no pp scenario
@@ -51,13 +58,14 @@ def test_transform_d2d_no_pp_3():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10803 --join=True --log_dir=./transform_d2d_no_pp_3 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_no_pp_3 "
+        f"bash {root_path}/run_transform_param_test.sh 10803 test_transform_d2d_no_pp_3"
     )
     assert return_code == 0
 
 
+@pytest.mark.level0
+@pytest.mark.platform_arm_ascend910b_training
+@pytest.mark.env_single
 def test_transform_d2d_no_pp_4():
     """
     Feature: transform param no pp scenario
@@ -65,9 +73,7 @@ def test_transform_d2d_no_pp_4():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10804 --join=True --log_dir=./transform_d2d_no_pp_4 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_no_pp_4 "
+        f"bash {root_path}/run_transform_param_test.sh 10804 test_transform_d2d_no_pp_4"
     )
     assert return_code == 0
 
@@ -79,9 +85,7 @@ def test_transform_d2d_pp_1():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10806 --join=True --log_dir=./transform_d2d_pp_1 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_pp_1 "
+        f"bash {root_path}/run_transform_param_test.sh 10805 test_transform_d2d_pp_1"
     )
     assert return_code == 0
 
@@ -93,9 +97,7 @@ def test_transform_d2d_pp_2():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10807 --join=True --log_dir=./transform_d2d_pp_2 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_pp_2 "
+        f"bash {root_path}/run_transform_param_test.sh 10806 test_transform_d2d_pp_2"
     )
     assert return_code == 0
 
@@ -107,9 +109,7 @@ def test_transform_d2d_pp_3():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10809 --join=True --log_dir=./transform_d2d_pp_3 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_pp_3 "
+        f"bash {root_path}/run_transform_param_test.sh 10807 test_transform_d2d_pp_3"
     )
     assert return_code == 0
 
@@ -121,9 +121,7 @@ def test_transform_d2d_pp_4():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10808 --join=True --log_dir=./transform_d2d_pp_4 "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_pp_4 "
+        f"bash {root_path}/run_transform_param_test.sh 10808 test_transform_d2d_pp_4"
     )
     assert return_code == 0
 
@@ -135,9 +133,7 @@ def test_transform_d2d_with_reshard_optimizer_tp():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10801 --join=True --log_dir=./log_test_transform_d2d_with_reshard_optimizer_tp "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_with_reshard_optimizer_tp "
+        f"bash {root_path}/run_transform_param_test.sh 10809 test_transform_d2d_with_reshard_optimizer_tp"
     )
     assert return_code == 0
 
@@ -149,8 +145,6 @@ def test_transform_d2d_with_reshard_optimizer_tp_zero():
     Expectation: Run success
     """
     return_code = os.system(
-        "msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 "
-        "--master_port=10801 --join=True --log_dir=./log_test_transform_d2d_with_reshard_optimizer_tp_zero "
-        "pytest -s transform_param_d2d.py::test_transform_d2d_with_reshard_optimizer_tp_zero "
+        f"bash {root_path}/run_transform_param_test.sh 10810 test_transform_d2d_with_reshard_optimizer_tp_zero"
     )
     assert return_code == 0

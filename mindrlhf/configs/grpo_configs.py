@@ -100,6 +100,9 @@ class GRPOConfig:
     ref_model_batch_size: int = 1
     performance_stats: bool = False
     enable_reshard_optimizer: bool = False
+    # 0: do not optimize mem during resharding
+    # 1: offload all src and dst param during resharding
+    reshard_mem_opt_level: int = 0
 
     # vllm config
     use_vllm: int = 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers

@@ -181,24 +181,27 @@ class TransformWorker(Worker):
                                                                          match_func_vllm)
         ms.communication.comm_func.barrier()
 
-        if grpo_config.model_type == "deepseekv3":
-            self.reshard_param_policy2ref = TransformParametersD2DForDSv3(sft_train_model, ref_model,
-                                                                          transform_args, src_merged_stra,
-                                                                          ref_merged_stra,
-                                                                          match_func=match_func_policy2ref)
-        else:
-            self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
-                                                                   src_merged_stra, ref_merged_stra,
-                                                                   match_func=match_func_policy2ref)
+        self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
+                                                               src_merged_stra, ref_merged_stra,
+                                                               match_func=match_func_policy2ref)
 
         ms.communication.comm_func.barrier()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "TransformWorker init")
 
-    def reshard_params(self, step_num):
+    def reshard_params(self, step_num, input_on_device_flag_dict=None):
+        """
+        reshard parameter from src to dst
+        """
+        if input_on_device_flag_dict is None:
+            input_on_device_flag_dict = {"policy2infer": (True, True), "policy2ref": (True, True)}
+        policy2infer_flag = input_on_device_flag_dict.get("policy2infer")
+        policy2ref_flag = input_on_device_flag_dict.get("policy2ref")
+        if policy2infer_flag is None or policy2ref_flag is None:
+            raise ValueError("Key in input_on_device_flag_dict must be policy2infer or policy2ref")
         start_time = time.time()
-        self.reshard_param_policy2infer.transform()
+        self.reshard_param_policy2infer.transform(policy2infer_flag)
         if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
-            self.reshard_param_policy2ref.transform()
+            self.reshard_param_policy2ref.transform(policy2ref_flag)
         end_time = time.time()
         print_perf_stat(start_time, end_time, "reshard params")
