@@ -153,9 +153,7 @@ class InferWorker(Worker):
         # pylint: disable=W0611
         import vllm_mindspore
         _pynative_executor.set_async_for_graph(False)
-        # pylint: disable=W0611
         import mindrlhf.third_party.vllm.ascend
-        # pylint: disable=W0611
         import mindrlhf.third_party.vllm.qwen2
         from mindrlhf.third_party.vllm.llm import LLM
         from vllm import SamplingParams
@@ -204,6 +202,7 @@ class InferWorker(Worker):
             top_k=self.grpo_config.top_k,
             stop_token_ids=self.grpo_config.eos_token_id,
             max_tokens=self.grpo_config.max_decode_length,
+            min_tokens=self.grpo_config.min_decode_length,
             detokenize=self.grpo_config.detokenize
         )
         logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
@@ -391,21 +390,17 @@ class InferWorker(Worker):
 
     def offload(self, free_kv_cache=False):
         """offload infer checkpoint"""
-        if self.on_device is False:
+        if not self.on_device:
             return
         logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
-        if self.use_vllm == VllmMode.ORIGIN:
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                param._offload()
-        else:
-            if free_kv_cache:
-                self.inference_engine.free_cache_engine()
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                if free_kv_cache and "paged_attention_mgr" in param.name:
-                    continue
-                param._offload()
+        skip_kv_cache = False
+        if self.use_vllm == VllmMode.VLLM:
+            self.inference_engine.free_cache_engine()
+            skip_kv_cache = True
+        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            if skip_kv_cache and "paged_attention_mgr" in param.name:
+                continue
+            param._offload()
         logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
         self.on_device = False
 
@@ -414,18 +409,14 @@ class InferWorker(Worker):
         if self.on_device:
             return
         logger.info(f'before load stf infer {ms.hal.memory_stats()}')
-        if self.use_vllm == VllmMode.ORIGIN:
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                param._load()
-        else:
-            if init_kv_cache:
-                self.inference_engine.init_cache_engine()
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                if not init_kv_cache and "paged_attention_mgr" in param.name:
-                    continue
-                # pylint: disable=W0212
-                param._load()
+        skip_kv_cache = False
+        if self.use_vllm == VllmMode.VLLM:
+            self.inference_engine.init_cache_engine()
+            skip_kv_cache = True
+        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            if skip_kv_cache and "paged_attention_mgr" in param.name:
+                continue
+            param._load()
         logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 
