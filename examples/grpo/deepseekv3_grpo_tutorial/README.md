@@ -145,42 +145,63 @@ cd /{path}/mindrlhf
 使用以下命令将本地mindrlhf和mindformers代码库均加入PYTHONPATH，MINDFORMERS_PAT路径中
 
 ```shell
-MINDRLHF_FILE=/{path}/mindrlhf/
-MINDFORMERS_FILE=/{path}/mindformers/
+export GLOG_v=2
+export PYTHONPATH=/path/to/mindrlhf/:$PYTHONPATH
+export PYTHONPATH=/path/to/mindformers/:$PYTHONPATH
+# use for vllm
+export vLLM_MODEL_BACKEND=MindFormers
+export MINDFORMERS_MODEL_CONFIG="./model_configs/deepseek_v3_grpo/predict_deepseek3_671b.yaml"
+# 性能优化
+export MS_DEV_RUNTIME_CONF="parallel_dispatch_kernel:True"
+export MS_ALLOC_CONF=enable_vmm:true
+export ASCEND_TOTAL_MEMORY_GB=64
+export vLLM_MODEL_MEMORY_USE_GB=50
+export ENABLE_LAZY_INLINE_NO_PIPELINE=1
+#ray组网相关
+export GLOO_SOCKET_IFNAME=enp189s0f0
+export TP_SOCKET_IFNAME=enp189s0f0
+#通信下发
+export HCCL_OP_EXPANSION_MODE=AIV
+# 关闭多机lccl
+export MS_ENABLE_LCCL=off
 
-export PYTHONPATH="$MINDRLHF_FILE:$MINDFORMERS_FILE:$PYTHONPATH"
-export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
+# 参数说明
+vLLM_MODEL_BACKEND: 指定使用mindformers模型，使用vllm时开启
+MINDFORMERS_MODEL_CONFIG： 指定推理yaml，使用vllm时开启
+vLLM_MODEL_MEMORY_USE_GB：性能优化相关
+ASCEND_TOTAL_MEMORY_GB： 内存管理相关
+MS_DEV_RUNTIME_CONF：性能优化相关
+MS_ALLOC_CONF：优化碎片内存
+GLOO_SOCKET_IFNAME：ray组网通信相关
+TP_SOCKET_IFNAME：rat组网通信相关
+ENABLE_LAZY_INLINE_NO_PIPELINE： 优化模型编译性能
+HCCL_OP_EXPANSION_MODE：通信下发优化
+MS_ENABLE_LCCL: 关闭多机lccl
 ```
 
 随后使用以下命令拉起单机4卡GRPO训练任务
 
 ```shell
-msrun --worker_num=4 --local_worker_num=4 --master_addr=127.0.0.1 \
---master_port=9190 --join=False --log_dir=./deepseek_one_log \
-examples/grpo/deepseek_grpo_tutorial/grpo_one_stage.py \
+bash scripts/msrun_launcher.sh "examples/grpo/deepseekv3_grpo_tutorial/main.py \
+--config examples/grpo/deepseekv3_grpo_tutorial/grpo_config.yaml \
 --sft_path_infer ./model_configs/deepseek_v3_config/predict_deepseek3_671b.yaml \
+--sft_path_ref ./model_configs/deepseek_v3_config/ref_deepseek3_671b.yaml \
 --sft_path_train ./model_configs/deepseek_v3_config/finetune_deepseek3_671b.yaml \
---tokenizer_path /{path}/tokenizer.json \
---mind_dataset_dir /{path}/gsm8k_train.mindrecord \
---save_data_file /{path}/grpo.mindrecord \
---save_ckpt_dir /{path}/save_ckpt \
+--tokenizer_path ./tokenizer.json \
+--mind_dataset_dir ./output.mindrecord \
 --use_parallel True \
---load_sft_checkpoint_infer /{path}/infer_ckpt \
---load_sft_checkpoint_train /{path}/train_ckpt \
---load_ref_checkpoint /{path}/ref_ckpt \
---load_ckpt_format 'ckpt' \
---enable_compile_cache False
+--enable_compile_cache False" \
+$worker_num $local_worker_num $master_ip 8118 $node_rank output/msrun_log False 7200
 
 # 参数说明
 # msrun 参数
 worker_num:                   总卡数
 local_worker_num:             单机的卡数
-master_addr:                  主节点地址
-master_port:                  主节点端口
-join:                         是否等待所有worker退出
-log_dir:                      日志路径
+master_ip:                    主节点端口
+node_rank:                    多机节点序号
 # grpo_one_stage.py 参数
 sft_path_infer:               推理用的模型配置文件
+sft_path_ref:                 ref用的模型配置文件
 sft_path_train:               训练用的模型配置文件
 tokenizer_path:               模型对应的tokenizer文件tokenizer.json的路径
 mind_dataset_dir:             训练数据集mindrecord文件的路径
@@ -197,5 +218,5 @@ enable_compile_cache:         是否使用编译缓存
 拉起任务后，通过以下命令查看运行日志
 
 ```shell
-tail -f deepseek_one_log/worker_0.log
+tail -f output/msrun/worker_0.log
 ```

@@ -89,7 +89,10 @@ class TrainWorker(Worker):
         sft_model_config_train.checkpoint_name_or_path = None
 
         self.train_pp_stage = sft_model_config_train.parallel_config.pipeline_stage or 1
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
+        self.enable_parallel_optimizer = sft_config_train.parallel.enable_parallel_optimizer and \
+                                        sft_model_config_train.parallel_config.data_parallel > 1
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
         self.sft_model_config_train = sft_model_config_train
         policy_model = CausalLMHybrid(sft_model_config_train, self.grpo_config)
         self.grpo_model_train = GRPOModelTrain(grpo_config, policy_model)
@@ -108,7 +111,8 @@ class TrainWorker(Worker):
         """ compile and save strategy """
         self.grpo_with_grad.set_train(True)
         self.grpo_model_train.grpo_model_train.policy_model.model.set_train(True)
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
         if self.train_pp_stage == 1:
             # for pipeline stage 1, the micro_batch_num is not used
             train_bs = self.grpo_config.batch_size * self.sft_model_config_train.parallel_config.data_parallel
@@ -255,7 +259,8 @@ class TrainWorker(Worker):
     def train(self):
         """ train """
         dataset = self._init_grpo_dataset_before_train()
-        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage)
+        context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
+                                          enable_parallel_optimizer=self.enable_parallel_optimizer)
         def formatter(out):
             return out.asnumpy() if isinstance(out, Tensor) else out
         iterator = dataset.create_dict_iterator()

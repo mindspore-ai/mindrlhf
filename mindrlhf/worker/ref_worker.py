@@ -89,7 +89,7 @@ class RefWorker(Worker):
     def compile(self):
         """ compile and save strategy """
         self.ref_model.model.set_train(False)
-        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
         total_ref_model_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
         fake_data = ms.Tensor(shape=(total_ref_model_batch_size, self.grpo_config.seq_length),
                               dtype=ms.int32)
@@ -112,7 +112,7 @@ class RefWorker(Worker):
 
     def compute_ref_log_prob(self, prompt_completion_ids_tensor, samples):
         np.set_printoptions(threshold=1024)
-        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
         logger.info(f"precision refmodel inputs are {prompt_completion_ids_tensor}, {samples}")
 
         ref_per_token_logps = self.ref_model(prompt_completion_ids_tensor,
