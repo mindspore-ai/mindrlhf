@@ -43,5 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--reward_weights", nargs='*', type=float, help="reward_weights")
     parser.add_argument("--save_strategy_dir", type=str, default="../../strategy/", help="save_strategy_dir")
     parser.add_argument("--custom_model_name", type=str, default="qwen", help="model name")
+    parser.add_argument("--tensorboard_dir", type=str, default="", help="set tensorboard log dir")
+    parser.add_argument("--tensorboard_queue_size", type=int, default=10, help="set tensorboard queue size")
     args = parser.parse_args()
     main(args)

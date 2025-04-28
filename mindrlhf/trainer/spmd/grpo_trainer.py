@@ -14,24 +14,25 @@
 """ GRPO Trainer """
 
 # python
-import time
 from dataclasses import asdict
+import os
+import time
 import numpy as np
 
 # mindspore
 import mindspore as ms
 from mindspore import Tensor, mint
 import mindspore.common.dtype as mstype
-from mindspore.communication import get_rank
+from mindspore.communication import get_rank, get_group_size
 from mindspore.mindrecord import FileWriter
 from mindspore.dataset import MindDataset
-from mindspore import communication as D
 from mindspore.common.api import _pynative_executor
 
 # mindformers
 from mindformers import logger
 from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import MindFormerConfig
+from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
@@ -51,9 +52,18 @@ import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 class GRPOTrainer:
     """ GRPO Trainer """
     def __init__(self, args=None):
+        """Initialize"""
         self.args = args
         self._init_grpo_configs(args)
         self._init_reward_fn(args)
+
+        # ================== Initial Tensorboard ==================
+        if hasattr(args, 'tensorboard_dir') and args.tensorboard_dir:
+            args.tensorboard_dir = os.path.join(args.tensorboard_dir, f"rank_{get_rank()}")
+            _set_tensorboard_writer(args)
+        self.tensor_writer = get_tensorboard_writer()
+        setattr(self.args, 'tensor_writer', self.tensor_writer)
+        self.make_exp_step = 0
 
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config,
@@ -154,9 +164,9 @@ class GRPOTrainer:
         self.reward_weights = np.array(reward_weights, dtype=np.float32)
 
     def _init_grpo_infer_dataset(self):
-        '''
+        """
         Build dataset for generating.
-        '''
+        """
         logger.info(
             "GRPOTrainer: _init_grpo_infer_dataset, dataset dir {self.mind_dataset_dir}")
         self.mind_dataset_dir = self.grpo_config.mind_dataset_dir
@@ -239,8 +249,8 @@ class GRPOTrainer:
         """
         split batch_inputs for data parallel
         """
-        world_size = D.get_group_size()
-        rank_id = D.get_rank()
+        world_size = get_group_size()
+        rank_id = get_rank()
         split_size = (batch_inputs.shape[0] // data_parallel_size)
         all_other_group_size = world_size // data_parallel_size
 
@@ -344,7 +354,7 @@ class GRPOTrainer:
 
         grpo_rl_elements = []
         all_mean_grouped_rewards = []
-        all_elements_compeltion_len = []
+        all_elements_completion_len = []
 
         batch = self._get_batch(num_rollouts)
         prompts_data = batch[0].to(mstype.int32).asnumpy()
@@ -476,7 +486,7 @@ class GRPOTrainer:
 
         logger.info(f"prompts: \n {prompts}")
         logger.info(f"completions: \n {completions}")
-        all_elements_compeltion_len.extend([len(com) for com in completions])
+        all_elements_completion_len.extend([len(com) for com in completions])
         mean_len = np.array([len(com) for com in completions]).mean()
         logger.info(f"mean completions.length: \n {mean_len}")
 
@@ -530,10 +540,16 @@ class GRPOTrainer:
             grpo_rl_elements.append(grpodata)
 
         logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
-        logger.info(f"all_elements_compeltion_len mean: {np.mean(all_elements_compeltion_len)}")
+        all_mean_len = np.mean(all_elements_completion_len)
+        logger.info(f"all_elements_completion_len mean: {all_mean_len}")
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("mean-completion-length", all_mean_len, global_step=self.make_exp_step)
         self.train.push_to_store(grpo_rl_elements)
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
-        logger.info(f"Avg scores:\n {np.mean(np.array(all_mean_grouped_rewards))}")
+        avg_scores = np.mean(np.array(all_mean_grouped_rewards))
+        logger.info(f"Avg scores:\n {avg_scores}")
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("average-scores", avg_scores, global_step=self.make_exp_step)
 
         end_time = time.time()
         print_perf_stat(ep_begin_time, end_time, "Make experience")
@@ -542,6 +558,7 @@ class GRPOTrainer:
         if self.grpo_config.save_data_file:
             if get_rank() % 8 == 0:
                 self._save_grpoelement(self.grpo_config.save_data_file)
+        self.make_exp_step += 1
         logger.info('generate over')
 
     def _print_data_str(self, data, name):
