@@ -456,7 +456,7 @@ class TrainPipelineWithLossScaleCellGRPO(nn.TrainOneStepWithLossScaleCell):
             scaling_sens = self.reshape(scaling_sens, (1,))
         else:
             scaling_sens = sens
-        grads = self.grad(self.network, weights)(prompt_completion_ids, prompts_mask, responses_mask,
+        grads = self.grad(self.network, weights)(prompt_completion_ids, responses_mask,
                                                  ref_per_token_logps, advantages,
                                                  actual_sequence_length, sample_index, sample_valid_length,
                                                  self.cast(scaling_sens / self.micro_size, mstype.float32))

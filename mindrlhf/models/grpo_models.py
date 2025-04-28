@@ -21,21 +21,18 @@ from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
 from mindformers.models.utils import lazy_inline
 from .base_model import BaseModel
-from mindformers.models.modeling_utils import PreTrainedModel
-from mindformers.models.utils import lazy_inline
 
 __all__ = [
     "GRPOModel",
     "CausalLMHybrid",
 ]
 
-class CausalLMHybrid(BaseModel, PreTrainedModel):
+class CausalLMHybrid(BaseModel):
     """
     CausalLMHybrid
     """
     def __init__(self, model_config, grpo_config, is_training=True):
-        BaseModel.__init__(self)
-        PreTrainedModel.__init__(self, config=model_config, auto_prefix=True)
+        super(CausalLMHybrid, self).__init__()
         if not is_training:
             model_config.dropout_rate = 0.0
         self.model_config = model_config
@@ -73,18 +70,11 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         self.argmax = P.Argmax(-1).shard(((dp, mp),))
         self.add_shard = P.Add().shard(((1, 1, 1), ()))
 
-        self.pad_logits = ops.Pad(((0,0),(1,0),(0,0))).shard(((dp*mp, 1, 1),))
-        self.pad_samples = ops.Pad(((0,0),(1,0))).shard(((dp*mp, 1),))
+        self.pad_logits = ops.Pad(((0, 0), (1, 0), (0, 0))).shard(((dp*mp, 1, 1),))
+        self.pad_samples = ops.Pad(((0, 0), (1, 0))).shard(((dp*mp, 1),))
 
         self.expaned = P.ExpandDims().shard(((dp, mp),))
-
-        self.model_name = model_config.name if hasattr(model_config, 'name') else ''
-        # self.config = model_config
-        self.convert_name = self.model.convert_name
-
-        # 适配safetensors自动权重切分
-        self.model_name = model_config.name if hasattr(model_config, 'name') else ''
-        self.convert_name = self.model.convert_name
+        self.dp = dp
 
     def offset_actual_seq_length(self, data, offset):
         bs = data.shape[0] // self.dp
@@ -95,42 +85,6 @@ class CausalLMHybrid(BaseModel, PreTrainedModel):
         data = data + offsets
         actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
         return actual_seq_lenth
-    
-    def convert_weight_dict(self, source_dict, **kwargs):
-        weight_dict = self.model.convert_weight_dict(source_dict, **kwargs)
-        prefix = ''
-        if self.model_name == 'grpo_infer':
-            prefix = 'grpo_model.policy_model.model.'
-        elif self.model_name == 'grpo_train':
-            prefix = 'grpo_model_train.policy_model.model.'
-        elif self.model_name == 'grpo_ref':
-            prefix = 'model.'
-        new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
-        return new_weight_dict
-
-    def convert_map_dict(self, source_dict, **kwargs):
-        weight_dict = self.model.convert_map_dict(source_dict, **kwargs)
-        prefix = ''
-        if self.model_name == 'grpo_infer':
-            prefix = 'grpo_model.policy_model.model.'
-        elif self.model_name == 'grpo_train':
-            prefix = 'grpo_model_train.policy_model.model.'
-        elif self.model_name == 'grpo_ref':
-            prefix = 'model.'
-        new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
-        return new_weight_dict
-
-    def obtain_name_map(self, load_checkpoint_files):
-        name_map = self.model.obtain_name_map(load_checkpoint_files)
-        prefix = ''
-        if self.model_name == 'grpo_infer':
-            prefix = 'grpo_model.policy_model.model.'
-        elif self.model_name == 'grpo_train':
-            prefix = 'grpo_model_train.policy_model.model.'
-        elif self.model_name == 'grpo_ref':
-            prefix = 'model.'
-        new_name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
-        return new_name_map
 
     def process_logits2(
             self, logits, current_index=None, is_first_iteration=False, use_past=False
@@ -256,7 +210,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.dp = self.policy_model.dp
         self.cast = P.Cast()
         self.dump = P.TensorDump()
-    
+
     def batch_unsorted_segment_sum(self, input_ids, segments_ids, num_segments):
         """
         GRPOModel
@@ -289,17 +243,18 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         data = data + offsets
         actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
         return actual_seq_lenth
-    
+
     def construct(
-        self,
-        prompt_completion_ids, # [bs, seq_len]
-        responses_mask,  # [bs, seq_len]
-        ref_per_token_logps, # [bs, seq_len]
-        advantages,  # [bs, seq_len]
-        actual_seq_length,  # [bs, packed_sample_num]
-        sample_index, #[bs, seq_len]
-        sample_valid_len,  #[bs, packed_sample_num]
-    ):
+            self,
+            prompt_completion_ids, # [bs, seq_len]
+            responses_mask,  # [bs, seq_len]
+            ref_per_token_logps, # [bs, seq_len]
+            advantages,  # [bs, seq_len]
+            actual_seq_length,  # [bs, packed_sample_num]
+            sample_index, #[bs, seq_len]
+            sample_valid_len,  #[bs, packed_sample_num]
+        ):
+        """ construct function for GRPOModel """
         # bs, seq_len = prompt_completion_ids.shape
         pack_sample_num = sample_valid_len.shape[1]
         real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)

@@ -14,61 +14,40 @@
 """ GRPO Trainer """
 
 # python
-from dataclasses import asdict
 import os
 import time
+from dataclasses import asdict
 import numpy as np
 
 # mindspore
 import mindspore as ms
 import mindspore.common.dtype as mstype
-from mindspore.communication import get_rank, get_group_size
-from mindspore.mindrecord import FileWriter
+from mindspore.communication import get_group_size
 from mindspore.dataset import MindDataset
 from mindspore.common.api import _pynative_executor
+from mindspore import Tensor, mint
+from mindspore.communication import get_rank
+from mindspore.mindrecord import FileWriter
 
 # mindformers
 from mindformers import logger
 from mindformers.models.llama import LlamaTokenizerFast
-from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
-import numpy as np
-import time
-from dataclasses import asdict, dataclass, field
 from mindformers import MindFormerConfig
-import json
-import os
-# mindspore
-import mindspore
-import mindspore as ms
-import mindspore.common.dtype as mstype
-# mindformers
-from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
-from mindformers.tools.utils import is_main_rank
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
-from mindspore import Tensor, mint
-from mindspore import communication as D
-from mindspore.common.api import _pynative_executor
-from mindspore.communication import get_rank
-from mindspore.dataset import MindDataset
-from mindspore.mindrecord import FileWriter
-from typing import List, Dict
-
-from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
 
 from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat,
                             convert_index_json_total, save_prompt_completions_data, MetricData)
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat, convert_index_json_total
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
-# mindrlhf
 from mindrlhf.worker.worker import GRPOData
+from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
+from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 
 def pad_sequence_to_length(sequence, target_length, pad_value):
@@ -86,6 +65,7 @@ def pad_sequence_to_length(sequence, target_length, pad_value):
 
 class GRPOTrainer:
     """ GRPO Trainer """
+
     def __init__(self, args=None):
         """Initialize"""
         self.args = args
@@ -116,6 +96,11 @@ class GRPOTrainer:
         self.train = TrainWorker(grpo_config=self.grpo_config,
                                  sft_path_train=self.sft_path_train,
                                  args=self.args)
+        logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
+        if self.grpo_config.packing:
+            self.grpo_config.packing_sample_length = \
+                self.train.sft_model_config_train.seq_length
+            logger.info(f"set packing_sample_length to {self.grpo_config.packing_sample_length}")
         logger.info("GRPOTrainer: finish init workers")
 
         self.reshard_optimizer = None
@@ -162,7 +147,7 @@ class GRPOTrainer:
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'deepseek'], but get {model_name}")
+                f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
         self.grpo_config = grpo_config
         self.args.use_parallel = use_parallel
         self.use_parallel = use_parallel
@@ -349,10 +334,10 @@ class GRPOTrainer:
         if ref_model_batch_size:
             start_idx = idx * ref_model_batch_size
             end_idx = (idx + 1) * ref_model_batch_size
-            right_padding_responses = right_padding_responses[start_idx : end_idx]
-            responses_mask = responses_mask[start_idx : end_idx]
-            left_padding_prompts = left_padding_prompts[start_idx : end_idx]
-            prompts_mask = prompts_mask[start_idx : end_idx]
+            right_padding_responses = right_padding_responses[start_idx: end_idx]
+            responses_mask = responses_mask[start_idx: end_idx]
+            left_padding_prompts = left_padding_prompts[start_idx: end_idx]
+            prompts_mask = prompts_mask[start_idx: end_idx]
 
         is_eos = right_padding_responses == self.tokenizer.eos_token_id
         eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
@@ -369,22 +354,24 @@ class GRPOTrainer:
 
         # Generate outputs.
         # prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
-        attention_mask_tensor = Tensor(attention_mask, dtype=mindspore.int32)
+        attention_mask_tensor = Tensor(attention_mask, dtype=ms.int32)
         return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
-    
+
     def _construct_inputs_packing(self, all_packed, ref_model_batch_size=None, idx=None):
+        """ construct inputs for packing """
         if ref_model_batch_size:
             tmp_ids = []
             tmp_actual_seq_len = []
             for i in range(ref_model_batch_size):
                 tmp_ids.append(all_packed[i + idx * ref_model_batch_size]["prompt_completion_ids"])
                 tmp_actual_seq_len.append(all_packed[i + idx * ref_model_batch_size]["actual_sequence_length"])
-                
+
         tmp_ids = np.array(tmp_ids)
         tmp_actual_seq_len = np.array(tmp_actual_seq_len)
         return tmp_ids, tmp_actual_seq_len
-    
+
     def create_pack_group(self, data_dict_list, pack_num):
+        """ create pack group """
         sample_num = len(data_dict_list)
         pack_group, each_group = [], []
         current_group_length = 0
@@ -402,6 +389,7 @@ class GRPOTrainer:
         return pack_group
 
     def pack_grouped_data(self, pack_list, pack_num=1):
+        """ pack grouped data """
         real_sample_num = len(pack_list)
         dummy_sample_num = pack_num - real_sample_num
         pad_to_length = self.grpo_config.seq_length - dummy_sample_num
@@ -431,7 +419,6 @@ class GRPOTrainer:
             sample_response_mask = np.pad(
                 sample_response_mask, (0, 1), mode="constant", constant_values=0,
             )
-
 
             sample_actual_sequence_length = occupied_length + sample_length
             this_sample_index = np.array([i] * sample_length)
@@ -465,7 +452,7 @@ class GRPOTrainer:
             prompt_completion_ids.append(np.array([pad_token_id]))
             responses_mask.append(np.array([0]))
             advantages.append(np.array([0]))
-            actual_sequence_length.append(actual_sequence_length[-1]+1)
+            actual_sequence_length.append(actual_sequence_length[-1] + 1)
             sample_index.append(np.array([real_sample_num + i]))
             sample_valid_length.append(1)
 
@@ -481,7 +468,7 @@ class GRPOTrainer:
         return result
 
     def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages, pack_num=1):
-
+        """ pack grpo data """
         data_dict_list = []
         bs = prompt_completion_ids.shape[0]
         advantages = advantages.reshape(-1)
@@ -490,13 +477,13 @@ class GRPOTrainer:
             sample_prompt_mask = prompts_mask[i]
             sample_response_mask = responses_mask[i]
             indices = np.nonzero(sample_prompt_mask)[0]
-            if len(indices) > 0:
+            if indices.size:
                 prompt_start_idx = indices[0]
             else:
                 logger.warning(f"prompts_mask is all zero for index {i}!")
                 continue
             indices = np.nonzero(sample_response_mask)[0]
-            if len(indices) > 0:
+            if indices.size:
                 response_end_index = indices[-1]
             else:
                 logger.warning(f"responses_mask is all zero for index {i}!")
@@ -568,19 +555,19 @@ class GRPOTrainer:
         all_ref_per_token_logps = np.zeros(
             (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.float32)
 
-        self.infer.load(init_kv_cache=True)
+        self.infer.load()
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
-        
+
         max_decode_length = self.grpo_config.max_decode_length
         if self.infer.use_vllm == VllmMode.ORIGIN:
             results = []
             input_bs = n_questions // self.infer_dp
             max_decode_length = self.grpo_config.max_decode_length
             for idx in range(num_rollouts * num_generations):
-                result = self.infer.generate(input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], 
+                result = self.infer.generate(input_ids_numpy[idx * input_bs: (idx + 1) * input_bs, :],
                                              max_decode_length=max_decode_length)
                 for res_idx in range(len(result)):
                     if len(results) == len(result):
@@ -597,17 +584,18 @@ class GRPOTrainer:
         logger.info("generation end at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
 
-        self.infer.offload(free_kv_cache=True)
+        self.infer.offload()
         logger.info("model_infer offload")
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
-        
-        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(
-            results)
-        all_prompts_mask = np.concatenate((prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)),
-                                          axis=1)
-        all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
-                                            axis=1)
+
+        right_padding_responses, responses_mask_gather, \
+            left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(results)
+        all_prompts_mask = np.concatenate((prompts_mask_gather,
+                                           np.zeros_like(responses_mask_gather, dtype=np.int32)), axis=1)
+        all_responses_mask = np.concatenate(
+            (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
+            axis=1)
         all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
                                                    axis=1)
         # Step 3: calculate reward.
@@ -668,9 +656,10 @@ class GRPOTrainer:
       
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
-        
+
         self.ref.load()
         logger.info("ref_model load")
+
         # regroup the index of all data
         # assume the input shape is [num_generations*num_rollout*num_questions, -1]
         # [1,2,3,4,1,2,3,4]--->[1,1,2,2,3,3,4,4]
@@ -680,19 +669,19 @@ class GRPOTrainer:
             seq = x.shape[-1]
             x = x.reshape((num_generations, -1, seq)).transpose((1, 0, 2))
             return x.reshape((-1, seq))
+
         all_prompt_completion_ids = reconstruct_index(all_prompt_completion_ids, num_generations)
         all_prompts_mask = reconstruct_index(all_prompts_mask, num_generations)
         all_responses_mask = reconstruct_index(all_responses_mask, num_generations)
         advantages = reconstruct_index(advantages, num_generations)
-        logger.info(f"all_prompt_completion_ids {all_prompt_completion_ids}")
-        logger.info(f"advantages {advantages}")
         if self.grpo_config.packing:
             pack_num = self.grpo_config.pack_num
             all_packed = self.pack_grpo_data(
                 all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
-            logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
             total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
-
+            logger.info(
+                f"total_ref_batch_size: ref_model_batch_size * ref_dp, {self.grpo_config.ref_model_batch_size} * "
+                f"{self.ref_dp} = {total_ref_batch_size}")
             while len(all_packed) < total_ref_batch_size:
                 all_packed.append(all_packed[0])
 
@@ -705,11 +694,11 @@ class GRPOTrainer:
                 prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
                     all_packed, ref_model_batch_size=total_ref_batch_size, idx=idx)
 
-                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0),(0, 1)), 'constant', 
-                                    constant_values=self.grpo_config.pad_token_id)
-                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=mindspore.int32)
-                input_prompt_ids = Tensor(prompt_completion_ids[:,:-1], dtype=mindspore.int32)
-                actual_sequence_length = Tensor(actual_sequence_length, dtype=mindspore.int32)
+                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
+                                               constant_values=self.grpo_config.pad_token_id)
+                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
+                input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
+                actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
 
                 # Step 2: run ref model.
                 start_time = time.time()
@@ -723,9 +712,8 @@ class GRPOTrainer:
                 end_time = time.time()
                 logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
                     idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
-                logger.info(f"Ref log probs {ref_per_token_logps}")
-
-                all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
+                all_ref_per_token_logps[
+                    idx * total_ref_batch_size: (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
 
             self.ref.offload()
             logger.info("ref_model offload")
@@ -741,15 +729,15 @@ class GRPOTrainer:
                     MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
                 }
                 save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
-                                            f'prompt_completions_step_{step}.json')
+                                              f'prompt_completions_step_{step}.json')
                 save_prompt_completions_data(save_file_path, **save_kwargs)
 
             for i in range(len(all_packed)):
-                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0,1),), 'constant', 
+                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0, 1),), 'constant',
                                                     constant_values=self.grpo_config.pad_token_id).astype(np.int32)
 
-                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0,1),), 'constant', 
-                                                    constant_values=0).astype(np.int32)
+                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0, 1),), 'constant',
+                                             constant_values=0).astype(np.int32)
                 responses_mask_temp = responses_mask_temp[1:]
 
                 ref_per_token_logps = all_ref_per_token_logps[i].astype(np.float32)
@@ -803,7 +791,7 @@ class GRPOTrainer:
                 "ref_per_token_logps": {"type": "float32", "shape": [-1]},
                 "advantages": {"type": "float32", "shape": [-1]},
                 "actual_sequence_length": {"type": "int32", "shape": [-1]},
-                "sample_index":{"type": "int32", "shape": [-1]},
+                "sample_index": {"type": "int32", "shape": [-1]},
                 "sample_valid_length": {"type": "int32", "shape": [-1]},
             }
 
@@ -845,11 +833,17 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load(init_kv_cache=True)
+                self.infer.load()
 
                 # 权重倒换优化
-                self.ref.load()
-                self.transform.reshard_params(i)
+                if self.transform.sync_ref_model and \
+                        ((i + 1) % self.transform.ref_model_sync_steps == 0):
+                    # in some work, ref update may have a 'bad' effect
+                    self.ref.load()
+                    self.transform.reshard_params(i)
+                    self.ref.offload()
+                else:
+                    self.transform.reshard_params(i)
                 self.train.offload_model()
 
                 step_end_time = time.time()

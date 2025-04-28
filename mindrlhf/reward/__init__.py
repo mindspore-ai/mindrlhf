@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from .reward_fn import reward_func_from_jiaoda, accuracy_reward, format_reward
+"""reward functions"""
+from .reward_fn import reward_func_from_jiaoda, accuracy_reward, accuracy_reward_2, format_reward
 
 
-__all__ = ["reward_func_from_jiaoda", "accuracy_reward", "format_reward"]
+__all__ = ["reward_func_from_jiaoda", "accuracy_reward", "accuracy_reward_2", "format_reward"]

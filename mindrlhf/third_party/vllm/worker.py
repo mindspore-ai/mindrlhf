@@ -57,16 +57,16 @@ class Worker(Worker):
     maintaining the KV cache and executing the model on the GPU. In case of
     distributed inference, each worker is assigned a partition of the model.
     """
-    
+
     def __init__(
-        self,
-        vllm_config: VllmConfig,
-        local_rank: int,
-        rank: int,
-        distributed_init_method: str,
-        is_driver_worker: bool = False,
-        model_runner_cls: Optional[Type[GPUModelRunnerBase]] = None,
-    ) -> None:
+            self,
+            vllm_config: VllmConfig,
+            local_rank: int,
+            rank: int,
+            distributed_init_method: str,
+            is_driver_worker: bool = False,
+            model_runner_cls: Optional[Type[GPUModelRunnerBase]] = None,
+        ) -> None:
         WorkerBase.__init__(self, vllm_config)
         self.num_scheduler_steps = vllm_config.scheduler_config.num_scheduler_steps
         self.parallel_config.rank = rank
@@ -89,7 +89,7 @@ class Worker(Worker):
             or (speculative_config.draft_model_config.hf_config.model_type
                 not in ["medusa", "mlp_speculator", "eagle"]) \
                     else {"return_hidden_states": True}
-                    
+
         # TODO(sgm): set correct model runner class
         ModelRunnerClass: Type[GPUModelRunnerBase] = ModelRunner
         if model_config.runner_type == "pooling":
@@ -140,7 +140,7 @@ class Worker(Worker):
             # Related issue:
             # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
             os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
-            
+
             # NOTE(sgm): Modify for verl, Env vars will be set by TORCHRUN.
             self.rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
             local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -152,7 +152,7 @@ class Worker(Worker):
                 raise ValueError("Invalid or unspecified rank.")
             # TODO(tronzhang): Upper init, skip this device set.
             # torch.cuda.set_device(self.device)
-            
+
             # Use the world_size set by TORCHRUN
             world_size = int(os.getenv("WORLD_SIZE", "-1"))
             assert world_size != -1, "The world_size is set to -1, not initialized by TORCHRUN"
@@ -178,9 +178,9 @@ class Worker(Worker):
         if self.cache_engine is None and self.gpu_cache is None:
             super()._init_cache_engine()
             if self.num_scheduler_steps > 1:
-                self.model_runner._base_model_runner.model.mf_kvcaches_init=False # mindformers model
+                self.model_runner._base_model_runner.model.mf_kvcaches_init = False # mindformers model
             else:
-                self.model_runner.model.mf_kvcaches_init=False
+                self.model_runner.model.mf_kvcaches_init = False
 
     def free_cache_engine(self):
         # ensure `enforce_eager=True`
@@ -189,7 +189,7 @@ class Worker(Worker):
         gc.collect()
         self.cache_engine = None
         self.gpu_cache = None
-    
+
     def execute_model(self,
                       execute_model_req: ExecuteModelRequest,
                       intermediate_tensors: Optional[IntermediateTensors] = None) -> Optional[List[SamplerOutput]]:
@@ -197,7 +197,7 @@ class Worker(Worker):
             return self.execute_model_mss(execute_model_req, intermediate_tensors)
         else:
             return self.execute_model_without_mss(execute_model_req, intermediate_tensors)
-    
+
     # NOTE(sgm): [VERL]: adapt from _execute_model_spmd()
     def execute_model_without_mss(self,
                                   execute_model_req: ExecuteModelRequest,

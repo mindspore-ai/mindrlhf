@@ -29,7 +29,7 @@ class BaseModel(nn.Cell):
     """BaseModel"""
 
     def __init__(self):
-        nn.Cell.__init__(self)
+        super(BaseModel, self).__init__()
         self._model_list = [
             "gpt2",
             "llama",

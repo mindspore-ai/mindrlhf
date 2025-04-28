@@ -28,16 +28,16 @@ from mindspore import communication as D
 from mindspore.common.api import _pynative_executor
 
 # mindformers
+from mindformers import LlamaConfig
 from mindformers import MindFormerConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
-from mindformers import LlamaConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.experimental.infer.core.utils import generate_state_dict
 from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import logger
-from research.deepseek3.deepseek3_config import DeepseekV3Config
 from mindformers.models.build_tokenizer import build_tokenizer
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 # mindrlhf
 from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
@@ -125,13 +125,11 @@ class InferWorker(Worker):
             self.use_vllm = grpo_config.use_vllm
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
-            # vllm
             self.__init_use_vllm()
             policy_model = self.inference_engine.get_model()
             policy_model.dp = sft_model_config_infer.parallel_config.data_parallel
         else:
             # no vllm
-            sft_model_config_infer.name = "grpo_infer"
             policy_model = CausalLMHybrid(sft_model_config_infer, self.grpo_config)
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         self.grpo_model_infer = GRPOModelInfer(self.grpo_config, policy_model)
@@ -239,7 +237,6 @@ class InferWorker(Worker):
         world_size = D.get_group_size()
         all_other_group_size = world_size // data_parallel_size
         output_batch = []
-
         if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
             collect_range = [_ * local_bs for _ in reshard_optimizer.OPT_COMMUNICATION_GROUPS['dp'][0]]
         else:
@@ -287,20 +284,6 @@ class InferWorker(Worker):
         """ Policy model generates responses for a batch of prompts. """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
-        np.set_printoptions(threshold=1024)
-        if self.args.custom_model_name == "llama":
-            print("processing custom tokenizer...")
-            self.sft_config_infer.processor.tokenizer.tokenizer_file = self.args.vocab_path
-            tokenizer = build_tokenizer(self.sft_config_infer.processor.tokenizer)
-        else:
-            print("processing qwen2 tokenizer...")
-            tokenizer = Qwen2Tokenizer(
-                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
-            )
-
-        def print_data(data, tokenizer, name):
-            decoded_str2 = tokenizer.decode(data)
-            logger.info(f"{name} strs are {decoded_str2}")
 
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
 
@@ -310,6 +293,7 @@ class InferWorker(Worker):
         generate_begin_time = time.time()
         if max_decode_length == 0:
             max_decode_length = self.grpo_config.max_decode_length
+        min_decode_length = 4
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
@@ -320,10 +304,11 @@ class InferWorker(Worker):
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                                   max_new_tokens=max_decode_length,
-                                                                                   min_new_tokens=min_decode_length,
-                                                                                   do_sample=True)
+            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
+                input_ids_numpy[:, :max_valid_length],
+                max_new_tokens=max_decode_length,
+                min_new_tokens=min_decode_length,
+                do_sample=True)
             logger.info("infer without vllm end, not use vllm model")
         else:
             logger.info("start vllm")
@@ -358,19 +343,21 @@ class InferWorker(Worker):
                 response = outputs[i]
             right_padding_responses[i, :len(response)] = response
 
-            left_padding_prompts[i, self.grpo_config.max_prompt_length-prompt_len[i]:] = input_ids_list[i][:prompt_len[i]]  # 整个batch的样本右对齐（左侧进行padding）
+            left_padding_prompts[i, self.grpo_config.max_prompt_length-prompt_len[i]:
+                                 ] = input_ids_list[i][:prompt_len[i]]  # 整个batch的样本右对齐（左侧进行padding）
 
         responses_mask = (right_padding_responses != self.grpo_config.pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
 
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
-        return right_padding_responses.astype(np.int32), responses_mask, left_padding_prompts.astype(np.int32), prompts_mask
+        return (right_padding_responses.astype(np.int32), responses_mask,
+                left_padding_prompts.astype(np.int32), prompts_mask)
 
     def generate_strategy(self, reshard_optimizer_):
+        """ generate strategy """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
         stage_name = 'infer'
-        strategy_path = self.grpo_config.save_strategy_dir
         ms.mint.distributed.barrier()
         if self.use_vllm == VllmMode.ORIGIN:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
@@ -388,11 +375,12 @@ class InferWorker(Worker):
                     f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
-    def offload(self, free_kv_cache=False):
-        """offload infer checkpoint"""
+    def offload(self):
+        """ offload stf infer """
         if not self.on_device:
             return
         logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
+        start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
             self.inference_engine.free_cache_engine()
@@ -400,23 +388,30 @@ class InferWorker(Worker):
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             if skip_kv_cache and "paged_attention_mgr" in param.name:
                 continue
+            # pylint: disable=W0212
             param._offload()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "offload stf infer")
         logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
         self.on_device = False
 
-    def load(self, init_kv_cache=False):
-        """ load infer checkpoint """
+    def load(self):
+        """ load stf infer """
         if self.on_device:
             return
         logger.info(f'before load stf infer {ms.hal.memory_stats()}')
+        start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
-            self.inference_engine.init_cache_engine()
+            self.inference_engine.free_cache_engine()
             skip_kv_cache = True
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             if skip_kv_cache and "paged_attention_mgr" in param.name:
                 continue
+            # pylint: disable=W0212
             param._load()
+        end_time = time.time()
+        print_perf_stat(start_time, end_time, "load stf infer")
         logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 

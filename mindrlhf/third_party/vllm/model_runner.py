@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # Adapted from https://github.com/vllm-project/vllm/blob/main/vllm/worker/model_runner.py
-
+"""Model runner"""
 import warnings
 from enum import IntEnum
 from typing import Dict, Optional, Union
@@ -39,16 +39,16 @@ logger = init_logger(__name__)
 
 
 class ModelRunner(ModelRunner):
-
+    """Model runner"""
     def __init__(
-        self,
-        vllm_config: VllmConfig,
-        kv_cache_dtype: Optional[str] = "auto",
-        is_driver_worker: bool = False,
-        return_hidden_states: bool = False,
-        input_registry: InputRegistry = INPUT_REGISTRY,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
-    ):
+            self,
+            vllm_config: VllmConfig,
+            kv_cache_dtype: Optional[str] = "auto",
+            is_driver_worker: bool = False,
+            return_hidden_states: bool = False,
+            input_registry: InputRegistry = INPUT_REGISTRY,
+            mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+        ):
         super().__init__(
             vllm_config,
             kv_cache_dtype,
@@ -64,8 +64,8 @@ class ModelRunner(ModelRunner):
             import mindspore as ms
             self.model = get_model(vllm_config=self.vllm_config)
             self.model.network.set_dynamic_inputs()
-            dynamic_hidden_status = ms.Tensor(shape=[None, None], dtype=self.model.mf_model_config.compute_dtype)
-            self.model.network.lm_head.set_inputs(dynamic_hidden_status)
+            dynamic_hidden_states = ms.Tensor(shape=[None, None], dtype=self.model.mf_model_config.compute_dtype)
+            self.model.network.lm_head.set_inputs(dynamic_hidden_states)
 
         self.model_memory_usage = m.consumed_memory
         logger.info("Loading model weights took %.4f GB",
