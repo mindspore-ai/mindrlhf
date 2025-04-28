@@ -26,6 +26,7 @@ export MS_ALLOC_CONF=enable_vmm:true
 export ASCEND_TOTAL_MEMORY_GB=64
 export vLLM_MODEL_MEMORY_USE_GB=50
 export ENABLE_LAZY_INLINE_NO_PIPELINE=1
+export MS_DEV_RUNTIME_CONF="multi_stream:true"
 #ray组网相关
 export GLOO_SOCKET_IFNAME=enp189s0f0
 export TP_SOCKET_IFNAME=enp189s0f0

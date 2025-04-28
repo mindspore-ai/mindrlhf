@@ -80,7 +80,7 @@ class RefWorker(Worker):
         self.all_reduce = ops.AllReduce(group=pipeline_group_name)
         ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
         self.ref_model_config = ref_model_config
-        self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
+        self.ref_ckpt_path = self.get_ref_ckpt_path
         ref_model_config.checkpoint_name_or_path = None
 
         self.ref_model = CausalLMHybrid(ref_model_config, grpo_config)
@@ -95,6 +95,10 @@ class RefWorker(Worker):
 
     def model(self):
         return self.ref_model
+
+    @property
+    def get_ref_ckpt_path(self):
+        return self.ref_model_config.checkpoint_name_or_path
 
     def get_ref_dp(self):
         return self.ref_dp

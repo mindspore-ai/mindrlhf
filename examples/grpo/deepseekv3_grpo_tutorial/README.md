@@ -157,6 +157,7 @@ export MS_ALLOC_CONF=enable_vmm:true
 export ASCEND_TOTAL_MEMORY_GB=64
 export vLLM_MODEL_MEMORY_USE_GB=50
 export ENABLE_LAZY_INLINE_NO_PIPELINE=1
+export MS_DEV_RUNTIME_CONF="multi_stream:true"
 #ray组网相关
 export GLOO_SOCKET_IFNAME=enp189s0f0
 export TP_SOCKET_IFNAME=enp189s0f0
@@ -171,6 +172,7 @@ MINDFORMERS_MODEL_CONFIG： 指定推理yaml，使用vllm时开启
 vLLM_MODEL_MEMORY_USE_GB：性能优化相关
 ASCEND_TOTAL_MEMORY_GB： 内存管理相关
 MS_DEV_RUNTIME_CONF：性能优化相关
+MS_DEV_RUNTIME_CONF="multi_stream:true"：在通信并发下有带宽抢占引发的性能劣化, 控制通信单流来规避该劣化
 MS_ALLOC_CONF：优化碎片内存
 GLOO_SOCKET_IFNAME：ray组网通信相关
 TP_SOCKET_IFNAME：rat组网通信相关
