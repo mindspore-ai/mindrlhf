@@ -14,6 +14,8 @@
 """ GRPO Trainer """
 
 # python
+import time
+import os
 from dataclasses import asdict
 import os
 import time
@@ -37,7 +39,9 @@ from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboa
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat, convert_index_json_total
+
+from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat,
+                            convert_index_json_total, save_prompt_completions_data, MetricData)
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 # mindrlhf
@@ -340,7 +344,7 @@ class GRPOTrainer:
 
         return advantages, mean_grouped_rewards
 
-    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
+    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16, step: int = 0):
         """ make experience """
         ep_begin_time = time.time()
         logger.info("Make experience begin at {} \n------------------------------- "
@@ -486,18 +490,26 @@ class GRPOTrainer:
 
         logger.info(f"prompts: \n {prompts}")
         logger.info(f"completions: \n {completions}")
-        all_elements_completion_len.extend([len(com) for com in completions])
-        mean_len = np.array([len(com) for com in completions]).mean()
+
+        all_elements_compeltion_len.extend([len(com) for com in completions])
+        completions_length = np.array([len(com) for com in completions])
+        mean_len = completions_length.mean()
         logger.info(f"mean completions.length: \n {mean_len}")
 
         rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.reward_funcs)),
                                     dtype=np.float32)
+        answer_parsed_lst = []
         for i, reward_func in enumerate(self.reward_funcs):
             # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-            output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+            if reward_func is accuracy_reward:
+                output_reward_func, answer_parsed_lst = reward_func(prompts=prompts, completions=completions,
+                                                                    **reward_kwargs)
+            else:
+                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
             rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
         rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
         logger.info(f"precision rewards are {rewards}")
+        logger.info(f"precision parse answer are {answer_parsed_lst}")
 
         end_time = time.time()
         print_perf_stat(start_time, end_time, "calculate reward")
@@ -519,6 +531,20 @@ class GRPOTrainer:
 
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
+
+        if (self.grpo_config.save_prompt_completions_data and
+                step % self.grpo_config.save_prompt_completions_interval == 0):
+            save_kwargs = {
+                MetricData.QUESTION.value: prompts,
+                MetricData.ANSWER.value: completions,
+                MetricData.PARSED_ANSWER.value: answer_parsed_lst,
+                MetricData.SOLUTION.value: solution,
+                MetricData.REWARD_PER_QUESTION.value: rewards,
+                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
+            }
+            save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
+                                          f'prompt_completions_step_{step}.json')
+            save_prompt_completions_data(save_file_path, **save_kwargs)
 
         for i in range(num_rollouts * n_questions * num_generations):
             pad_prompt_completion_ids = np.pad(all_prompt_completion_ids[i],
@@ -604,8 +630,10 @@ class GRPOTrainer:
                             .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
 
                 logger.info(f"epoch: {n}, step: {i}")
+                total_step = n * self.step_num + i
                 self._make_experience(num_rollouts=self.grpo_config.num_rollouts,
-                                      num_generations=self.grpo_config.num_generations)
+                                      num_generations=self.grpo_config.num_generations,
+                                      step=total_step)
                 self.train.load_optimizer()
                 self.train.load_model()
 

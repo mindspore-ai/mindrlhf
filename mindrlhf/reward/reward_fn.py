@@ -35,6 +35,7 @@ def accuracy_reward(completions, solution, **kwargs):
     verify = math_verify.verify
 
     rewards = []
+    answer_parsed_lst = []
     for content, sol in zip(completions, solution):
         gold_parsed = parse(
             sol,
@@ -65,13 +66,20 @@ def accuracy_reward(completions, solution, **kwargs):
             )
             # Reward 1 if the content is the same as the ground truth, 0 otherwise
             reward = float(verify(answer_parsed, gold_parsed))
+            if len(answer_parsed) == 0:
+                answer_parsed_lst.append('NO ANSWER')
+            elif len(answer_parsed) == 1:
+                answer_parsed_lst.append(answer_parsed[0])
+            else:
+                answer_parsed_lst.append(answer_parsed[1])
         else:
             # If the gold solution is not parseable, we reward 1 to skip this example
             reward = 0.0
             print("Failed to parse gold solution: ", sol)
+            answer_parsed_lst.append('solution parse failed')
         rewards.append(reward)
 
-    return rewards
+    return rewards, answer_parsed_lst
 
 # pylint: disable=W0613
 def format_reward(completions, **kwargs):

@@ -55,6 +55,9 @@ mind_dataset_dir: "/path/train.mindrecord"
 inference_micro_size: 1
 save_ckpt_dir: "./"
 save_data_file: ""
+save_prompt_completions_data: False
+save_prompt_completions_interval: 10
+save_prompt_completions_dir: "./"
 save_strategy_dir: "../../strategy/"
 sft_model_path: "/path/model.yaml"
 critic_model_path: "/path/model.yaml"
