@@ -137,8 +137,6 @@ class Worker(Worker):
             # the synchronization point. This causes the memory usage to grow
             # as the number of all_reduce calls increases. This env var disables
             # this behavior.
-            # Related issue:
-            # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
             os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
             # NOTE(sgm): Modify for verl, Env vars will be set by TORCHRUN.
