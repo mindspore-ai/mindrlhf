@@ -359,11 +359,14 @@ class GRPOTrainer:
         all_elements_completion_len = []
 
         batch = self._get_batch(num_rollouts)
-        prompts_data = batch[0].to(mstype.int32).asnumpy()
-        solution_ids = batch[1].to(mstype.int32).asnumpy()
-        repeat_prompts_data = np.repeat(prompts_data, num_generations, axis=0)
-        repeat_solution_ids = np.repeat(solution_ids, num_generations, axis=0)
-        input_ids_numpy = self._split_for_data_parallel(repeat_prompts_data, self.infer_dp)
+        prompt_tensors = Tensor(batch[0], mstype.int32).asnumpy()
+        solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
+        prompt_tensors_full = prompt_tensors
+        repeat_solution_ids = solution_ids
+        for i in range(num_generations - 1):
+            prompt_tensors_full = np.concatenate((prompt_tensors_full, prompt_tensors))
+            repeat_solution_ids = np.concatenate((repeat_solution_ids, solution_ids))
+        input_ids_numpy = self._split_for_data_parallel(prompt_tensors_full, self.infer_dp)
         solution_ids = self._remove_right_padding(repeat_solution_ids, padding_token=self.grpo_config.pad_token_id)
         solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
         for i in range(len(solution)):
@@ -522,10 +525,26 @@ class GRPOTrainer:
         tmp_all_rewards = all_rewards.copy()
         samples_per_step = total_size // num_generations
         for i in range(samples_per_step):
-            temp_rewards = tmp_all_rewards[i * num_generations : (i + 1) * num_generations]
+            listnum = list(range(i, total_size, samples_per_step))
+            temp_rewards = tmp_all_rewards[listnum]
             adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
             all_mean_grouped_rewards.append(mean_grouped_rewards)
-            advantages[i * num_generations : (i + 1) * num_generations] = adv_tem.reshape((-1,))
+            advantages[i::samples_per_step] = adv_tem.reshape((-1,))
+
+        # regroup the index of all data
+        # assume the input shape is [num_generations*num_rollout*num_questions, -1]
+        # [1,2,3,4,1,2,3,4]--->[1,1,2,2,3,3,4,4]
+        def reconstruct_index(x, num_generations):
+            if len(x.shape) == 1:
+                x = np.expand_dims(x, axis=1)
+            seq = x.shape[-1]
+            x = x.reshape((num_generations, -1, seq)).transpose((1, 0, 2))
+            return x.reshape((-1, seq))
+        all_prompt_completion_ids = reconstruct_index(all_prompt_completion_ids, num_generations)
+        all_prompts_mask = reconstruct_index(all_prompts_mask, num_generations)
+        all_responses_mask = reconstruct_index(all_responses_mask, num_generations)
+        all_ref_per_token_logps = reconstruct_index(all_ref_per_token_logps, num_generations)
+        advantages = reconstruct_index(advantages, num_generations)
 
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
