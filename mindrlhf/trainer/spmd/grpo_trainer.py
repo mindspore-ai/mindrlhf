@@ -14,8 +14,6 @@
 """ GRPO Trainer """
 
 # python
-import time
-import os
 from dataclasses import asdict
 import os
 import time
@@ -491,7 +489,7 @@ class GRPOTrainer:
         logger.info(f"prompts: \n {prompts}")
         logger.info(f"completions: \n {completions}")
 
-        all_elements_compeltion_len.extend([len(com) for com in completions])
+        all_elements_completion_len.extend([len(com) for com in completions])
         completions_length = np.array([len(com) for com in completions])
         mean_len = completions_length.mean()
         logger.info(f"mean completions.length: \n {mean_len}")
