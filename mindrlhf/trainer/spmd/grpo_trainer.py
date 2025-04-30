@@ -353,7 +353,6 @@ class GRPOTrainer:
         attention_mask = prompts_mask + responses_mask
 
         # Generate outputs.
-        # prompt_completion_ids_tensor = Tensor(prompt_completion_ids, dtype=mindspore.int32)
         attention_mask_tensor = Tensor(attention_mask, dtype=ms.int32)
         return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
 
@@ -653,7 +652,7 @@ class GRPOTrainer:
             adv_tem, mean_grouped_rewards = self.compute_advantages(temp_rewards)
             all_mean_grouped_rewards.append(mean_grouped_rewards)
             advantages[i::samples_per_step] = adv_tem.reshape((-1,))
-      
+
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
 
@@ -835,7 +834,6 @@ class GRPOTrainer:
                 # load for reshard
                 self.infer.load()
 
-                # 权重倒换优化
                 if self.transform.sync_ref_model and \
                         ((i + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect

@@ -96,7 +96,6 @@ class InferWorker(Worker):
                 f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
         sft_model_config_infer.checkpoint_name_or_path = args.load_sft_checkpoint_infer
-        sft_model_config_infer.model_name = args.custom_model_name
 
         self.grpo_config = combine_grpo_config(grpo_config, sft_model_config_infer)
         self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path

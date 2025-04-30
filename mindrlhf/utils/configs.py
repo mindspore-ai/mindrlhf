@@ -255,7 +255,6 @@ def init_grpo_dataset(trainer):
     type_cast_op_int32 = TypeCast(mindspore.int32)
     type_cast_op_fp16 = TypeCast(mindspore.float16)
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompt_completion_ids")
-    # dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompts_mask")
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="responses_mask")
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="ref_per_token_logps")
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="advantages")

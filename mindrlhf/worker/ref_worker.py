@@ -66,9 +66,6 @@ class RefWorker(Worker):
                 f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}"
             )
 
-        ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
-        ref_model_config.model_name = "llama"
-
         # set pipeline stage
         context.set_auto_parallel_context(
             parallel_mode="semi_auto_parallel", full_batch=True
@@ -84,7 +81,7 @@ class RefWorker(Worker):
         create_group(pipeline_group_name, rank_list)
         logger.info(f"end create pipeline {pipeline_group_name}")
         self.all_reduce = ops.AllReduce(group=pipeline_group_name)
-
+        ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
         self.ref_model_config = ref_model_config
         self.ref_ckpt_path = ref_model_config.checkpoint_name_or_path
         ref_model_config.checkpoint_name_or_path = None
@@ -163,17 +160,14 @@ class RefWorker(Worker):
         context.set_auto_parallel_context(
             parallel_mode="semi_auto_parallel", full_batch=True
         )
-        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage)
         ref_per_token_logps = self.ref_model(
             prompt_completion_ids_tensor,
             attention_mask_tensor,
             samples=samples,
             actual_seq_length=actual_sequence_length,
         )
-        logger.info(f"ref_logprobs precision before allreduce is {ref_per_token_logps}")
         if self.ref_pp_stage > 1:
             ref_per_token_logps = self.all_reduce(ref_per_token_logps)
-        logger.info(f"ref_logprobs precision after allreduce is {ref_per_token_logps}")
         return ref_per_token_logps
 
     def offload(self):

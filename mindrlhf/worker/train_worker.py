@@ -93,7 +93,7 @@ class TrainWorker(Worker):
             )
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {model_name}"
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}"
             )
         sft_model_config_train.checkpoint_name_or_path = args.load_sft_checkpoint_train
         self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path

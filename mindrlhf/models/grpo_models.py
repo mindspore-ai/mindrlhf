@@ -61,7 +61,7 @@ class CausalLMHybrid(BaseModel):
         self.gatherd = P.GatherD().shard(((dp*mp*cp, 1), (dp*mp*cp, 1)))
         self.gatherd_2 = P.GatherD().shard(((dp, 1, 1), (dp, 1, 1)))
         self.logsoftmax = P.LogSoftmax().shard(((dp*mp*cp, 1),))
-        self.logsoftmax_1 = P.LogSoftmax().shard(((dp*mp*cp, 1),))   #(((dp, 1, 1),))
+        self.logsoftmax_1 = P.LogSoftmax().shard(((dp*mp*cp, 1),))
         self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1, 1),))
         self.expaned = P.ExpandDims().shard(((dp, mp),))
 
@@ -233,7 +233,6 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         return output
 
     # pylint: disable=W0613
-
     def offset_actual_seq_length(self, data, offset):
         bs = data.shape[0] // self.dp
         n = data.shape[1]
@@ -258,9 +257,6 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         # bs, seq_len = prompt_completion_ids.shape
         pack_sample_num = sample_valid_len.shape[1]
         real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
-        # responses_mask = self.slice(responses_mask, (0, 1), (bs, seq_len), (1, 1))
-        # ref_per_token_logps = self.slice(ref_per_token_logps, (0, 1), (bs, seq_len), (1, 1))
-        # advantages = self.slice(advantages, (0, 1), (bs, seq_len), (1, 1))
 
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
         samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
