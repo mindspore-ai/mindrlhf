@@ -313,6 +313,9 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
         per_token_logps = self.policy_model(input_ids, None, None, None, False, False,
                                             samples, actual_seq_length, False, False) # [bs, seq_len]
+
+        per_token_logps = self.cast(per_token_logps, mstype.float32)
+        ref_per_token_logps = self.cast(ref_per_token_logps, mstype.float32)
         per_token_logps = per_token_logps * responses_mask
         per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len]
         per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len]

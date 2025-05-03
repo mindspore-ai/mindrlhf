@@ -18,10 +18,10 @@ MindRLHF utils
 import os
 import time
 import hashlib
-import numpy as np
-import yaml
 import json
 import copy
+import yaml
+import numpy as np
 
 import mindspore.nn as nn
 from mindspore.ops import operations as P
@@ -48,7 +48,11 @@ from mindformers import logger
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
-           "ckpt_transfer_for_generate", "yaml_to_dataclass", "convert_index_json_total"]
+           "ckpt_transfer_for_generate", "yaml_to_dataclass",
+           "_get_pipeline_group", "convert_index_json_total", "save_prompt_completions_data"]
+
+
+PERF_STATS = False
 
 def yaml_to_dataclass(file_path, dataclass_type):
     """
@@ -486,3 +490,30 @@ def convert_index_json_total(load_checkpoint, converted_dir, convert_map_dict_ls
     with os.fdopen(os.open(os.path.join(converted_dir, 'param_name_map.json'), flags_, 0o750), 'w') as f:
         json.dump(total_weight_map, f, indent=2)
         logger.info(f"Converted file param_name_map.json")
+
+
+def save_prompt_completions_data(save_file_path, **kwargs):
+    """Save prompt completions data."""
+    data_dict = []
+    first_key = next(iter(kwargs))
+    data_length = len(kwargs[first_key])
+
+    for i in range(data_length):
+        new_row = {}
+        for key, values in kwargs.items():
+            value = values[i]
+            if value is None:
+                new_row[key] = None
+            elif hasattr(value, 'item') and callable(getattr(value, 'item', None)):
+                new_row[key] = value.item()
+            else:
+                new_row[key] = value
+        data_dict.append(new_row)
+    if D.get_rank() == 0:
+        dir_path = os.path.dirname(save_file_path)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+            logger.info(f"save_file_path {save_file_path} does not exists, has created")
+        with open(save_file_path, 'w', encoding='utf-8') as f:
+            json.dump(data_dict, f, ensure_ascii=False, indent=4)
+        logger.info(f"Saved data to {save_file_path}")

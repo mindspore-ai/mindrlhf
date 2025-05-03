@@ -87,11 +87,18 @@ class TransformWorker(Worker):
             sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
         ms.communication.comm_func.barrier()
 
-    def reshard_params(self, updata_ref=False):
+    def reshard_params(self, step_num,
+                       input_on_device_flag_dict=None):
+        """ reshard_params """
+        if input_on_device_flag_dict is None:
+            input_on_device_flag_dict = {"policy2infer": (True, True), "policy2ref": (True, True)}
+        policy2infer_flag = input_on_device_flag_dict.get("policy2infer")
+        policy2ref_flag = input_on_device_flag_dict.get("policy2ref")
+        if policy2infer_flag is None or policy2ref_flag is None:
+            raise ValueError("Key in input_on_device_flag_dict must be policy2infer or policy2ref")
         start_time = time.time()
-        self.reshard_param_policy2infer.transform()
-        logger.info(f"Total time for transferring policy to infer：{format_time_delta(time.time() - start_time)}")
-        if updata_ref:
-            start_time = time.time()
-            self.reshard_param_policy2ref.transform()
-            logger.info(f"Total time for transferring policy to ref{format_time_delta(time.time() - start_time)}")
+        self.reshard_param_policy2infer.transform(policy2infer_flag)
+        if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
+            self.reshard_param_policy2ref.transform(policy2ref_flag)
+        end_time = time.time()
+        logger.info(f"Total time for transferring policy to ref{format_time_delta(end_time - start_time)}")

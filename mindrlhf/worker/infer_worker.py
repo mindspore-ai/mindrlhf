@@ -25,6 +25,7 @@ from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
 from mindspore import context
 from mindspore import communication as D
+from mindspore.common.api import _pynative_executor
 
 # mindformers
 from mindformers import MindFormerConfig
@@ -89,6 +90,8 @@ class InferWorker(Worker):
 
         if args.custom_model_name == "llama":
             sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
+            # bugfix to mindformers: cbee69bf
+            sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
             self.tokenizer = Qwen2Tokenizer(
@@ -101,8 +104,9 @@ class InferWorker(Worker):
             # vllm
             # pylint: disable=W0611
             import vllm_mindspore
-            # _pynative_executor.set_async_for_graph(False)
-            # import mindrlhf.third_party.vllm.ascend
+            _pynative_executor.set_async_for_graph(False)
+            import mindrlhf.third_party.vllm.qwen2
+            import mindrlhf.third_party.vllm.ascend
             from mindrlhf.third_party.vllm.llm import LLM
             from vllm import SamplingParams
             hf_config = self.build_qwen_hf_config()
@@ -334,7 +338,7 @@ class InferWorker(Worker):
         """offload infer checkpoint"""
         if self.on_device is False:
             return
-        logger.info(f'before offload stf infer')
+        logger.info(f'before offload infer {ms.hal.memory_stats()}')
         if self.use_vllm == VllmMode.ORIGIN:
             for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
                 # pylint: disable=W0212
@@ -347,7 +351,7 @@ class InferWorker(Worker):
                 if free_kv_cache and "paged_attention_mgr" in param.name:
                     continue
                 param._offload()
-        logger.info(f'after offload stf infer')
+        logger.info(f'after offload infer {ms.hal.memory_stats()}')
         self.on_device = False
 
     def load(self, init_kv_cache=False):
@@ -370,13 +374,19 @@ class InferWorker(Worker):
             logger.info(f'after load stf infer {ms.hal.memory_stats()}')
         self.on_device = True
 
-    # pylint: disable=E0402
-    # pylint: disable=R1710
+    def load_kvcache(self, init_kv_cache=False):
+        logger.info(f'before load kvcache infer {ms.hal.memory_stats()}')
+        if self.use_vllm == VllmMode.VLLM:
+            if init_kv_cache:
+                self.inference_engine.init_cache_engine()
+        logger.info(f'after load kvcache infer {ms.hal.memory_stats()}')
+
     def load_checkpoint(self):
         """ load infer checkpoint """
         if self.args.load_ckpt_format == "safetensors":
             self.on_device = True
-            return self._load_checkpoint_safetensors()
+            self._load_checkpoint_safetensors()
+            return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.use_parallel else ms.load_checkpoint
         logger.info(f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel} {load_ckpt_func}")
         if self.sft_ckpt_path_infer:

@@ -32,17 +32,17 @@ from mindspore.communication import get_rank
 from mindspore.dataset import MindDataset
 from mindspore.mindrecord import FileWriter
 
-from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 # mindrlhf
+from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
+from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass,
+                            convert_index_json_total, save_prompt_completions_data, MetricData)
+from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.reward.kk_reward_fn import kk_reward
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, convert_index_json_total
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
 from mindrlhf.worker.transform_worker import TransformWorker
-# mindrlhf
 from mindrlhf.worker.worker import GRPOData
 
 
@@ -82,6 +82,10 @@ class GRPOTrainer:
                                  args=self.args)
         # grpo_config infer 和 train 共用
         self.grpo_config = self.infer.get_updated_grpo_config()
+        self.reshard_mem_opt_level = self.grpo_config.reshard_mem_opt_level
+        if self.reshard_mem_opt_level not in [0, 2]:
+            raise ValueError(f"reshard_mem_opt_level can only be 0 or 2, but got {self.reshard_mem_opt_level}")
+
         self.infer_dp = self.infer.get_infer_dp()
         self._init_grpo_infer_dataset()
 
@@ -137,6 +141,8 @@ class GRPOTrainer:
         if args.custom_model_name == "llama":
             sft_config_infer = MindFormerConfig(args.sft_path_infer)
             sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
+            # bugfix to mindformers: cbee69bf
+            sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
             self.tokenizer = Qwen2Tokenizer(
@@ -468,7 +474,7 @@ class GRPOTrainer:
 
         return advantages, mean_grouped_rewards
 
-    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
+    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16, step: int = 0):
         """ _make_experience """
         ep_begin_time = time.time()
         logger.info("Make experience begin at {} \n------------------------------- "
@@ -579,16 +585,25 @@ class GRPOTrainer:
         logger.info(f"prompts: \n {prompts}")
         logger.info(f"completions: \n {completions}")
         all_elements_compeltion_len.extend([len(com) for com in completions])
-        mean_len = np.array([len(com) for com in completions]).mean()
+        completions_length = np.array([len(com) for com in completions])
+        mean_len = completions_length.mean()
         logger.info(f"mean completions.length: \n {mean_len}")
 
-        rewards_per_func = np.zeros((total_size, len(self.reward_funcs)), dtype=np.float32)
+        rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.reward_funcs)),
+                                    dtype=np.float32)
+        answer_parsed_lst = []
+
         for i, reward_func in enumerate(self.reward_funcs):
             # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-            output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+            if reward_func is accuracy_reward:
+                output_reward_func, answer_parsed_lst = reward_func(prompts=prompts, completions=completions,
+                                                                    **reward_kwargs)
+            else:
+                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
             rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
         rewards = (rewards_per_func * self.reward_weights[np.newaxis, :]).sum(axis=1)
         logger.info(f"precision rewards are {rewards}")
+        logger.info(f"precision parse answer are {answer_parsed_lst}")
 
         end_time = time.time()
         logger.info("calculate reward end at {}, elapsed time {}-------------------------------".format(
@@ -671,6 +686,19 @@ class GRPOTrainer:
 
             self.ref.offload()
             logger.info("ref_model offload")
+            if self.grpo_config.save_prompt_completions_data and \
+                (step % self.grpo_config.save_prompt_completions_interval == 0):
+                save_kwargs = {
+                    MetricData.QUESTION.value: prompts,
+                    MetricData.ANSWER.value: completions,
+                    MetricData.PARSED_ANSWER.value: answer_parsed_lst,
+                    MetricData.SOLUTION.value: solution,
+                    MetricData.REWARD_PER_QUESTION.value: rewards,
+                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
+                }
+                save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
+                                              f'prompt_completions_step_{step}.json')
+                save_prompt_completions_data(save_file_path, **save_kwargs)
 
             for i in range(len(all_packed)):
                 prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0, 1),), 'constant',
@@ -712,7 +740,7 @@ class GRPOTrainer:
         logger.info("Make experience, end at {}, elapsed time {} ------------------------------- ".format(
             time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
         if self.grpo_config.save_data_file:
-            if get_rank() == 0:
+            if get_rank() % 8 == 0:
                 self._save_grpoelement(self.grpo_config.save_data_file)
         self.make_exp_step += 1
         logger.info('generate over')
@@ -763,8 +791,10 @@ class GRPOTrainer:
                             .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
 
                 logger.info(f"epoch: {n}, step: {i}")
+                total_step = n * self.step_num + i
                 self._make_experience(num_rollouts=self.grpo_config.num_rollouts,
-                                      num_generations=self.grpo_config.num_generations)
+                                      num_generations=self.grpo_config.num_generations,
+                                      step=total_step)
                 self.train.load_optimizer()
                 self.train.load_model()
 
@@ -772,18 +802,29 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load(init_kv_cache=True)
+                self.infer.load_kvcache(init_kv_cache=True)
+                if self.reshard_mem_opt_level == 2:
+                    self.train.offload_model()
+                else:
+                    self.infer.load(init_kv_cache=True)
 
                 if self.transform.sync_ref_model and \
                     ((i + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
                     logger.info(f"update ref model in epoch: {n}, step: {i}")
-                    self.ref.load()
-                    self.transform.reshard_params(updata_ref=True)
-                    self.ref.offload()
+                    if self.reshard_mem_opt_level == 0:
+                        self.ref.load()
+                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                    if self.reshard_mem_opt_level == 0:
+                        self.ref.offload()
                 else:
-                    self.transform.reshard_params()
-                self.train.offload_model()
+                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                if self.reshard_mem_opt_level == 0:
+                    self.train.offload_model()
 
                 step_end_time = time.time()
                 step_time = step_end_time - step_begin_time
