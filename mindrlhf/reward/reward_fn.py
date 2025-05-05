@@ -26,7 +26,8 @@ def reward_func_from_jiaoda(completions, solution, **kwargs):
 def accuracy_reward(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
     rewards = []
-    answers = []
+    answer_parsed_lst = []
+
     for content, sol in zip(completions, solution):
         response = re.sub(r"(\d),(\d)", r"\1\2", content)
         numbers = re.findall(r"[-+]?\d*\.\d+|\d+", response)
@@ -39,8 +40,13 @@ def accuracy_reward(completions, solution, **kwargs):
         reward = str(predictions).lower() == str(ground_truth_answer).lower()
         reward = 1.0 if reward else 0.0
         rewards.append(reward)
-        answers.append(ground_truth_answer)
-    return rewards, answers
+        predictions_len = len(str(predictions).lower())
+        if predictions_len == 0:
+            answer_parsed_lst.append('NO ANSWER')
+        else:
+            answer_parsed_lst.append(str(predictions).lower())
+
+    return rewards, answer_parsed_lst
 
 
 # pylint: disable=W0613
@@ -102,7 +108,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
 
     return rewards, answer_parsed_lst
 
-
+# pylint: disable=W0613
 def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
     pattern = r"^<think>.*?</think>\s*<answer>.*?</answer>$"

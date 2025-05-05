@@ -84,7 +84,7 @@ class GRPOTrainer:
         self.infer = InferWorker(grpo_config=self.grpo_config,
                                  sft_path_infer=self.sft_path_infer,
                                  args=self.args)
-        # grpo_config infer 和 train 共用
+        # grpo_config infer and train share
         self.grpo_config = self.infer.get_updated_grpo_config()
         self.infer_dp = self.infer.get_infer_dp()
         self._init_grpo_infer_dataset()
@@ -746,7 +746,7 @@ class GRPOTrainer:
                 grpodata = GRPOData(
                     prompt_completion_ids=prompt_completion_ids_temp.astype(np.int32),
                     responses_mask=responses_mask_temp.astype(np.int32),
-                    ref_per_token_logps=ref_per_token_logps,
+                    ref_per_token_logps=ref_per_token_logps.astype(np.float32),
                     advantages=all_packed[i]["advantages"].astype(np.float32),
                     actual_sequence_length=all_packed[i]["actual_sequence_length"].astype(np.int32),
                     sample_index=all_packed[i]["sample_index"].astype(np.int32),

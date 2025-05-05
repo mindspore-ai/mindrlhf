@@ -293,6 +293,8 @@ class InferWorker(Worker):
         if max_decode_length == 0:
             max_decode_length = self.grpo_config.max_decode_length
         min_decode_length = 4
+        logger.info(f"max_decode_length {max_decode_length}")
+        logger.info(f"min_decode_length {min_decode_length}")
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")

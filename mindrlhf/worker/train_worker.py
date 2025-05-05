@@ -29,7 +29,8 @@ from mindspore.communication import get_rank
 from mindspore import context
 from mindspore.nn.wrap.cell_wrapper import (
     PipelineCell,
-    _VirtualDatasetCell
+    _VirtualDatasetCell,
+    MicroBatchInterleaved
 )
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 
@@ -254,9 +255,9 @@ class TrainWorker(Worker):
         grpo_config = self.grpo_config
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
-            grpo_with_loss_net = PipelineCell(
-                grpo_model_train, sft_model_config.parallel_config.micro_batch_num
-            )
+            grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(grpo_model_train,
+                                                                    grpo_config.micro_batch_interleaved),
+                                              sft_model_config.parallel_config.micro_batch_num)
         else:
             logger.info("non-pipeline cell")
             grpo_with_loss_net = grpo_model_train
@@ -387,7 +388,7 @@ class TrainWorker(Worker):
             return out.asnumpy() if isinstance(out, Tensor) else out
 
         iterator = dataset.create_dict_iterator()
-        logger.info(f"dataset size is {dataset.dataset_size}")
+        logger.info(f"dataset size is {len(dataset)}")
         train_start_time = time.time()
         for step, databatch in enumerate(iterator):
 
