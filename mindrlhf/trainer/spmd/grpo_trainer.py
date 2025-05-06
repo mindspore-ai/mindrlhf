@@ -80,7 +80,7 @@ class GRPOTrainer:
         self.infer = InferWorker(grpo_config=self.grpo_config,
                                  sft_path_infer=self.sft_path_infer,
                                  args=self.args)
-        # grpo_config infer 和 train 共用
+        # grpo_config, infer and train share
         self.grpo_config = self.infer.get_updated_grpo_config()
         self.reshard_mem_opt_level = self.grpo_config.reshard_mem_opt_level
         if self.reshard_mem_opt_level not in [0, 2]:

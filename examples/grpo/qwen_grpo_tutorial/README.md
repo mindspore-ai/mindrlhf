@@ -19,7 +19,7 @@ cd /{path}/mindformers/research/qwen2_5
 并执行以下脚本：
 
 ```shell
-python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml 
+python convert_weight.py --model qwen2_5 --input_path TORCH_CKPT_DIR --output_path {path}/MS_CKPT_NAME.ckpt --dtype bf16 --config_path {path}/desired_model_config.yaml
 
 # 参数说明
 model:       模型名称
@@ -147,6 +147,7 @@ chunk_size: int = 2
 batch_size: int = 2
 sync_ref_model: bool = True
 ref_model_sync_steps: int = 50
+reshard_mem_opt_level: int = 2
 
 # 参数说明
 grpo_epochs:            在数据集上总共训练的epochs轮数
@@ -159,6 +160,7 @@ end_lr:                 结束时反向训练的learning rate步长, 必须大�
 batch_size:             反向训练的batch size
 sync_ref_model:         是否每隔若干步将ref model的权重更新为最新的训练模型权重
 ref_model_sync_steps:   若sync_ref_model=True, ref model权重更新的间隔步数
+reshard_mem_opt_level:  权重倒换内存优化等级, 0不进行内存优化, 2在倒换时卸载全部dst,src参数
 ```
 
 ## 三、启动GRPO训练脚本
@@ -180,6 +182,7 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 ```
 
 ### 单机8卡拉起Qwen2.5-7b
+
 随后使用以下命令拉起单机8卡GRPO训练任务，可以参考run_grpo.sh
 
 ```shell
@@ -225,7 +228,9 @@ enable_compile_cache:         是否使用编译缓存
 ```
 
 ### 4机32卡拉起Qwen2.5-32B
+
 Qwen2.5-32B需要4个8卡节点拉起，需要在4个节点上同时执行拉起脚本；脚本参数与7b模型的8卡相比，需要额外配置2个参数
+
 ```shell
 bash run_grpo_32p.sh $node_rank $master_ip
 # 参数说明
@@ -234,6 +239,7 @@ master_ip                     主机IP，一般以序列号为0的节点的IP作
 ```
 
 ### 任务查看
+
 拉起任务后，通过以下命令查看运行日志
 
 ```shell

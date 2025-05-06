@@ -74,3 +74,7 @@ max_num_batched_tokens: 25536
 max_num_seqs: 1024
 num_scheduler_steps: 32
 gpu_memory_utilization: 0.8
+
+# 0: do not optimize mem during resharding
+# 2: offload all src and dst param during resharding
+reshard_mem_opt_level: int = 2

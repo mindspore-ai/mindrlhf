@@ -116,5 +116,5 @@ class GRPOConfig:
     tensorboard_dir: str = ""
     tensorboard_queue_size: int = 10
     # 0: do not optimize mem during resharding
-    #  # 2: offload all src and dst param during resharding
-    reshard_mem_opt_level: int = 0
+    # 2: offload all src and dst param during resharding
+    reshard_mem_opt_level: int = 2
