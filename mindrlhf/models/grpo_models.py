@@ -52,20 +52,39 @@ class CausalLMHybrid(BaseModel):
         )
 
         self.squeeze = P.Squeeze(axis=-1).shard(((dp, 1, 1),))
-        self.squeeze_no_shard = P.Squeeze(axis=-1).shard(((1, 1),))
-        self.unsqueeze = P.ExpandDims().shard(((dp, 1),))
+        self.squeeze_no_shard_1 = P.Squeeze(axis=-1).shard(((1, 1),))
+        self.squeeze_no_shard_2 = P.Squeeze(axis=-1).shard(((1, 1, 1),))
+        self.unsqueeze = P.ExpandDims().shard(((dp*mp*cp,),))
+        self.unsqueeze_2 = P.ExpandDims().shard(((dp, 1),))
         self.reshape = P.Reshape()
         self.gather = P.Gather().shard(((dp, mp), (1,),))
         self.gatherd = P.GatherD().shard(((dp*mp*cp, 1), (dp*mp*cp, 1)))
-        self.expaned = P.ExpandDims().shard(((dp, mp),))
+        self.gatherd_2 = P.GatherD().shard(((dp, 1, 1), (dp, 1, 1)))
         self.logsoftmax = P.LogSoftmax().shard(((dp*mp*cp, 1),))
-        self.logsoftmax_1 = P.LogSoftmax().shard(((dp, 1, 1),))
-        self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1),))
+        self.logsoftmax_1 = P.LogSoftmax().shard(((dp*mp*cp, 1),))
+        self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1, 1),))
+        self.expaned = P.ExpandDims().shard(((dp, mp),))
 
         self.pow = P.Pow().shard(((dp, 1), ()))
         self.argmax_no_shard = P.Argmax(-1).shard(((1, 1),))
         self.argmax = P.Argmax(-1).shard(((dp, mp),))
         self.add_shard = P.Add().shard(((1, 1, 1), ()))
+
+        self.pad_logits = ops.Pad(((0, 0), (1, 0), (0, 0))).shard(((dp*mp, 1, 1),))
+        self.pad_samples = ops.Pad(((0, 0), (1, 0))).shard(((dp*mp, 1),))
+
+        self.expaned = P.ExpandDims().shard(((dp, mp),))
+        self.dp = dp
+
+    def offset_actual_seq_length(self, data, offset):
+        bs = data.shape[0] // self.dp
+        n = data.shape[1]
+        data_type = data.dtype
+        data = data.reshape((self.dp, bs, n))
+        offsets = self.cast(ops.range(0, bs * offset, offset).reshape((1, bs, 1)), data_type)
+        data = data + offsets
+        actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
+        return actual_seq_lenth
 
     def process_logits2(
             self, logits, current_index=None, is_first_iteration=False, use_past=False
@@ -93,11 +112,10 @@ class CausalLMHybrid(BaseModel):
         logprobs = self.logsoftmax(logits)  # [bs*seq_len, vocab_size]
         samples = self.expaned(samples, -1)
         samples = self.reshape(samples, (bs*seq_len, -1))
-        logprobs = self.squeeze_no_shard(
+        logprobs = self.squeeze_no_shard_1(
             self.gatherd(logprobs, -1, samples)
         )  # [bs, seq_len]
         logprobs = self.reshape(logprobs, (bs, seq_len))
-
         return logprobs  # [bs, seq_len-1]
 
     def construct(
@@ -112,6 +130,7 @@ class CausalLMHybrid(BaseModel):
             use_past=False,
             # inputs for choosing the output branch
             samples=None,
+            actual_seq_length=None,
             return_full_logit=False,
             is_ref=False
     ):
@@ -120,6 +139,11 @@ class CausalLMHybrid(BaseModel):
         """
         batch_size, seq_length = input_ids.shape
 
+        if actual_seq_length is not None:
+            if len(actual_seq_length.shape) > 1:
+                bsz, _ = actual_seq_length.shape
+                if bsz > 1:
+                    actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
         if self.model_type == "llama":
             if self.model.phase == "train":
                 tokens = input_ids
@@ -129,8 +153,8 @@ class CausalLMHybrid(BaseModel):
                     bsz, seqlen = tokens.shape
                     batch_valid_length = ops.ones((bsz,), mstype.int32).reshape(-1)
                     slot_mapping = Tensor(np.ones(shape=tuple([bsz * seqlen])), mstype.int32)
-            output_states = self.backbone(tokens, batch_valid_length=batch_valid_length,
-                                          slot_mapping=slot_mapping)
+            output_states = self.backbone(tokens, None, batch_valid_length, None, None, None, slot_mapping,
+                                          None, None, None, None, None, actual_seq_length)
             logits_2d = self.lm_head(output_states)
         elif self.model_type == "deepseek_infer":
             tokens = input_ids
@@ -169,7 +193,6 @@ class CausalLMHybrid(BaseModel):
 
 class GRPOModel(nn.Cell, GeneratorMixin):
     """ GRPOModel """
-
     @lazy_inline
     def __init__(self, grpo_config, policy_model):
         super(GRPOModel, self).__init__()
@@ -183,27 +206,71 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.gamma = 1
         self.lam = 0.95
         self.depend = P.Depend()
-    # pylint: disable=W0613
-    def construct(self,
-                  prompt_completion_ids,
-                  prompts_mask,
-                  responses_mask,
-                  ref_per_token_logps,
-                  advantages):
+        self.slice = P.StridedSlice()
+        self.dp = self.policy_model.dp
+        self.cast = P.Cast()
+        self.dump = P.TensorDump()
+
+    def batch_unsorted_segment_sum(self, input_ids, segments_ids, num_segments):
         """
         GRPOModel
+        batch unsorted_segment_sum
+
+        Args:
+            input_ids: shape (batch_size, seq_len)
+            segment_ids: shape (batch_size, seq_len)
+            num_segments: int
+        Returns:
+            shape (batch_size, num_segments)
         """
+        bs, seq_len = input_ids.shape
+        output = ops.zeros((bs, num_segments), input_ids.dtype)
+        for b in range(bs):
+            current_input = self.slice(input_ids, (b, 0), (b + 1, seq_len), (1, 1))
+            current_segment = self.slice(segments_ids, (b, 0), (b + 1, seq_len), (1, 1))
+            seg_sum = ops.unsorted_segment_sum(current_input, current_segment, num_segments)
+            output[b] = seg_sum
+        return output
+
+    # pylint: disable=W0613
+    def offset_actual_seq_length(self, data, offset):
+        bs = data.shape[0] // self.dp
+        n = data.shape[1]
+        data_type = data.dtype
+        data = data.reshape((self.dp, bs, n))
+        offsets = self.cast(ops.range(0, bs * offset, offset).reshape((1, bs, 1)), data_type)
+        data = data + offsets
+        actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
+        return actual_seq_lenth
+
+    def construct(
+            self,
+            prompt_completion_ids, # [bs, seq_len]
+            responses_mask,  # [bs, seq_len]
+            ref_per_token_logps, # [bs, seq_len]
+            advantages,  # [bs, seq_len]
+            actual_seq_length,  # [bs, packed_sample_num]
+            sample_index, #[bs, seq_len]
+            sample_valid_len,  #[bs, packed_sample_num]
+        ):
+        """ construct function for GRPOModel """
+        # bs, seq_len = prompt_completion_ids.shape
+        pack_sample_num = sample_valid_len.shape[1]
+        real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
+
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
         samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
-        per_token_logps = self.policy_model(input_ids, samples=samples)  # [bs, seq_len]
+        actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
+        per_token_logps = self.policy_model(input_ids, None, None, None, False, False,
+                                            samples, actual_seq_length, False, False) # [bs, seq_len]
+        per_token_logps = per_token_logps * responses_mask
         per_token_kl = self.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1  # [bs, seq_len]
-        per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages.unsqueeze(dim=1)  # [bs, seq_len]
-        per_token_loss = -(per_token_loss - self.beta * per_token_kl)  # [bs, seq_len]
-        responses_mask = responses_mask[:, 1:]
-        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len]
-        deno = masked_per_token_loss.sum(axis=-1)  # [bs]
-        nume = responses_mask.sum(axis=-1)  # [bs]
-        loss = (deno/nume).mean()
+        per_token_loss = self.exp(per_token_logps - ops.stop_gradient(per_token_logps)) * advantages # [bs, seq_len]
+        per_token_loss = - (per_token_loss - self.beta * per_token_kl)  # [bs, seq_len]
+        masked_per_token_loss = per_token_loss * responses_mask  # [bs, seq_len-1]
+        deno = self.batch_unsorted_segment_sum(masked_per_token_loss, sample_index, pack_sample_num)  # [bs, packed_sample_num]
+        nume = sample_valid_len  #  [bs, packed_sample_num]
+        loss = (deno/nume).sum()/real_sample_num
         return loss
 
 

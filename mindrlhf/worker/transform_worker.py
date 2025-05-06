@@ -155,8 +155,8 @@ class TransformWorker(Worker):
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra)
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
         else:
+            print("Waiting for main worker to merge strategies.")
             time.sleep(10)
-
         ms.mint.distributed.barrier()
         if grpo_config.model_type == "deepseekv3":
             transform_args = {"n_head": sft_model_config_train.num_heads,

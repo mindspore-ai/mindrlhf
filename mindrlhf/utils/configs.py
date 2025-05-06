@@ -193,9 +193,9 @@ def init_ppo_dataset(trainer):
     """
     ppo_config = trainer.ppo_config
     sft_model_config = trainer.sft_model_config_train
-    column_names = ["query_tensors", "response_tensors", "logprobs",
-                    "values", "rewards", "advantages", "returns",
-                    "pretrain_ids", "loss_mask", "attention_mask"]
+    column_names = ["prompt_completion_ids", "responses_mask",
+                    "ref_per_token_logps", "advantages",
+                    "actual_sequence_length", "sample_index", "sample_valid_length"]
     # if ppo_config.save_data_file and 'stages' in ppo_config.align_type:
     if not trainer.store:
         dataset = MindDataset(dataset_files=ppo_config.save_data_file, shuffle=False)
@@ -215,6 +215,9 @@ def init_ppo_dataset(trainer):
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="pretrain_ids")
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="loss_mask")
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="attention_mask")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="actual_sequence_length")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_index")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_valid_length")
     micro_batch_num = 1
     if sft_model_config.parallel_config.pipeline_stage > 1:
         micro_batch_num = sft_model_config.parallel_config.micro_batch_num
@@ -239,8 +242,9 @@ def init_grpo_dataset(trainer):
     """
     grpo_config = trainer.grpo_config
     sft_model_config = trainer.sft_model_config_train
-    column_names = ["prompt_completion_ids", "prompts_mask", "responses_mask",
-                    "ref_per_token_logps", "advantages"]
+    column_names = ["prompt_completion_ids", "responses_mask",
+                    "ref_per_token_logps", "advantages",
+                    "actual_sequence_length", "sample_index", "sample_valid_length"]
     # if grpo_config.save_data_file and 'stages' in grpo_config.align_type:
     if not trainer.store:
         dataset = MindDataset(dataset_files=grpo_config.save_data_file, shuffle=False)
@@ -251,10 +255,12 @@ def init_grpo_dataset(trainer):
     type_cast_op_int32 = TypeCast(mindspore.int32)
     type_cast_op_fp16 = TypeCast(mindspore.float16)
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompt_completion_ids")
-    dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompts_mask")
     dataset = dataset.map(operations=type_cast_op_int32, input_columns="responses_mask")
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="ref_per_token_logps")
     dataset = dataset.map(operations=type_cast_op_fp16, input_columns="advantages")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="actual_sequence_length")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_index")
+    dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_valid_length")
     micro_batch_num = 1
     if sft_model_config.parallel_config.pipeline_stage > 1:
         micro_batch_num = sft_model_config.parallel_config.micro_batch_num

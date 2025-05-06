@@ -326,14 +326,16 @@ class TrainOneStepWithLossScaleGRPO(TrainOneStepWithLossScaleCell):
         self.cast = P.Cast()
 
     def construct(self,
-                  prompt_completion_ids, prompts_mask, responses_mask,
-                  ref_per_token_logps, advantages):
+                  prompt_completion_ids, responses_mask,
+                  ref_per_token_logps, advantages,
+                  actual_sequence_length, sample_index, sample_valid_length):
         """Defines the computation performed."""
         lr = self.learning_rate(self.global_step)
         weights = self.weights
         # Forward process
-        loss = self.network(prompt_completion_ids, prompts_mask, responses_mask,
-                            ref_per_token_logps, advantages)
+        loss = self.network(prompt_completion_ids, responses_mask,
+                            ref_per_token_logps, advantages,
+                            actual_sequence_length, sample_index, sample_valid_length)
         scaling_sens = self.scale_sense
 
         # alloc status and clear should be right before gradoperation
@@ -341,8 +343,10 @@ class TrainOneStepWithLossScaleGRPO(TrainOneStepWithLossScaleCell):
         scaling_sens_filled = C.ones_like(loss) * F.cast(scaling_sens, F.dtype(loss))
         # Backward process using loss scale
         grads = self.grad(self.network,
-                          weights)(prompt_completion_ids, prompts_mask, responses_mask,
-                                   ref_per_token_logps, advantages, scaling_sens_filled)
+                          weights)(prompt_completion_ids, responses_mask,
+                                   ref_per_token_logps, advantages,
+                                   actual_sequence_length, sample_index, sample_valid_length,
+                                   scaling_sens_filled)
         # apply grad reducer on grads
         grads = self.grad_reducer(grads)
         grads = self.hyper_map(
@@ -437,20 +441,24 @@ class TrainPipelineWithLossScaleCellGRPO(nn.TrainOneStepWithLossScaleCell):
 
     @C.add_flags(has_effect=True)
     def construct(self,
-                  prompt_completion_ids, prompts_mask, responses_mask,
-                  ref_per_token_logps, advantages, sens=None):
+                  prompt_completion_ids, responses_mask,
+                  ref_per_token_logps, advantages,
+                  actual_sequence_length, sample_index, sample_valid_length,
+                  sens=None):
         """Defines the computation performed."""
         lr = self.learning_rate(self.global_step)
         weights = self.weights
-        loss = self.network(prompt_completion_ids, prompts_mask, responses_mask,
-                            ref_per_token_logps, advantages,)
+        loss = self.network(prompt_completion_ids, responses_mask,
+                            ref_per_token_logps, advantages,
+                            actual_sequence_length, sample_index, sample_valid_length)
         if sens is None:
             scaling_sens = self.loss_scale
             scaling_sens = self.reshape(scaling_sens, (1,))
         else:
             scaling_sens = sens
-        grads = self.grad(self.network, weights)(prompt_completion_ids, prompts_mask, responses_mask,
+        grads = self.grad(self.network, weights)(prompt_completion_ids, responses_mask,
                                                  ref_per_token_logps, advantages,
+                                                 actual_sequence_length, sample_index, sample_valid_length,
                                                  self.cast(scaling_sens / self.micro_size, mstype.float32))
         # apply grad reducer on grads
         if self.opt_shard:

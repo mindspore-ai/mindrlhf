@@ -14,7 +14,6 @@
 # ============================================================================
 """Reward functions for GRPO training."""
 import re
-import importlib
 
 from .verifier.rule_verifier import func_from_jiaoda
 
@@ -22,8 +21,36 @@ from .verifier.rule_verifier import func_from_jiaoda
 def reward_func_from_jiaoda(completions, solution, **kwargs):
     return func_from_jiaoda(completions, solution)
 
+
 # pylint: disable=W0613
 def accuracy_reward(completions, solution, **kwargs):
+    """Reward function that checks if the completion is the same as the ground truth."""
+    rewards = []
+    answer_parsed_lst = []
+
+    for content, sol in zip(completions, solution):
+        response = re.sub(r"(\d),(\d)", r"\1\2", content)
+        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", response)
+        if numbers:
+            predictions = numbers[-1]
+        else:
+            predictions = response
+        sol = str(re.findall(r'\d+', sol)[0])
+        ground_truth_answer = re.sub(r"(\d),(\d)", r"\1\2", sol)
+        reward = str(predictions).lower() == str(ground_truth_answer).lower()
+        reward = 1.0 if reward else 0.0
+        rewards.append(reward)
+        predictions_len = len(str(predictions).lower())
+        if predictions_len == 0:
+            answer_parsed_lst.append('NO ANSWER')
+        else:
+            answer_parsed_lst.append(str(predictions).lower())
+
+    return rewards, answer_parsed_lst
+
+
+# pylint: disable=W0613
+def accuracy_reward_2(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
     latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
     # pylint: disable=C0103

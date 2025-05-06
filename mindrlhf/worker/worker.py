@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""worker"""
 
-# python
-import numpy as np
 from abc import ABC
 from dataclasses import dataclass
+import numpy as np
 
 
 @dataclass
@@ -23,26 +23,30 @@ class GRPOData:
     """
     grpo data
     """
+
     prompt_completion_ids: np.array
-    prompts_mask: np.array
     responses_mask: np.array
     ref_per_token_logps: np.array
     advantages: np.array
+    actual_sequence_length: np.array
+    sample_index: np.array
+    sample_valid_length: np.array
 
 
 # 占位，后续扩展基类功能
 class Worker(ABC):
-    '''
+    """
     Args:
        paradigm (str): programming paradigm, can be set to 'SPMD' or 'MPMD'.
                        For 'MPMD' paradigm, this worker will be ray.remote to resource pool.
-    '''
-    def __init__(self, paradigm='SPMD', mpmd_args=None):
+    """
+
+    def __init__(self, paradigm="SPMD", mpmd_args=None):
         pass
 
 
 def format_time_delta(seconds):
-    "计算时间差"
+    """format time delta to string"""
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{int(hours):02}:{int(minutes):02}:{seconds:.4f}"

@@ -94,7 +94,7 @@ class GRPOConfig:
     is_shared_backbone: bool = True
     only_save_strategy: bool = False
     use_parallel: bool = False
-    sync_ref_model: bool = True
+    sync_ref_model: bool = False
     # Whether to synchronize the reference model with the active model every `ref_model_sync_steps`
     ref_model_sync_steps: int = 50
     ref_model_batch_size: int = 1
@@ -110,6 +110,10 @@ class GRPOConfig:
     num_scheduler_steps: int = 32
     gpu_memory_utilization: float = 0.8
     detokenize: bool = False
+
+    packing: bool = True
+    packing_sample_length: int = 2048 #1024
+    pack_num: int = 1
 
     tensorboard_dir: str = ""
     tensorboard_queue_size: int = 10
