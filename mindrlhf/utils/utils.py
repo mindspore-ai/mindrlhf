@@ -46,7 +46,7 @@ __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
            "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
-           "print_perf_stat"]
+           "print_perf_stat", "get_dp_rank"]
 
 PERF_STATS = False
 
@@ -479,3 +479,7 @@ def print_perf_stat(start_time, end_time, perf_object_str):
     global PERF_STATS
     if PERF_STATS:
         logger.info(f"Performance Statistics: {perf_object_str} costs {end_time - start_time}s")
+
+
+def get_dp_rank(data_parallel):
+    return get_rank() // (get_group_size() // data_parallel)
