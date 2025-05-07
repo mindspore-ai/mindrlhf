@@ -44,11 +44,14 @@ import mindspore.common.dtype as mstype
 from mindformers.tools.ckpt_transform import TransformCkpt
 from mindformers import logger
 
+import mindrlhf.utils.reshard_optimizer as reshard_optimizer
+
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
            "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
-           "print_perf_stat", "_get_pipeline_group", "convert_index_json_total", "save_prompt_completions_data"]
+           "print_perf_stat", "_get_pipeline_group", "convert_index_json_total", "save_prompt_completions_data",
+           "get_dp_rank"]
 
 
 PERF_STATS = False
@@ -524,3 +527,20 @@ def save_prompt_completions_data(save_file_path, **kwargs):
     with open(save_file_path, 'w', encoding='utf-8') as f:
         json.dump(data_dict, f, ensure_ascii=False, indent=4)
     logger.info(f"Saved data to {save_file_path}")
+
+
+def get_dp_rank(data_parallel):
+    """ Get Data Parallel Rank ID """
+    rank_id = get_rank()
+    if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
+        for group in reshard_optimizer.OPT_COMMUNICATION_GROUPS["dp"]:
+            if rank_id in group:
+                dp_rank_id = group.index(rank_id)
+                break
+
+        if dp_rank_id is None:
+            raise ValueError(f"Rank {rank_id} not found in any DP group: "
+                             f"{reshard_optimizer.OPT_COMMUNICATION_GROUPS}")
+    else:
+        dp_rank_id = rank_id // (get_group_size() // data_parallel)
+    return dp_rank_id
