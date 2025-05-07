@@ -292,7 +292,7 @@ class InferWorker(Worker):
         generate_begin_time = time.time()
         if max_decode_length == 0:
             max_decode_length = self.grpo_config.max_decode_length
-        min_decode_length = 4
+        min_decode_length = self.grpo_config.min_decode_length
         logger.info(f"max_decode_length {max_decode_length}")
         logger.info(f"min_decode_length {min_decode_length}")
         if self.use_vllm == VllmMode.DEBUG:
@@ -404,7 +404,7 @@ class InferWorker(Worker):
         start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
-            self.inference_engine.free_cache_engine()
+            self.inference_engine.init_cache_engine()
             skip_kv_cache = True
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             if skip_kv_cache and "paged_attention_mgr" in param.name:
