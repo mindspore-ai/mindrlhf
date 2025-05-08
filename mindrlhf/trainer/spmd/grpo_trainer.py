@@ -22,7 +22,6 @@ import numpy as np
 # mindspore
 import mindspore as ms
 import mindspore.common.dtype as mstype
-from mindspore.communication import get_group_size
 from mindspore.dataset import MindDataset
 from mindspore.common.api import _pynative_executor
 from mindspore import Tensor, mint
@@ -37,7 +36,7 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat,
-                            convert_index_json_total, save_prompt_completions_data, MetricData)
+                            convert_index_json_total, save_prompt_completions_data, MetricData, get_dp_rank)
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.worker.infer_worker import InferWorker
@@ -273,23 +272,8 @@ class GRPOTrainer:
         """
         split batch_inputs for data parallel
         """
-        world_size = get_group_size()
-        rank_id = get_rank()
         split_size = (batch_inputs.shape[0] // data_parallel_size)
-        all_other_group_size = world_size // data_parallel_size
-
-        dp_rank_id = None
-        if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
-            for group in reshard_optimizer.OPT_COMMUNICATION_GROUPS["dp"]:
-                if rank_id in group:
-                    dp_rank_id = group.index(rank_id)
-                    break
-
-            if dp_rank_id is None:
-                raise ValueError(f"Rank {rank_id} not found in any DP group: "
-                                 f"{reshard_optimizer.OPT_COMMUNICATION_GROUPS}")
-        else:
-            dp_rank_id = rank_id // all_other_group_size
+        dp_rank_id = get_dp_rank(data_parallel_size)
 
         start = dp_rank_id * split_size
         stop = (dp_rank_id + 1) * split_size
