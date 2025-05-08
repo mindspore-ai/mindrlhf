@@ -146,7 +146,7 @@ class InferWorker(Worker):
                 top_k=self.grpo_config.top_k,
                 stop_token_ids=self.grpo_config.eos_token_id,
                 max_tokens=self.grpo_config.max_decode_length,
-                min_tokens=4,
+                min_tokens=self.grpo_config.min_decode_length,
                 detokenize=self.grpo_config.detokenize
             )
             logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
@@ -251,7 +251,7 @@ class InferWorker(Worker):
         generate_begin_time = time.time()
         if max_decode_length == 0:
             max_decode_length = self.grpo_config.max_decode_length
-        min_decode_length = 4
+        min_decode_length = self.grpo_config.min_decode_length
         logger.info(f"max_decode_length is {max_decode_length}")
         logger.info(f"min_decode_length is {min_decode_length}")
         if self.use_vllm == VllmMode.DEBUG:
