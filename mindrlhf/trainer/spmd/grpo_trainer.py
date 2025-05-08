@@ -129,6 +129,9 @@ class GRPOTrainer:
         grpo_config.save_data_file = args.save_data_file
         grpo_config.save_ckpt_dir = args.save_ckpt_dir
         grpo_config.save_strategy_dir = args.save_strategy_dir
+        if not args.tensorboard_dir and grpo_config.tensorboard_dir:
+            args.tensorboard_dir = grpo_config.tensorboard_dir
+            args.tensorboard_queue_size = grpo_config.tensorboard_queue_size
         grpo_config.align_type = "rlhf_stages"
         grpo_config.use_parallel = use_parallel
         if grpo_config.use_vllm not in range(len(VllmMode)):
