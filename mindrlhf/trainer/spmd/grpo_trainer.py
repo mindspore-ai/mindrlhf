@@ -104,14 +104,15 @@ class GRPOTrainer:
 
         self.reshard_optimizer = None
         # rename parameters in safetensors
-        if args.load_sft_checkpoint_infer and args.load_ckpt_format == "safetensors":
+        if args.load_sft_checkpoint_train and args.load_ckpt_format == "safetensors":
             self.rename_safetensors_weights(args)
 
         self._compile()
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
                                          self.train.model(), self.infer.model(), self.ref.model())
         self._load_checkpoint()
-        self.transform.reshard_params(0)
+        if not args.load_sft_checkpoint_infer:
+            self.transform.reshard_params(0)
 
     def _init_grpo_configs(self, args):
         """ init grpo configs """
@@ -842,10 +843,10 @@ class GRPOTrainer:
     def rename_safetensors_weights(self, args):
         """ rename safetensors and write output to param_name_map.json"""
         # 默认3个模型要加载的safetensors文件相同，用同一个config对象处理
-        infer_config = MindFormerConfig(args.sft_path_infer)
-        infer_config.load_checkpoint = args.load_sft_checkpoint_infer
+        config = MindFormerConfig(args.sft_path_train)
+        config.load_checkpoint = args.load_sft_checkpoint_train
 
-        if infer_config.model.model_config.get("qkv_concat", False):
+        if config.model.model_config.get("qkv_concat", False):
             raise ValueError("safetensors only support qkv_concat=False for now")
 
         if get_rank() == 0:
@@ -853,8 +854,8 @@ class GRPOTrainer:
             convert_func_lst.append(self.infer.convert_map_dict)
             convert_func_lst.append(self.ref.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
-            convert_index_json_total(infer_config.load_checkpoint,
-                                     infer_config.load_checkpoint, convert_func_lst, False)
+            convert_index_json_total(config.load_checkpoint,
+                                     config.load_checkpoint, convert_func_lst, False)
         else:
             # wait for rank 0 to finish
             time.sleep(10)
