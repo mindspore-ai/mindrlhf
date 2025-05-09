@@ -206,7 +206,6 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.gamma = 1
         self.lam = 0.95
         self.depend = P.Depend()
-        self.slice = P.StridedSlice()
         self.dp = self.policy_model.dp
         self.cast = P.Cast()
         self.dump = P.TensorDump()
@@ -223,14 +222,16 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         Returns:
             shape (batch_size, num_segments)
         """
-        bs, seq_len = input_ids.shape
-        output = ops.zeros((bs, num_segments), input_ids.dtype)
-        for b in range(bs):
-            current_input = self.slice(input_ids, (b, 0), (b + 1, seq_len), (1, 1))
-            current_segment = self.slice(segments_ids, (b, 0), (b + 1, seq_len), (1, 1))
-            seg_sum = ops.unsorted_segment_sum(current_input, current_segment, num_segments)
-            output[b] = seg_sum
-        return output
+        bs, _ = input_ids.shape
+        offsets = ops.arange(0, bs * num_segments, num_segments)
+        # ensure segment_id uniqueness after reshape
+        seg_off = segments_ids + offsets.view(bs, 1)
+        flat_sum = ops.unsorted_segment_sum(
+            input_ids.view(-1),
+            seg_off.view(-1),
+            bs * num_segments
+        )
+        return flat_sum.view(bs, num_segments)
 
     # pylint: disable=W0613
     def offset_actual_seq_length(self, data, offset):
