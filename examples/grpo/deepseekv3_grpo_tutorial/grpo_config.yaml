@@ -68,6 +68,9 @@ ref_model_sync_steps: 50
 ref_model_batch_size: 1
 performance_stats: False
 enable_reshard_optimizer: False
+# 0: do not optimize mem during resharding
+# 1: offload all src and dst param during resharding
+reshard_mem_opt_level: 0
 
 # vllm config
 use_vllm: 1  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers

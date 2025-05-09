@@ -13,20 +13,19 @@
 # limitations under the License.
 # ============================================================================
 """transform param from device to device test case"""
-import time
 import numpy as np
 
 import mindspore as ms
 from mindspore.communication.management import init, get_rank
 from mindspore.parallel.shard import Layout
-from mindspore import nn, Tensor, Parameter, context, ops
+from mindspore import nn, Tensor, Parameter, context, ops, mint
 
 from mindrlhf.utils import TransformParametersD2D
 from mindrlhf.utils.reshard_optimizer import ReshardOptimizer, Layout as StrategyLayout, Parallel
 
 init()
 
-
+# pylint: disable=W0212
 class MatMulCell(nn.Cell):
     """MatMulCell"""
     def __init__(self, in_strategy, seed):
@@ -59,11 +58,22 @@ class SrcNet(nn.Cell):
         super().__init__()
         self.matmul_src = MatMulCell(matmul_in_strategy, seed)
         self.add_src = AddCell(add_in_strategy, seed + 1)
+        self.model_on_device = True
 
     def construct(self, x):
         out = self.matmul_src(x)
         out = self.add_src(out)
         return out
+
+    def offload_model(self):
+        for param in self.get_parameters():
+            param._offload()
+        self.model_on_device = False
+
+    def load_model(self):
+        for param in self.get_parameters():
+            param._load()
+        self.model_on_device = True
 
 
 class DstNet(nn.Cell):
@@ -72,11 +82,22 @@ class DstNet(nn.Cell):
         super().__init__()
         self.matmul_dst = MatMulCell(matmul_in_strategy, seed)
         self.add_dst = AddCell(add_in_strategy, seed + 1)
+        self.model_on_device = True
 
     def construct(self, x):
         out = self.matmul_dst(x)
         out = self.add_dst(out)
         return out
+
+    def offload_model(self):
+        for param in self.get_parameters():
+            param._offload()
+        self.model_on_device = False
+
+    def load_model(self):
+        for param in self.get_parameters():
+            param._load()
+        self.model_on_device = True
 
 
 class SrcNetPP(nn.Cell):
@@ -87,6 +108,7 @@ class SrcNetPP(nn.Cell):
         self.add0_src = AddCell(add_in_strategy, seed + 1)
         self.add1_src = AddCell(add_in_strategy, seed + 2)
         self.add2_src = AddCell(add_in_strategy, seed + 3)
+        self.model_on_device = True
 
     def construct(self, x):
         out = self.matmul_src(x)
@@ -94,6 +116,14 @@ class SrcNetPP(nn.Cell):
         out = self.add1_src(out)
         out = self.add2_src(out)
         return out
+
+    def offload_model(self):
+        for param in self.get_parameters():
+            param._offload()
+
+    def load_model(self):
+        for param in self.get_parameters():
+            param._load()
 
 
 class DstNetPP(nn.Cell):
@@ -104,6 +134,7 @@ class DstNetPP(nn.Cell):
         self.add0_dst = AddCell(add_in_strategy, seed + 1)
         self.add1_dst = AddCell(add_in_strategy, seed + 2)
         self.add2_dst = AddCell(add_in_strategy, seed + 3)
+        self.model_on_device = True
 
     def construct(self, x):
         out = self.matmul_dst(x)
@@ -111,6 +142,14 @@ class DstNetPP(nn.Cell):
         out = self.add1_dst(out)
         out = self.add2_dst(out)
         return out
+
+    def offload_model(self):
+        for param in self.get_parameters():
+            param._offload()
+
+    def load_model(self):
+        for param in self.get_parameters():
+            param._load()
 
 
 def match_func(src_name, dst_name):
@@ -145,18 +184,26 @@ def test_transform_d2d_no_pp_1():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./no_pp_1_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./no_pp_1_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./no_pp_1_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./no_pp_1_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_1_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_1_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_no_pp_2():
@@ -185,18 +232,26 @@ def test_transform_d2d_no_pp_2():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./no_pp_2_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./no_pp_2_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./no_pp_2_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./no_pp_2_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_2_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_2_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_no_pp_3():
@@ -227,18 +282,26 @@ def test_transform_d2d_no_pp_3():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./no_pp_3_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./no_pp_3_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./no_pp_3_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./no_pp_3_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_3_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_3_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_no_pp_4():
@@ -270,18 +333,26 @@ def test_transform_d2d_no_pp_4():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./no_pp_4_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./no_pp_4_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./no_pp_4_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./no_pp_4_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_4_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_4_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_no_pp_5():
@@ -313,18 +384,26 @@ def test_transform_d2d_no_pp_5():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./no_pp_5_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./no_pp_5_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./no_pp_5_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./no_pp_5_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_5_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_5_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_pp_1():
@@ -360,19 +439,27 @@ def test_transform_d2d_pp_1():
     dst_add_in_strategy = ((4, 2), (4, 2))
     dst_net = DstNetPP(dst_matmul_in_strategy, dst_add_in_strategy, 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./pp_1_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./pp_1_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./pp_1_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./pp_1_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./pp_1_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./pp_1_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    if get_rank() in [4, 5, 6, 7]:
-        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        if get_rank() in [4, 5, 6, 7]:
+            assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_pp_2():
@@ -405,19 +492,27 @@ def test_transform_d2d_pp_2():
     dst_net.add1_dst.pipeline_stage = 1
     dst_net.add2_dst.pipeline_stage = 1
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./pp_2_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./pp_2_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./pp_2_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./pp_2_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./pp_2_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./pp_2_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    if get_rank() in [4, 5, 6, 7]:
-        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        if get_rank() in [4, 5, 6, 7]:
+            assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_pp_3():
@@ -456,19 +551,27 @@ def test_transform_d2d_pp_3():
     dst_net.add1_dst.pipeline_stage = 1
     dst_net.add2_dst.pipeline_stage = 1
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./pp_3_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./pp_3_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./pp_3_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./pp_3_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./pp_3_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./pp_3_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    if get_rank() in [4, 5, 6, 7]:
-        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        if get_rank() in [4, 5, 6, 7]:
+            assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_pp_4():
@@ -507,19 +610,27 @@ def test_transform_d2d_pp_4():
     dst_net.add1_dst.pipeline_stage = 1
     dst_net.add2_dst.pipeline_stage = 1
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./pp_4_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./pp_4_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./pp_4_src/", src_merged_stra)
-    ms.merge_pipeline_strategys("./pp_4_dst/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./pp_4_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./pp_4_dst/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    if get_rank() in [6, 7]:
-        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        if get_rank() in [6, 7]:
+            assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_with_reshard_optimizer_tp():
@@ -575,20 +686,28 @@ def test_transform_d2d_with_reshard_optimizer_tp():
 
     dst_net = DstNet(dst_matmul_in_strategy, (src_layout("None", "None"), src_layout("None", "None")), 6)
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./reshard_optimizer_tp_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./reshard_optimizer_tp_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./reshard_optimizer_src_tp/", src_merged_stra)
-    ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./reshard_optimizer_src_tp/", src_merged_stra)
+        ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(
         src_net, dst_net, src_merged_stra, dst_merge_stra, match_func
     )
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_transform_d2d_with_reshard_optimizer_tp_zero():
@@ -657,17 +776,25 @@ def test_transform_d2d_with_reshard_optimizer_tp_zero():
         6,
     )
     dst_net(x)
-    time.sleep(10)
     src_merged_stra = "./reshard_optimizer_tp_zero_src_merge/merged_strategy.ckpt"
     dst_merge_stra = "./reshard_optimizer_tp_zero_dst_merge/merged_strategy.ckpt"
-    ms.merge_pipeline_strategys("./reshard_optimizer_src_tp_zero/", src_merged_stra)
-    ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp_zero/", dst_merge_stra)
-    time.sleep(10)
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./reshard_optimizer_src_tp_zero/", src_merged_stra)
+        ms.merge_pipeline_strategys("./reshard_optimizer_dst_tp_zero/", dst_merge_stra)
+    mint.distributed.barrier()
 
     transform_param_d2d = TransformParametersD2D(
         src_net, dst_net, src_merged_stra, dst_merge_stra, match_func
     )
-    transform_param_d2d.transform()
-    dst_out = dst_net(x)
-    context.reset_auto_parallel_context()
-    assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)

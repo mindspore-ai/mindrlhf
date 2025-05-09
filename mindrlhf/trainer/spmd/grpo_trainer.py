@@ -103,6 +103,9 @@ class GRPOTrainer:
         logger.info("GRPOTrainer: finish init workers")
 
         self.reshard_optimizer = None
+        self.reshard_mem_opt_level = self.grpo_config.reshard_mem_opt_level
+        if self.reshard_mem_opt_level not in [0, 1]:
+            raise ValueError(f"reshard_mem_opt_level can only be 0 or 1, but got {self.reshard_mem_opt_level}")
         # rename parameters in safetensors
         if args.load_sft_checkpoint_train and args.load_ckpt_format == "safetensors":
             self.rename_safetensors_weights(args)
@@ -817,17 +820,44 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load()
+                if self.reshard_mem_opt_level == 1:
+                    self.train.offload_model()
+                    assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
+                                                            "train model must not on device before transform param")
+                    assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
+                                                      "infer model must not on device before transform param")
+                else:
+                    self.infer.load()
+                    assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
+                                                        "train model must not on device before transform param")
+                    assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
+                                                  "infer model must not on device before transform param")
 
                 if self.transform.sync_ref_model and \
                         ((i + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
-                    self.ref.load()
-                    self.transform.reshard_params(i)
-                    self.ref.offload()
+                    if self.reshard_mem_opt_level == 0:
+                        self.ref.load()
+                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                    if self.reshard_mem_opt_level == 0:
+                        self.ref.offload()
                 else:
-                    self.transform.reshard_params(i)
-                self.train.offload_model()
+                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
+                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device)}
+                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                if self.reshard_mem_opt_level == 0:
+                    assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
+                                                        "train model must on device after transform param")
+                    assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
+                                                  "infer model must on device after transform param")
+                    self.train.offload_model()
+                else:
+                    assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
+                                                            "train model must not on device after transform param")
+                    assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
+                                                      "infer model must not on device after transform param")
 
                 step_end_time = time.time()
                 print_perf_stat(step_begin_time, step_end_time, f"epoch {n} step {i}")
