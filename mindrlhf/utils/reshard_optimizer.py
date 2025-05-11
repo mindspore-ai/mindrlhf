@@ -52,6 +52,9 @@ class ReshardOptimizer:
         self.src_parallel = src_parallel
         self.dst_parallel = dst_parallel
 
+        if self.dst_parallel.pp != 1:
+            raise ValueError("The infer PP is currently only able to be 1")
+
         self.world_size = self.dst_parallel.dp * self.dst_parallel.tp * self.dst_parallel.pp
         if self.world_size != self.src_parallel.dp * self.src_parallel.tp * self.src_parallel.pp:
             raise ValueError("The world size of src_parallel and dst_parallel should be the same")
@@ -72,7 +75,7 @@ class ReshardOptimizer:
             if (value != -1 and layout.dev_mat[-(value + 1)] != 1)
         ]
         if len(cut_axises) > 1:
-            raise ValueError(f"The axis of the layout is cut invalid: {layout}")
+            raise ValueError(f"The axis of the layout is cut multiple times: {layout}")
 
         if len(cut_axises) == 1:
             same_data_labels = self._get_same_data_labels(self.opt_communication_groups["tp"])
