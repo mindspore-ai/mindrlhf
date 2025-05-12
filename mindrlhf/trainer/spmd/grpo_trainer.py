@@ -36,7 +36,8 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 from mindrlhf.utils import (transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat,
-                            convert_index_json_total, save_prompt_completions_data, MetricData, get_dp_rank)
+                            convert_index_json_total, save_prompt_completions_data, MetricData, get_dp_rank,
+                            add_metrics_to_tensorboard)
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.worker.infer_worker import InferWorker
@@ -78,6 +79,8 @@ class GRPOTrainer:
         self.tensor_writer = get_tensorboard_writer()
         setattr(self.args, 'tensor_writer', self.tensor_writer)
         self.make_exp_step = 0
+        self.total_processed_tokens = 0
+        self.total_time = 0
 
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config,
@@ -500,7 +503,7 @@ class GRPOTrainer:
 
         return advantages, mean_grouped_rewards
 
-    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16, step: int = 0):
+    def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
         """ make experience """
         ep_begin_time = time.time()
         logger.info("Make experience begin at {} \n------------------------------- "
@@ -512,6 +515,7 @@ class GRPOTrainer:
             self.infer.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.ref.ref_model.model.set_train(False)
 
+        metrics = {}
         grpo_rl_elements = []
         all_mean_grouped_rewards = []
         all_elements_completion_len = []
@@ -596,6 +600,34 @@ class GRPOTrainer:
                                                        padding_token=self.grpo_config.pad_token_id)
         no_padding_responses = self._remove_right_padding(
             right_padding_responses, padding_token=self.grpo_config.pad_token_id)
+
+        prompts_length_list = np.array([len(item) for item in no_padding_prompts])
+        responses_length_list = np.array([len(item) for item in no_padding_responses])
+        mean_prompts_length = prompts_length_list.mean()
+        mean_responses_length = responses_length_list.mean()
+        total_size = n_questions * num_generations * num_rollouts
+        self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
+        self.total_processed_tokens += self.step_total_tokens
+        logger.info(
+            f"token_count mean_prompt_len: {mean_prompts_length}, "
+            f"max_prompt_len: {prompts_length_list.max()},"
+            f" min_prompt_len: {prompts_length_list.min()}")
+        logger.info(
+            f"token_count mean_response_len: {mean_responses_length}, "
+            f"max_response_len: {responses_length_list.max()}, "
+            f"min_response_len: {responses_length_list.min()}")
+
+        clip_count = np.count_nonzero(responses_length_list == self.grpo_config.max_decode_length)
+        response_clip_ratio = clip_count / len(responses_length_list)
+        metrics[MetricData.RESPONSE_LENGTH_MEAN.value] = mean_responses_length
+        metrics[MetricData.RESPONSE_LENGTH_MAX.value] = responses_length_list.max()
+        metrics[MetricData.RESPONSE_LENGTH_MIN.value] = responses_length_list.min()
+        metrics[MetricData.RESPONSE_LENGTH_CLIP_RATIO.value] = response_clip_ratio
+
+        metrics[MetricData.PROMPT_LENGTH_MEAN.value] = mean_prompts_length
+        metrics[MetricData.PROMPT_LENGTH_MAX.value] = prompts_length_list.max()
+        metrics[MetricData.PROMPT_LENGTH_MIN.value] = prompts_length_list.min()
+
         prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
         completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
 
@@ -629,6 +661,9 @@ class GRPOTrainer:
 
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
+        metrics[MetricData.REWARD_MEAN.value] = np.mean(all_rewards)
+        metrics[MetricData.REWARD_MAX.value] = np.max(all_rewards)
+        metrics[MetricData.REWARD_MIN.value] = np.min(all_rewards)
 
         total_size = all_rewards.shape[0]
         advantages = np.zeros((total_size,))
@@ -643,6 +678,10 @@ class GRPOTrainer:
 
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
+        metrics[MetricData.ADVANTAGE_MEAN.value] = np.mean(advantages)
+        metrics[MetricData.ADVANTAGE_MAX.value] = np.max(advantages)
+        metrics[MetricData.ADVANTAGE_MIN.value] = np.min(advantages)
+        logger.info(f'Metrics of total step {self.make_exp_step}: {metrics}')
 
         self.ref.load()
         logger.info("ref_model load")
@@ -706,18 +745,19 @@ class GRPOTrainer:
             logger.info("ref_model offload")
 
             if (self.grpo_config.save_prompt_completions_data and
-                    step % self.grpo_config.save_prompt_completions_interval == 0):
+                    self.make_exp_step % self.grpo_config.save_prompt_completions_interval == 0):
                 save_kwargs = {
                     MetricData.QUESTION.value: prompts,
                     MetricData.ANSWER.value: completions,
                     MetricData.PARSED_ANSWER.value: answer_parsed_lst,
                     MetricData.SOLUTION.value: solution,
                     MetricData.REWARD_PER_QUESTION.value: rewards,
-                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: completions_length
+                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: list(responses_length_list)
                 }
                 save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
-                                              f'prompt_completions_step_{step}.json')
+                                              f'prompt_completions_step_{self.make_exp_step}.json')
                 save_prompt_completions_data(save_file_path, **save_kwargs)
+            logger.info(f'total step {self.make_exp_step} metrics: {metrics}')
 
             for i in range(len(all_packed)):
                 prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0, 1),), 'constant',
@@ -753,6 +793,9 @@ class GRPOTrainer:
         logger.info(f"Avg scores: {avg_scores}")
         if self.tensor_writer:
             self.tensor_writer.add_scalar("average-scores", avg_scores, global_step=self.make_exp_step)
+        if self.tensor_writer:
+            add_metrics_to_tensorboard(self.tensor_writer, metrics, self.make_exp_step)
+            logger.info(f"Add metrics of step {self.make_exp_step} to tensorboard")
 
         end_time = time.time()
         print_perf_stat(ep_begin_time, end_time, "Make experience")
@@ -809,10 +852,8 @@ class GRPOTrainer:
                             .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
 
                 logger.info(f"epoch: {n}, step: {i}")
-                total_step = n * self.step_num + i
                 self._make_experience(num_rollouts=self.grpo_config.num_rollouts,
-                                      num_generations=self.grpo_config.num_generations,
-                                      step=total_step)
+                                      num_generations=self.grpo_config.num_generations)
                 self.train.load_optimizer()
                 self.train.load_model()
 

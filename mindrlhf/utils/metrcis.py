@@ -33,7 +33,11 @@ class MetricData(Enum):
     ADVANTAGE_MIN = 'advantage_min'
     ADVANTAGE_MAX = 'advantage_max'
 
-    RESPONSE_LENGTH = 'response_length'
-    RESPONSE_MIN = 'response_min'
-    RESPONSE_MAX = 'response_max'
-    RESPONSE_CLIP_RATIO = 'response_clip_ratio'
+    RESPONSE_LENGTH_MEAN = 'response_length_mean'
+    RESPONSE_LENGTH_MIN = 'response_length_min'
+    RESPONSE_LENGTH_MAX = 'response_length_max'
+    RESPONSE_LENGTH_CLIP_RATIO = 'response_length_clip_ratio'
+
+    PROMPT_LENGTH_MEAN = 'prompt_length_mean'
+    PROMPT_LENGTH_MIN = 'prompt_length_min'
+    PROMPT_LENGTH_MAX = 'prompt_length_max'

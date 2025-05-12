@@ -50,8 +50,8 @@ __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
            "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
-           "print_perf_stat", "_get_pipeline_group", "convert_index_json_total", "save_prompt_completions_data",
-           "get_dp_rank"]
+           "print_perf_stat", "_get_pipeline_group", "convert_index_json_total",
+           "save_prompt_completions_data", "add_metrics_to_tensorboard", "get_dp_rank"]
 
 
 PERF_STATS = False
@@ -544,3 +544,7 @@ def get_dp_rank(data_parallel):
     else:
         dp_rank_id = rank_id // (get_group_size() // data_parallel)
     return dp_rank_id
+
+def add_metrics_to_tensorboard(tensor_writer, metrics, global_step):
+    for key, value in metrics.items():
+        tensor_writer.add_scalar(key, value, global_step=global_step)
