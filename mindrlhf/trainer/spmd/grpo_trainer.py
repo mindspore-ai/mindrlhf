@@ -23,7 +23,7 @@ import numpy as np
 import mindspore as ms
 from mindspore import Tensor, mint
 import mindspore.common.dtype as mstype
-from mindspore.communication import get_rank, get_group_size
+from mindspore.communication import get_rank
 from mindspore.mindrecord import FileWriter
 from mindspore.dataset import MindDataset
 
@@ -34,7 +34,13 @@ from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboa
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.utils import transfer_from_str_to_bool, yaml_to_dataclass, set_perf_stats, print_perf_stat
+from mindrlhf.utils import (
+    transfer_from_str_to_bool,
+    yaml_to_dataclass,
+    set_perf_stats,
+    print_perf_stat,
+    get_dp_rank
+)
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 # mindrlhf
@@ -203,12 +209,8 @@ class GRPOTrainer:
         """
         split batch_inputs for data parallel
         """
-        world_size = get_group_size()
-        rank_id = get_rank()
         split_size = (batch_inputs.shape[0] // data_parallel_size)
-        all_other_group_size = world_size // data_parallel_size
-
-        dp_rank_id = rank_id // all_other_group_size
+        dp_rank_id = get_dp_rank(data_parallel_size)
 
         start = dp_rank_id * split_size
         stop = (dp_rank_id + 1) * split_size
