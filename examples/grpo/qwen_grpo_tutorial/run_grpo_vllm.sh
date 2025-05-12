@@ -1,3 +1,4 @@
+#!/bin/bash
 export PYTHONPATH=/path/to/mindrlhf:/path/to/mindformers/:$PYTHONPATH
 export GLOG_v=2
 
@@ -14,6 +15,7 @@ msrun --worker_num=8 --local_worker_num=8 \
 ./main.py \
 --config ./grpo_config.yaml \
 --sft_path_infer /path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
+--sft_path_ref /path/to/mindrlhf/model_configs/qwen_grpo/ref_qwen2_5_7b.yaml \
 --sft_path_train /path/to/mindrlhf/model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
 --vocab_path /path/to/vocab.json \
 --merges_file_path /path/to/merges.txt \
