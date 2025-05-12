@@ -75,7 +75,7 @@ class ReshardOptimizer:
             if (value != -1 and layout.dev_mat[-(value + 1)] != 1)
         ]
         if len(cut_axises) > 1:
-            raise ValueError(f"The axis of the layout is cut multiple times: {layout}")
+            raise ValueError(f"The axis of the layout is cut multiple times, which is not currently allowed: {layout}")
 
         if len(cut_axises) == 1:
             same_data_labels = self._get_same_data_labels(self.opt_communication_groups["tp"])
