@@ -185,16 +185,14 @@ class InferWorker(Worker):
                                     max_num_seqs=self.grpo_config.max_num_seqs,
                                     num_scheduler_steps=self.grpo_config.num_scheduler_steps,
                                     gpu_memory_utilization=self.grpo_config.gpu_memory_utilization,
-                                    seed=self.dp_rank_id
-                                    )
+                                    seed=self.dp_rank_id)
         logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
         logger.info(f"temperature: {self.grpo_config.temperature}, "
                     f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
                     f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
                     f"stop_token_ids: {self.grpo_config.eos_token_id}, "
                     f"max_tokens: {self.grpo_config.max_decode_length}, "
-                    f"detokenize: {self.grpo_config.detokenize}, "
-                    f"seed: {self.dp_rank_id}")
+                    f"detokenize: {self.grpo_config.detokenize}")
         vllm_start_time = time.time()
         self.sampling_params = SamplingParams(
             repetition_penalty=self.grpo_config.repetition_penalty,
@@ -205,7 +203,6 @@ class InferWorker(Worker):
             max_tokens=self.grpo_config.max_decode_length,
             min_tokens=self.grpo_config.min_decode_length,
             detokenize=self.grpo_config.detokenize,
-            seed=self.dp_rank_id
         )
         logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
 
