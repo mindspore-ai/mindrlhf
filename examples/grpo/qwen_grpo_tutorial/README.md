@@ -201,7 +201,9 @@ examples/grpo/qwen_grpo_tutorial/grpo_one_stage.py \
 --load_sft_checkpoint_infer /{path}/infer_ckpt \
 --load_sft_checkpoint_train /{path}/train_ckpt \
 --load_ref_checkpoint /{path}/ref_ckpt \
---enable_compile_cache False
+--enable_compile_cache False \
+--tensorboard_dir /{path}/tensorboard/ \
+--tensorboard_queue_size 10
 
 # 参数说明
 # msrun 参数
@@ -225,6 +227,8 @@ load_sft_checkpoint_infer:    推理模型(分布式)ckpt文件路径
 load_sft_checkpoint_train:    训练模型(分布式)ckpt文件路径
 load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
 enable_compile_cache:         是否使用编译缓存
+tensorboard_dir:              tensorboard落盘路径，仅在需要使用tensorboard记录时开启
+tensorboard_queue_size:       tensorboard缓存队列大小
 ```
 
 ### 4机32卡拉起Qwen2.5-32B
@@ -240,10 +244,58 @@ master_ip                     主机IP，一般以序列号为0的节点的IP作
 
 ### 任务查看
 
-拉起任务后，通过以下命令查看运行日志
+拉起任务后，通过以下命令查看运行日志：
 
 ```shell
 tail -f qwen2_5_one_log/worker_0.log
+```
+
+如果设置了tensorboard落盘路径，执行以下命令：
+
+```shell
+tensorboard --logdir /{path}/tensorboard/ --port 6006
+```
+
+并在浏览器中输入 `localhost:6006` 进行查看，tensorboard效果如下所示：
+
+![tensorboard_avgscores](../../../images/tensorboard_scores.png)
+
+![tensorboard_loss](../../../images/tensorboard_loss.png)
+
+![tensorboard_step_time](../../../images/tensorboard_step_time.png)
+
+目前tensorboard已监控的数据有如下：
+
+| 类别               | 字段名称                | 含义                                             |
+| ------------------ | ----------------------- | ------------------------------------------------ |
+| 评测指标           | mean-completion-length  | 回答的平均长度（包括prompts）                    |
+|                    | average-scores          | 当前批次数据的平均分数                           |
+| 训练指标           | loss                    | 当前训练步损失值                                 |
+|                    | lr                      | 当前训练步学习率                                 |
+|                    | overflow                | 当前训练步是否溢出                               |
+|                    | loss-scale              | 当前训练步损失缩放值                             |
+| 性能监控(单位：秒) | step-time               | 执行一次完整的推理+训练+权重重排迭代耗时         |
+|                    | make-experience-time    | 执行一次_make_experience函数耗时                 |
+|                    | actor-inference-time    | 执行推理耗时                                     |
+|                    | generate-time           | 执行生成耗时（开启vllm时，可以看作vllm推理耗时） |
+|                    | reward-calculation-time | 执行奖励计算耗时                                 |
+|                    | ref-inference-time      | 执行ref计算耗时                                  |
+|                    | actor-train-time        | 执行训练耗时                                     |
+|                    | transform-time          | 执行权重重排耗时                                 |
+
+用户可以自定义添加tensorboard监控的数据字段，步骤如下：
+
+```python
+# 1. 构造tensor_writer，此步骤可复用已有的：
+if args.tensorboard_dir:
+    args.tensorboard_dir = os.path.join(args.tensorboard_dir, f"rank_{get_rank()}")
+    _set_tensorboard_writer(args)
+self.tensor_writer = get_tensorboard_writer()
+
+# 2. 使用tensor_writer记录数据
+# add_scalar依次传入：字段名称、字段值以及随迭代不断递增的global_step
+if self.tensor_writer:
+    self.tensor_writer.add_scalar("step-time", step_time, global_step=total_step)
 ```
 
 ## 四、开启vLLM推理功能

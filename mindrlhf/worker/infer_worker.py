@@ -101,55 +101,7 @@ class InferWorker(Worker):
         self.use_vllm = grpo_config.use_vllm
         policy_model = None
         if self.use_vllm != VllmMode.ORIGIN:
-            # vllm
-            # pylint: disable=W0611
-            import vllm_mindspore
-            _pynative_executor.set_async_for_graph(False)
-            import mindrlhf.third_party.vllm.qwen2
-            import mindrlhf.third_party.vllm.ascend
-            from mindrlhf.third_party.vllm.llm import LLM
-            from vllm import SamplingParams
-            hf_config = self.build_qwen_hf_config()
-            self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
-            # 初始化vllm
-            logger.info(f"init LLM, block_size: {sft_model_config_infer.block_size}, "
-                        f"max_model_len = {self.grpo_config.max_model_len}, "
-                        f"max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
-                        f"max_num_seqs: {self.grpo_config.max_num_seqs}, "
-                        f"num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
-                        f"gpu_memory_utilization: {self.grpo_config.gpu_memory_utilization}")
-            vllm_start_time = time.time()
-            self.inference_engine = LLM(tokenizer=self.tokenizer,
-                                        model_hf_config=hf_config,
-                                        tensor_parallel_size=sft_model_config_infer.parallel_config.model_parallel,
-                                        dtype="bfloat16",
-                                        block_size=sft_model_config_infer.block_size,
-                                        skip_tokenizer_init=False,
-                                        max_model_len=self.grpo_config.max_model_len,             # 上下文总长，影响prompt长度和生成长度，小于max_num_batched_tokens
-                                        max_num_batched_tokens=self.grpo_config.max_num_batched_tokens,
-                                        max_num_seqs=self.grpo_config.max_num_seqs,
-                                        num_scheduler_steps=self.grpo_config.num_scheduler_steps,
-                                        gpu_memory_utilization=self.grpo_config.gpu_memory_utilization
-                                        )
-            logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
-            logger.info(f"temperature: {self.grpo_config.temperature}, "
-                        f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
-                        f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
-                        f"stop_token_ids: {self.grpo_config.eos_token_id}, "
-                        f"max_tokens: {self.grpo_config.max_decode_length}, "
-                        f"detokenize: {self.grpo_config.detokenize}")
-            vllm_start_time = time.time()
-            self.sampling_params = SamplingParams(
-                repetition_penalty=self.grpo_config.repetition_penalty,
-                temperature=self.grpo_config.temperature,
-                top_p=self.grpo_config.top_p,
-                top_k=self.grpo_config.top_k,
-                stop_token_ids=self.grpo_config.eos_token_id,
-                max_tokens=self.grpo_config.max_decode_length,
-                min_tokens=self.grpo_config.min_decode_length,
-                detokenize=self.grpo_config.detokenize
-            )
-            logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
+            self.__init_use_vllm()
             policy_model = self.inference_engine.get_model()
             policy_model.dp = sft_model_config_infer.parallel_config.data_parallel
         else:
@@ -168,6 +120,62 @@ class InferWorker(Worker):
             self.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.on_device = True
         self.save_strategy_dir = grpo_config.save_strategy_dir
+        self.tensor_writer = self.args.tensor_writer
+        self.global_infer_step = 0
+
+    def __init_use_vllm(self):
+        """ init vllm """
+        # vllm
+        # pylint: disable=W0611
+        import vllm_mindspore
+        _pynative_executor.set_async_for_graph(False)
+        import mindrlhf.third_party.vllm.qwen2
+        import mindrlhf.third_party.vllm.ascend
+        from mindrlhf.third_party.vllm.llm import LLM
+        from vllm import SamplingParams
+        hf_config = self.build_qwen_hf_config()
+        self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
+        # init vllm
+        logger.info(f"init LLM, block_size: {self.sft_model_config_infer.block_size}, "
+                    f"max_model_len = {self.grpo_config.max_model_len}, "
+                    f"max_num_batched_tokens: {self.grpo_config.max_num_batched_tokens}, "
+                    f"max_num_seqs: {self.grpo_config.max_num_seqs}, "
+                    f"num_scheduler_steps: {self.grpo_config.num_scheduler_steps}, "
+                    f"gpu_memory_utilization: {self.grpo_config.gpu_memory_utilization}")
+        vllm_start_time = time.time()
+        self.inference_engine = LLM(tokenizer=self.tokenizer,
+                                    model_hf_config=hf_config,
+                                    tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
+                                    dtype="bfloat16",
+                                    block_size=self.sft_model_config_infer.block_size,
+                                    skip_tokenizer_init=False,
+                                    # max_model_len means the total length of the context, which affects the prompt length and generation length,
+                                    # which should be less than max_num_matched_tokens
+                                    max_model_len=self.grpo_config.max_model_len,
+                                    max_num_batched_tokens=self.grpo_config.max_num_batched_tokens,
+                                    max_num_seqs=self.grpo_config.max_num_seqs,
+                                    num_scheduler_steps=self.grpo_config.num_scheduler_steps,
+                                    gpu_memory_utilization=self.grpo_config.gpu_memory_utilization
+                                    )
+        logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
+        logger.info(f"temperature: {self.grpo_config.temperature}, "
+                    f"repetition_penalty: {self.grpo_config.repetition_penalty}, "
+                    f"top_p: {self.grpo_config.top_p}, top_k: {self.grpo_config.top_k}, "
+                    f"stop_token_ids: {self.grpo_config.eos_token_id}, "
+                    f"max_tokens: {self.grpo_config.max_decode_length}, "
+                    f"detokenize: {self.grpo_config.detokenize}")
+        vllm_start_time = time.time()
+        self.sampling_params = SamplingParams(
+            repetition_penalty=self.grpo_config.repetition_penalty,
+            temperature=self.grpo_config.temperature,
+            top_p=self.grpo_config.top_p,
+            top_k=self.grpo_config.top_k,
+            stop_token_ids=self.grpo_config.eos_token_id,
+            max_tokens=self.grpo_config.max_decode_length,
+            min_tokens=self.grpo_config.min_decode_length,
+            detokenize=self.grpo_config.detokenize
+        )
+        logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
 
     def model(self):
         return self.grpo_model_infer
@@ -240,9 +248,6 @@ class InferWorker(Worker):
         """ Policy model generates responses for a batch of prompts. """
         context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
                                           parallel_mode="stand_alone", full_batch=False)
-        np.set_printoptions(threshold=1024)
-
-
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
 
         valid_length_each_example, max_valid_length = get_valid_length_each_example(
@@ -282,8 +287,10 @@ class InferWorker(Worker):
                 use_tqdm=False)
             logger.info("end vllm")
             outputs = outputs[0]
-
-        logger.info(f"Generating elapsed time: {time.time() - generate_begin_time}")
+        elapsed_time = time.time() - generate_begin_time
+        logger.info(f"Generating elapsed time: {elapsed_time}")
+        if self.tensor_writer is not None:
+            self.tensor_writer.add_scalar("generate-time", elapsed_time, self.global_infer_step)
 
         input_ids_list = input_ids_numpy.tolist()
         num_sample = len(input_ids_list)
@@ -309,6 +316,8 @@ class InferWorker(Worker):
         prompts_mask = (left_padding_prompts != self.grpo_config.pad_token_id).astype(np.int32)
 
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
+
+        self.global_infer_step += 1
         return (
             right_padding_responses.astype(np.int32), responses_mask,
             left_padding_prompts.astype(np.int32), prompts_mask
