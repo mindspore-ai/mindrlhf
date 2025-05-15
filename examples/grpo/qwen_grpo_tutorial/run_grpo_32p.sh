@@ -4,7 +4,7 @@ export MS_ALLOC_CONF="memory_tracker:False,enable_vmm:True"
 export GLOG_v=2
 export MS_DEV_DUMP_IR_PASSES="hwopt_d_after_stream_assign,valid,graph_build"
 export MS_DEV_RUNTIME_CONF="memory_statistics:False"
-export MS_ENABLE_LCCL=off  # 910C上必须得设成off
+export MS_ENABLE_LCCL=off
 
 root_path="$(realpath "$(dirname "$0")")"
 root_path=$root_path/../../../
@@ -21,6 +21,7 @@ msrun --worker_num=32 --local_worker_num=8 --node_rank=$noderank --master_addr=$
 examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
 --sft_path_infer model_configs/qwen_grpo/predict_qwen2_5_32b_instruct_481.yaml \
+--sft_path_ref model_configs/qwen_grpo/predict_qwen2_5_32b_instruct_481.yaml \
 --sft_path_train model_configs/qwen_grpo/finetune_qwen2_5_32b_8k_184.yaml \
 --vocab_path /path/to/vocab.json \
 --merges_file_path /path/to/merges.txt \

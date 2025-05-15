@@ -518,7 +518,7 @@ class GRPOTrainer:
         all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
                                       dtype=np.int32)
 
-        self.infer.load(init_kv_cache=True)
+        self.infer.load()
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info("generation start at {}-------------------------------".format(
@@ -541,7 +541,7 @@ class GRPOTrainer:
 
             results = self.infer.generate(input_ids_numpy, max_decode_length)
 
-        self.infer.offload(free_kv_cache=True)
+        self.infer.offload()
         logger.info("model_infer offload")
 
         end_time = time.time()
@@ -569,18 +569,17 @@ class GRPOTrainer:
                                                        padding_token=self.grpo_config.pad_token_id)
         no_padding_responses = self._remove_right_padding(
             right_padding_responses, padding_token=self.grpo_config.pad_token_id)
-        prompts_length_list = [len(item) for item in no_padding_prompts]
-        responses_length_list = [len(item) for item in no_padding_responses]
-        mean_prompts_length = np.array(prompts_length_list).mean()
-        mean_responses_length = np.array(responses_length_list).mean()
+        prompts_length_array = np.array([len(item) for item in no_padding_prompts])
+        responses_length_array = np.array([len(item) for item in no_padding_responses])
+        mean_prompts_length = prompts_length_array.mean()
+        mean_responses_length = responses_length_array.mean()
         total_size = n_questions * num_generations * num_rollouts
         self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
         self.total_processed_tokens += self.step_total_tokens
         logger.info(
-            f"#token_count# mean_prompt_len: {mean_prompts_length}, max_prompt_len: {np.array(prompts_length_list).max()}, min_prompt_len: {np.array(prompts_length_list).min()}")
+            f"token_count mean_prompt_len: {mean_prompts_length}, max_prompt_len: {prompts_length_array.max()}, min_prompt_len: {prompts_length_array.min()}")
         logger.info(
-            f"#token_count# mean_response_len: {mean_responses_length}, max_response_len: {np.array(responses_length_list).max()}, min_response_len: {np.array(responses_length_list).min()}")
-
+            f"token_count mean_response_len: {mean_responses_length}, max_response_len: {responses_length_array.max()}, min_response_len: {responses_length_array.min()}")
 
         prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=False)
         completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=False)
@@ -805,11 +804,10 @@ class GRPOTrainer:
                 self.train.offload_optimizer()
 
                 # load for reshard
-                self.infer.load_kvcache(init_kv_cache=True)
                 if self.reshard_mem_opt_level == 2:
                     self.train.offload_model()
                 else:
-                    self.infer.load(init_kv_cache=True)
+                    self.infer.load()
 
                 if self.transform.sync_ref_model and \
                     ((i + 1) % self.transform.ref_model_sync_steps == 0):

@@ -334,52 +334,45 @@ class InferWorker(Worker):
                     f"{strategy_path}/strategy_file/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
-    def offload(self, free_kv_cache=False):
-        """offload infer checkpoint"""
-        if self.on_device is False:
+    def offload(self):
+        """ offload infer """
+        if not self.on_device:
             return
         logger.info(f'before offload infer {ms.hal.memory_stats()}')
-        if self.use_vllm == VllmMode.ORIGIN:
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                param._offload()
-        else:
-            if free_kv_cache:
-                self.inference_engine.free_cache_engine()
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                if free_kv_cache and "paged_attention_mgr" in param.name:
-                    continue
-                param._offload()
+        start_time = time.time()
+        skip_kv_cache = False
+        if self.use_vllm == VllmMode.VLLM:
+            self.inference_engine.free_cache_engine()
+            skip_kv_cache = True
+        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            if skip_kv_cache and "paged_attention_mgr" in param.name:
+                continue
+            # pylint: disable=W0212
+            param._offload()
+        end_time = time.time()
+        logger.info(f'offload infer elapsed time {end_time - start_time}')
         logger.info(f'after offload infer {ms.hal.memory_stats()}')
         self.on_device = False
 
-    def load(self, init_kv_cache=False):
-        """ load infer checkpoint """
+    def load(self):
+        """ load infer """
         if self.on_device:
             return
-        logger.info(f'before load stf infer {ms.hal.memory_stats()}')
-        if self.use_vllm == VllmMode.ORIGIN:
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                # pylint: disable=W0212
-                param._load()
-        else:
-            if init_kv_cache:
-                self.inference_engine.init_cache_engine()
-            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-                if not init_kv_cache and "paged_attention_mgr" in param.name:
-                    continue
-                # pylint: disable=W0212
-                param._load()
-            logger.info(f'after load stf infer {ms.hal.memory_stats()}')
-        self.on_device = True
-
-    def load_kvcache(self, init_kv_cache=False):
-        logger.info(f'before load kvcache infer {ms.hal.memory_stats()}')
+        logger.info(f'before load infer {ms.hal.memory_stats()}')
+        start_time = time.time()
+        skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
-            if init_kv_cache:
-                self.inference_engine.init_cache_engine()
-        logger.info(f'after load kvcache infer {ms.hal.memory_stats()}')
+            self.inference_engine.init_cache_engine()
+            skip_kv_cache = True
+        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+            if skip_kv_cache and "paged_attention_mgr" in param.name:
+                continue
+            # pylint: disable=W0212
+            param._load()
+        end_time = time.time()
+        logger.info(f'load infer elapsed time {end_time - start_time}')
+        logger.info(f'after load infer {ms.hal.memory_stats()}')
+        self.on_device = True
 
     def load_checkpoint(self):
         """ load infer checkpoint """
