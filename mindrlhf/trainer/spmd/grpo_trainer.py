@@ -138,7 +138,11 @@ class GRPOTrainer:
             grpo_config.use_vllm = 0
         grpo_config.use_vllm = VllmMode(grpo_config.use_vllm)
         logger.info(f"vllm mode: {grpo_config.use_vllm}, hf_config_path: {grpo_config.hf_config_path}")
-
+        if grpo_config.save_prompt_completions_data and grpo_config.save_prompt_completions_interval <= 0:
+            logger.warning(f"save_prompt_completions_interval should be positive, "
+                           f"but got {grpo_config.save_prompt_completions_interval}. "
+                           f"Set save_prompt_completions_data to False.")
+            grpo_config.save_prompt_completions_data = False
         # for worker
         if args.custom_model_name == "qwen":
             self.tokenizer = Qwen2Tokenizer(
@@ -754,9 +758,8 @@ class GRPOTrainer:
                     MetricData.REWARD_PER_QUESTION.value: rewards,
                     MetricData.COMPLETION_LENGTH_PER_QUESTION.value: list(responses_length_list)
                 }
-                save_file_path = os.path.join(self.grpo_config.save_prompt_completions_dir,
-                                              f'prompt_completions_step_{self.make_exp_step}.json')
-                save_prompt_completions_data(save_file_path, **save_kwargs)
+                save_prompt_completions_data(self.grpo_config.save_prompt_completions_dir, self.make_exp_step,
+                                             **save_kwargs)
             logger.info(f'total step {self.make_exp_step} metrics: {metrics}')
 
             for i in range(len(all_packed)):
