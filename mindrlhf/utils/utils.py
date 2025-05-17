@@ -506,27 +506,43 @@ def convert_index_json_total(load_checkpoint, converted_dir, convert_map_dict_ls
         json.dump(total_weight_map, f, indent=2)
         logger.info(f"Converted file param_name_map.json")
 
+def get_unique_filename(save_file_path):
+    root, ext = os.path.splitext(save_file_path)
+    counter = 1
+    while True:
+        if not os.path.exists(save_file_path):
+            return save_file_path
+        save_file_path = f"{root}-{counter}{ext}"
+        counter += 1
 
-def save_prompt_completions_data(save_file_path, **kwargs):
+def save_prompt_completions_data(save_file_dir, global_step, **kwargs):
     """Save prompt completions data."""
-    data_dict = []
-    first_key = next(iter(kwargs))
-    data_length = len(kwargs[first_key])
+    if get_rank() == 0:
+        if not os.path.exists(save_file_dir):
+            os.makedirs(save_file_dir)
+        file_path = os.path.join(save_file_dir, f'prompt_completions_step_{global_step}.json')
+        file_path = get_unique_filename(file_path)
+        data_dict = []
+        first_key = next(iter(kwargs))
+        data_length = len(kwargs[first_key])
 
-    for i in range(data_length):
-        new_row = {}
-        for key, values in kwargs.items():
-            value = values[i]
-            if value is None:
-                new_row[key] = None
-            elif hasattr(value, 'item') and callable(getattr(value, 'item', None)):
-                new_row[key] = value.item()
-            else:
-                new_row[key] = value
-        data_dict.append(new_row)
-    with open(save_file_path, 'w', encoding='utf-8') as f:
-        json.dump(data_dict, f, ensure_ascii=False, indent=4)
-    logger.info(f"Saved data to {save_file_path}")
+        for i in range(data_length):
+            new_row = {}
+            for key, values in kwargs.items():
+                value = values[i]
+                if value is None:
+                    new_row[key] = None
+                elif hasattr(value, 'item') and callable(getattr(value, 'item', None)):
+                    new_row[key] = value.item()
+                else:
+                    new_row[key] = value
+            data_dict.append(new_row)
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data_dict, f, ensure_ascii=False, indent=4)
+            logger.info(f"Saved data to {file_path}")
+        except OSError as e:
+            logger.warning(f"Save File Error: {e}")
 
 
 def get_dp_rank(data_parallel):
