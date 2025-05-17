@@ -273,8 +273,6 @@ class TransformParametersD2D:
                 src_param._load()
             redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
             redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
-            if mem_opt_level in [1]:
-                src_param._offload()
             if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
                 _pynative_executor.sync()
                 if mem_opt_level in [1]:
@@ -301,6 +299,8 @@ class TransformParametersD2D:
                     # to sync dst value
                     self._dst_param_name_intersection[i].asnumpy()
                     self._dst_param_name_intersection[i]._offload()
+            if mem_opt_level in [1]:
+                src_param._offload()
 
     # pylint: disable=W0613
     def _preprocess_for_src_param(self, input_on_device_flag):

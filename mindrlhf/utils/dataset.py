@@ -10,6 +10,7 @@ class IteratorStore:
         self.store = store
 
     def __next__(self):
+        # pylint: disable=R1720
         if self._index >= self.length:
             raise StopIteration
         item = (
@@ -43,6 +44,7 @@ class GRPOIteratorStore:
         self.store = store
 
     def __next__(self):
+        # pylint: disable=R1720
         if self._index >= self.length:
             raise StopIteration
         item = (
@@ -53,6 +55,7 @@ class GRPOIteratorStore:
             self.store[self._index].actual_sequence_length,
             self.store[self._index].sample_index,
             self.store[self._index].sample_valid_length,
+            self.store[self._index].old_per_token_logps
         )
         self._index += 1
         return item

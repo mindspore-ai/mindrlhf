@@ -17,6 +17,13 @@
 export MS_ENABLE_LCCL=off
 export GLOG_v=3
 
+if [ $# -eq 0 ]
+  then
+    YAML_PATH="./qwen2_5/grpo_config_st.yaml"
+else
+    YAML_PATH=$1
+fi
+
 WORKDIR="$(realpath "$(dirname "$0")")"
 echo "WORKDIR is $WORKDIR"
 cd $WORKDIR
@@ -42,7 +49,7 @@ mkdir -p $WORKDIR/grpo_data
 msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=True --log_dir=$WORKDIR/qwen2_one_log \
 ./qwen2_5/grpo_train.py \
---config ./qwen2_5/grpo_config_st.yaml \
+--config $YAML_PATH \
 --sft_path_infer ./qwen2_5/predict_qwen2_5_7b_instruct_st.yaml \
 --sft_path_ref ./qwen2_5/ref_qwen2_5_7b_instruct_st.yaml \
 --sft_path_train ./qwen2_5/finetune_qwen2_5_7b_st.yaml \

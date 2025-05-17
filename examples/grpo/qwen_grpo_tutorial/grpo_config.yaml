@@ -74,6 +74,10 @@ enable_reshard_optimizer: False
 # 0: do not optimize mem during resharding
 # 1: offload all src and dst param during resharding
 reshard_mem_opt_level: 0
+# clip higher
+num_iterations: 2
+epsilon_low: 0.2
+epsilon_high: 0.2
 
 # vllm config
 use_vllm: 0  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
