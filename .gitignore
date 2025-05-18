@@ -19,3 +19,4 @@ kernel_meta*/
 *.npz
 *.npy
 *.json
+.idea/

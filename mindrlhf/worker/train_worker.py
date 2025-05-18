@@ -53,6 +53,7 @@ from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils.configs import set_weight_decay
+from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 class TrainWorker(Worker):
@@ -60,14 +61,25 @@ class TrainWorker(Worker):
     This class do grpo train.
     """
 
-    def __init__(self, grpo_config, sft_path_train, args):
+    def __init__(self, grpo_config: GRPOConfig, sft_path_train, args):
         super().__init__()
         logger.info("init TrainWorker")
         self.args = args
         self.grpo_config = grpo_config
         sft_config_train = MindFormerConfig(sft_path_train)
-        sft_config_train.use_parallel = args.use_parallel
+        sft_config_train.use_parallel = grpo_config.rl_config.use_parallel
         self.sft_config_train = sft_config_train
+        sft_config_train.parallel_config.data_parallel = grpo_config.actor_config.parallel_config.data_parallel
+        sft_config_train.parallel_config.model_parallel = grpo_config.actor_config.parallel_config.model_parallel
+        sft_config_train.parallel_config.pipeline_stage = grpo_config.actor_config.parallel_config.pipeline_stage
+        sft_config_train.parallel_config.expert_parallel = grpo_config.actor_config.parallel_config.expert_parallel
+        sft_config_train.parallel_config.use_seq_parallel = grpo_config.actor_config.parallel_config.use_seq_parallel
+        sft_config_train.parallel_config.micro_batch_num = grpo_config.actor_config.parallel_config.micro_batch_num
+        sft_config_train.parallel_config.vocab_emb_dp = grpo_config.actor_config.parallel_config.vocab_emb_dp
+        logger.info(f'sft_config_train.recompute_config:{sft_config_train.recompute_config}')
+        logger.info(f'grpo_config.actor_config.recompute_config:{grpo_config.actor_config.recompute_config.param_dict}')
+        sft_config_train.recompute_config = grpo_config.actor_config.recompute_config.param_dict
+        sft_config_train.model.model_config.offset = grpo_config.actor_config.offset
         sft_config_train.model.model_config.parallel_config = (
             sft_config_train.parallel_config
         )
@@ -76,6 +88,8 @@ class TrainWorker(Worker):
             sft_config_train.recompute_config
         )
         if args.custom_model_name in ["qwen", "llama"]:
+            use_eod_attn_mask_compression = grpo_config.actor_config.use_eod_attn_mask_compression
+            sft_config_train.model.model_config.use_eod_attn_mask_compression = use_eod_attn_mask_compression
             sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
             sft_model_config_train.model_name = "llama"
         elif args.custom_model_name == "deepseek":
@@ -96,14 +110,14 @@ class TrainWorker(Worker):
             raise ValueError(
                 f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}"
             )
-        sft_model_config_train.checkpoint_name_or_path = args.load_sft_checkpoint_train
+        sft_model_config_train.checkpoint_name_or_path = grpo_config.actor_config.load
         self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
         sft_model_config_train.checkpoint_name_or_path = None
 
         self.train_pp_stage = sft_model_config_train.parallel_config.pipeline_stage or 1
         self.enable_parallel_optimizer = (
-            sft_config_train.parallel.enable_parallel_optimizer
-            and sft_model_config_train.parallel_config.data_parallel > 1
+            grpo_config.actor_config.enable_parallel_optimizer
+            and grpo_config.actor_config.parallel_config.data_parallel > 1
         )
         context.set_auto_parallel_context(
             pipeline_stages=self.train_pp_stage,
@@ -118,7 +132,7 @@ class TrainWorker(Worker):
 
         self.model_on_device = True
         self.optimizer_on_device = True
-        self.save_strategy_dir = grpo_config.save_strategy_dir
+        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
         self.tensor_writer = self.args.tensor_writer
         self.global_training_step = 0
@@ -137,43 +151,43 @@ class TrainWorker(Worker):
         if self.train_pp_stage == 1:
             # for pipeline stage 1, the micro_batch_num is not used
             train_bs = (
-                self.grpo_config.batch_size
+                self.grpo_config.rl_config.batch_size
                 * self.sft_model_config_train.parallel_config.data_parallel
             )
         else:
             train_bs = (
-                self.grpo_config.batch_size
+                self.grpo_config.rl_config.batch_size
                 * self.sft_model_config_train.parallel_config.micro_batch_num
                 * self.sft_model_config_train.parallel_config.data_parallel
             )
         prompt_completion_ids = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length + 1), dtype=ms.int32
+            shape=(train_bs, self.grpo_config.rl_config.seq_length + 1), dtype=ms.int32
         )  # [bs, seq_len+1]
         responses_mask = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.int32
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32
         )  # [bs, seq_len]
         ref_per_token_logps = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
         )  # [bs, seq_len]
         advantages = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
         )  # [bs, seq_len]
         actual_seq_length = ms.Tensor(
-            shape=(train_bs, self.grpo_config.pack_num), dtype=ms.int32
+            shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
         sample_index = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.int32
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32
         )  # [bs, seq_len]
         sample_valid_len = ms.Tensor(
-            shape=(train_bs, self.grpo_config.pack_num), dtype=ms.int32
+            shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
         old_per_token_logps = ms.Tensor(
-            shape=(train_bs, self.grpo_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
         )  # [bs, seq_len]
 
         start_time = time.time()
         stage_name = "train"
-        strategy_path = self.grpo_config.save_strategy_dir
+        strategy_path = self.save_strategy_dir
         context.set_auto_parallel_context(
             strategy_ckpt_config={
                 "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
@@ -219,17 +233,18 @@ class TrainWorker(Worker):
 
     def load_checkpoint(self):
         """load_checkpoint"""
-        if self.sft_ckpt_path_train and self.args.load_ckpt_format == "safetensors":
+        logger.info(f'sft_ckpt_path_train:{self.sft_ckpt_path_train}')
+        if self.sft_ckpt_path_train and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
             self.on_device = True
             self._load_checkpoint_safetensors()
             return
         load_ckpt_func = (
             load_distributed_checkpoint
-            if self.grpo_config.use_parallel
+            if self.grpo_config.rl_config.use_parallel
             else ms.load_checkpoint
         )
         logger.info(
-            f"self.grpo_config.use_parallel is {self.grpo_config.use_parallel}, {load_ckpt_func}"
+            f"use_parallel is {self.grpo_config.rl_config.use_parallel}, {load_ckpt_func}"
         )
         if self.sft_ckpt_path_train:
             self.model_on_device = True
@@ -261,17 +276,18 @@ class TrainWorker(Worker):
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
             grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(grpo_model_train,
-                                                                    grpo_config.micro_batch_interleaved),
+                                                                    grpo_config.rl_config.micro_batch_interleaved),
                                               sft_model_config.parallel_config.micro_batch_num)
         else:
             logger.info("non-pipeline cell")
             grpo_with_loss_net = grpo_model_train
         grpo_with_loss = _VirtualDatasetCell(grpo_with_loss_net)
         lr = LearningRate(
-            learning_rate=grpo_config.start_lr,
-            end_learning_rate=grpo_config.end_lr,
-            warmup_steps=grpo_config.warmup_step,
-            decay_steps=grpo_config.decay_steps,
+            learning_rate=grpo_config.actor_config.lr_schedule.lr,
+            end_learning_rate=grpo_config.actor_config.lr_schedule.min_lr,
+            warmup_steps=grpo_config.actor_config.lr_schedule.warmup_step,
+            decay_steps=grpo_config.actor_config.lr_schedule.decay_steps,
+            use_cosine=grpo_config.actor_config.lr_schedule.lr_decay_style == 'cosine',
         )
         params = grpo_with_loss.trainable_params()
         if self.args.custom_model_name == "deepseek":
@@ -279,24 +295,24 @@ class TrainWorker(Worker):
         else:
             group_params = set_weight_decay(params)
 
-        if grpo_config.optimizer == "lamb":
+        if grpo_config.actor_config.optimizer.type == "lamb":
             optimizer = nn.Lamb(group_params, learning_rate=lr)
-        elif grpo_config.opt_offload:
+        elif grpo_config.actor_config.optimizer.opt_offload:
             optimizer = AdamWeightDecayOp(
                 group_params,
                 learning_rate=lr,
-                eps=grpo_config.eps,
-                beta1=grpo_config.beta1,
-                beta2=grpo_config.beta2,
+                eps=grpo_config.actor_config.optimizer.eps,
+                beta1=grpo_config.actor_config.optimizer.adam_beta1,
+                beta2=grpo_config.actor_config.optimizer.adam_beta2,
                 param_init_type=sft_model_config.param_init_type,
             )
         else:
             optimizer = FP32StateAdamWeightDecay(
                 group_params,
                 learning_rate=lr,
-                beta1=grpo_config.beta1,
-                beta2=grpo_config.beta2,
-                eps=grpo_config.eps,
+                beta1=grpo_config.actor_config.optimizer.adam_beta1,
+                beta2=grpo_config.actor_config.optimizer.adam_beta2,
+                eps=grpo_config.actor_config.optimizer.eps,
             )
 
         loss_scale_value = math.pow(2, 12)
@@ -372,12 +388,12 @@ class TrainWorker(Worker):
                 self.sft_model_config_train.parallel_config.micro_batch_num
             )
         batch_size = (
-            grpo_config.batch_size
+            grpo_config.rl_config.batch_size
             * self.sft_model_config_train.parallel_config.data_parallel
             * micro_batch_num
         )
         logger.info(
-            f"bs:{grpo_config.batch_size}, "
+            f"bs:{grpo_config.rl_config.batch_size}, "
             f"dp:{self.sft_model_config_train.parallel_config.data_parallel}, "
             f"micro_batch_num:{micro_batch_num}, "
             f"bs in dataset: {batch_size}"
@@ -399,7 +415,7 @@ class TrainWorker(Worker):
         iterator = dataset.create_dict_iterator()
         logger.info(f"dataset size is {len(dataset)}")
         train_start_time = time.time()
-        for epoch in range(self.grpo_config.num_iterations):
+        for epoch in range(self.grpo_config.rl_config.num_iterations):
             for step, databatch in enumerate(iterator):
 
                 ep_begin_time = time.time()
@@ -441,7 +457,7 @@ class TrainWorker(Worker):
         print_perf_stat(
             train_start_time,
             train_end_time,
-            f"train model {dataset.dataset_size} epochs and {self.grpo_config.num_iterations} steps"
+            f"train model {dataset.dataset_size} epochs and {self.grpo_config.rl_config.num_iterations} steps"
         )
 
     def offload_optimizer(self):
@@ -519,20 +535,21 @@ class TrainWorker(Worker):
 
     def save_checkpoint(self, rank_id=0, steps=0):
         """save checkpoint"""
-        if self.grpo_config.save_ckpt_dir:
-            logger.info("Save checkpoints in {}".format(self.grpo_config.save_ckpt_dir))
+        if self.grpo_config.actor_config.save:
             train_save_dir = os.path.join(
-                self.grpo_config.save_ckpt_dir, "train", f"rank_{rank_id}"
+                self.grpo_config.actor_config.save, "train", f"rank_{rank_id}"
             )
             if not os.path.exists(train_save_dir):
                 os.makedirs(train_save_dir)
-            grpo_filename = os.path.join(
-                train_save_dir, "policy_model_epoch_{}.ckpt".format(steps)
-            )
+            grpo_filename = os.path.join(train_save_dir, "policy_model_step_{}".format(steps))
+            if self.grpo_config.rl_config.load_ckpt_format == 'ckpt':
+                grpo_filename += '.ckpt'
+            logger.info(f"Save checkpoints in {grpo_filename}")
             ms.save_checkpoint(
                 self.grpo_model_train.grpo_model_train.policy_model,
                 grpo_filename,
                 integrated_save=False,
+                format=self.grpo_config.rl_config.load_ckpt_format,
             )
         else:
             logger.info("There is no checkpoint to save!")
@@ -551,7 +568,6 @@ class TrainWorker(Worker):
         """load safetensors checkpoint"""
         network = self.grpo_model_train.grpo_model_train.policy_model.model
         prefix = "grpo_model_train.policy_model.model."
-        name_map = None
         try:
             load_checkpoint_files = glob(
                 os.path.join(self.sft_ckpt_path_train, f"*.safetensors")

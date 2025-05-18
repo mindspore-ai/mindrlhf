@@ -50,18 +50,11 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --master_port=9190 --join=True --log_dir=$WORKDIR/qwen2_one_log \
 ./qwen2_5/grpo_train.py \
 --config $YAML_PATH \
---sft_path_infer ./qwen2_5/predict_qwen2_5_7b_instruct_st.yaml \
---sft_path_ref ./qwen2_5/ref_qwen2_5_7b_instruct_st.yaml \
---sft_path_train ./qwen2_5/finetune_qwen2_5_7b_st.yaml \
---vocab_path $vocab_path \
---merges_file_path $merges_path \
---mind_dataset_dir $data_path \
---save_data_file $WORKDIR/grpo_data/grpo.mindrecord \
---save_ckpt_dir $WORKDIR/ckpt/train \
---use_parallel True \
---load_sft_checkpoint_infer "" \
---load_sft_checkpoint_train "" \
---load_ref_checkpoint "" \
---enable_compile_cache False \
---reward_funcs "format_reward" \
---reward_weights 1.0
+--dataset_file $data_path \
+--save_checkpoint_dir $WORKDIR/ckpt/train \
+--tokenizer_dir "$WORKDIR/qwen2_5/" \
+--actor_checkpoint_path "" \
+--ref_checkpoint_path "" \
+--generate_checkpoint_path "" \
+--verifier_function "format_reward" \
+--verifier_weight 1.0

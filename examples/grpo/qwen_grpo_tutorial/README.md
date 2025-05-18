@@ -195,25 +195,19 @@ export MINDFORMERS_PATH="$MINDFORMERS_FILE $MINDFORMERS_PATH"
 随后使用以下命令拉起单机8卡GRPO训练任务，可以参考run_grpo.sh
 
 ```shell
-msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
---master_port=9190 --join=False --log_dir=./qwen2_5_one_log \
+msrun --worker_num=8 --local_worker_num=8 \
+--master_addr=127.0.0.1 --master_port=9887 \
+--join=True --log_dir=./prof_vllm_log \
 examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
---sft_path_infer ./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
---sft_path_train ./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
---vocab_path /{path}/vocab.json \
---merges_file_path /{path}/merges.txt \
---mind_dataset_dir /{path}/gsm8k_train.mindrecord \
---save_data_file /{path}/grpo.mindrecord \
---save_ckpt_dir /{path}/save_ckpt \
---use_parallel True \
---load_sft_checkpoint_infer /{path}/infer_ckpt \
---load_sft_checkpoint_train /{path}/train_ckpt \
---load_ref_checkpoint /{path}/ref_ckpt \
---load_ckpt_format 'ckpt' \
---enable_compile_cache False \
---tensorboard_dir /{path}/tensorboard/ \
---tensorboard_queue_size 10
+--dataset_file /path/to/datasets/gsm8k_train.mindrecord \
+--tokenizer_dir /path/to/configs/ \
+--actor_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--ref_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--generate_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--verifier_function "qwen_accuracy_reward,format_reward" \
+--verifier_weight "1.0,1.0" \
+--save_checkpoint_dir "/path/to/ckpt/"
 
 # 参数说明
 # msrun 参数
@@ -225,19 +219,14 @@ join:                         是否等待所有worker退出
 log_dir:                      日志路径
 # main.py 参数
 config:                       grpo的配置文件
-sft_path_infer:               推理用的模型配置文件
-sft_path_train:               训练用的模型配置文件
-vocab_path:                   模型对应的tokenizer文件vocab.json的路径
-merges_file_path:             模型对应的tokenizer文件merges.txt的路径
-mind_dataset_dir:             训练数据集mindrecord文件的路径
-save_data_file:               中间推理结果的保存路径(可选)
-save_ckpt_dir:                训练ckpt的保存路径
-use_parallel:                 是否并行
-load_sft_checkpoint_infer:    推理模型(分布式)ckpt文件路径
-load_sft_checkpoint_train:    训练模型(分布式)ckpt文件路径
-load_ref_checkpoint:          参考模型(分布式)ckpt文件路径
-load_ckpt_format:             加载权重格式，可选'ckpt'或'safetensors'
-enable_compile_cache:         是否使用编译缓存
+tokenizer_dir:                模型对应的tokenizer文件vocab.json和merges.txt所在的目录
+dataset_file:                 训练数据集mindrecord文件的路径
+save_checkpoint_dir:          训练ckpt的保存路径
+generate_checkpoint_path:        推理模型(分布式)ckpt文件路径
+actor_checkpoint_path:       训练模型(分布式)ckpt文件路径
+ref_checkpoint_path:          参考模型(分布式)ckpt文件路径
+verifier_function:                 reward函数
+verifier_weight:               reward的权重系数
 tensorboard_dir:              tensorboard落盘路径，仅在需要使用tensorboard记录时开启
 tensorboard_queue_size:       tensorboard缓存队列大小
 ```
@@ -289,24 +278,19 @@ export MS_JIT_MODULES=vllm_mindspore,research
 随后使用以下命令拉起单机8卡GRPO训练任务
 
 ```shell
-msrun --bind_core=True --worker_num=8 --local_worker_num=8 \
+msrun --worker_num=8 --local_worker_num=8 \
 --master_addr=127.0.0.1 --master_port=9887 \
 --join=True --log_dir=./prof_vllm_log \
-./main.py \
---config ./grpo_config.yaml \
---sft_path_infer /path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
---sft_path_train /path/to/mindrlhf/model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
---vocab_path /{path}/vocab.json \
---merges_file_path /{path}/merges.txt \
---mind_dataset_dir /{path}/gsm8k_train.mindrecord \
---save_data_file /{path}/grpo.mindrecord \
---save_ckpt_dir /{path}/save_ckpt \
---use_parallel True \
---load_sft_checkpoint_infer /{path}/infer_ckpt \
---load_sft_checkpoint_train /{path}/train_ckpt \
---load_ref_checkpoint /{path}/ref_ckpt \
---enable_compile_cache False
---use_vllm 1 > vllm.log 2>&1 &
+examples/grpo/qwen_grpo_tutorial/main.py \
+--config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
+--dataset_file /path/to/datasets/gsm8k_train.mindrecord \
+--tokenizer_dir /path/to/configs/ \
+--actor_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--ref_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--generate_checkpoint_path /path/to/weights/qwen2_5_7b/ \
+--verifier_function "qwen_accuracy_reward,format_reward" \
+--verifier_weight "1.0,1.0" \
+--save_checkpoint_dir /path/to/ckpt/ > vllm.log 2>&1 &
 
 # 参数说明
 # vllm config

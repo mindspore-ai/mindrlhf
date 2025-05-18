@@ -19,6 +19,7 @@ import mindspore.nn as nn
 from mindspore import Tensor, ops, mint
 from mindspore.ops import operations as P
 from mindrlhf.utils.generator import GeneratorMixin
+from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindformers.models.utils import lazy_inline
 from mindformers import logger
 from .base_model import BaseModel
@@ -32,7 +33,7 @@ class CausalLMHybrid(BaseModel):
     """
     CausalLMHybrid
     """
-    def __init__(self, model_config, grpo_config, is_training=True):
+    def __init__(self, model_config, grpo_config: GRPOConfig, is_training=True):
         super(CausalLMHybrid, self).__init__()
         if not is_training:
             model_config.dropout_rate = 0.0
@@ -45,8 +46,8 @@ class CausalLMHybrid(BaseModel):
         cp = model_config.parallel_config.context_parallel
 
         self.vocab_size = model_config.vocab_size
-        self.chunk_size = grpo_config.chunk_size
-        self.seq_length = grpo_config.seq_length
+        self.chunk_size = grpo_config.rl_config.chunk_size
+        self.seq_length = grpo_config.rl_config.seq_length
         self.cast = P.Cast()
         self.all_ones_attention_mask = Tensor(
             np.ones((1, 1, self.seq_length)), mstype.float32
@@ -195,15 +196,15 @@ class CausalLMHybrid(BaseModel):
 class GRPOModel(nn.Cell, GeneratorMixin):
     """ GRPOModel """
     @lazy_inline
-    def __init__(self, grpo_config, policy_model):
+    def __init__(self, grpo_config: GRPOConfig, policy_model):
         super(GRPOModel, self).__init__()
         self.grpo_config = grpo_config
-        self.beta = grpo_config.beta
-        self.pad_token_id = Tensor(grpo_config.pad_token_id, mstype.int32)
+        self.beta = grpo_config.rl_config.beta
+        self.pad_token_id = Tensor(grpo_config.generate_config.sampling_config.pad_token_id, mstype.int32)
         self.policy_model = policy_model
-        self.num_iterations = self.grpo_config.num_iterations
-        self.epsilon_high = self.grpo_config.epsilon_high
-        self.epsilon_low = self.grpo_config.epsilon_low
+        self.num_iterations = self.grpo_config.rl_config.num_iterations
+        self.epsilon_high = self.grpo_config.rl_config.epsilon_high
+        self.epsilon_low = self.grpo_config.rl_config.epsilon_low
         logger.info(f"num_iterations: {self.num_iterations}, "
                     f"epsilon_low: {self.epsilon_low}, epsilon_high: {self.epsilon_high}")
 
@@ -218,8 +219,9 @@ class GRPOModel(nn.Cell, GeneratorMixin):
     def masked_mean(self, tensor, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
         if mask is None:
             return tensor.mean(axis=dim)
-        deno = self.batch_unsorted_segment_sum((tensor * mask), sample_index, pack_sample_num)  # [bs, packed_sample_num]
-        nume = sample_valid_len  #  [bs, packed_sample_num]
+        deno = self.batch_unsorted_segment_sum((tensor * mask), sample_index,
+                                               pack_sample_num)  # [bs, packed_sample_num]
+        nume = sample_valid_len  # [bs, packed_sample_num]
         return deno / nume
 
     def compute_approx_kl(self, log_probs, log_probs_base):
@@ -235,7 +237,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
 
         Args:
             input_ids: shape (batch_size, seq_len)
-            segment_ids: shape (batch_size, seq_len)
+            segments_ids: shape (batch_size, seq_len)
             num_segments: int
         Returns:
             shape (batch_size, num_segments)
@@ -271,7 +273,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
             actual_seq_length,  # [bs, packed_sample_num]
             sample_index, #[bs, seq_len]
             sample_valid_len,  #[bs, packed_sample_num]
-            old_per_token_logps # [bs, seq_len]
+            old_per_token_logps  # [bs, seq_len]
         ):
         """ construct function for GRPOModel """
         # bs, seq_len = prompt_completion_ids.shape
@@ -311,7 +313,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
 
 
 class GRPOModelInfer(nn.Cell):
-    def __init__(self, grpo_config, policy_model):
+    def __init__(self, grpo_config: GRPOConfig, policy_model):
         super(GRPOModelInfer, self).__init__()
         self.grpo_model = GRPOModel(grpo_config, policy_model)
 
@@ -320,7 +322,7 @@ class GRPOModelInfer(nn.Cell):
 
 
 class GRPOModelTrain(nn.Cell):
-    def __init__(self, grpo_config, policy_model):
+    def __init__(self, grpo_config: GRPOConfig, policy_model):
         super(GRPOModelTrain, self).__init__()
         self.grpo_model_train = GRPOModel(grpo_config, policy_model)
 

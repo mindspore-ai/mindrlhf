@@ -36,6 +36,7 @@ from research.deepseek3.deepseek3_config import DeepseekV3Config
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import print_perf_stat, _get_pipeline_group
+from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 class RefWorker(Worker):
@@ -43,18 +44,32 @@ class RefWorker(Worker):
     This class generates responses.
     """
 
-    def __init__(self, grpo_config, sft_path_ref, args):
+    def __init__(self, grpo_config: GRPOConfig, sft_path_ref, args):
         super().__init__()
         logger.info("init RefWorker")
         self.args = args
-        self.use_parallel = grpo_config.use_parallel
+        self.use_parallel = grpo_config.rl_config.use_parallel
         ref_config = MindFormerConfig(sft_path_ref)
-        ref_config.use_parallel = args.use_parallel
+        ref_config.use_parallel = self.use_parallel
+        ref_config.parallel_config.data_parallel = grpo_config.ref_config.parallel_config.data_parallel
+        ref_config.parallel_config.model_parallel = grpo_config.ref_config.parallel_config.model_parallel
+        ref_config.parallel_config.pipeline_stage = grpo_config.ref_config.parallel_config.pipeline_stage
+        ref_config.parallel_config.expert_parallel = grpo_config.ref_config.parallel_config.expert_parallel
+        ref_config.parallel_config.use_seq_parallel = grpo_config.ref_config.parallel_config.use_seq_parallel
+        ref_config.parallel_config.micro_batch_num = grpo_config.ref_config.parallel_config.micro_batch_num
+        ref_config.parallel_config.vocab_emb_dp = grpo_config.ref_config.parallel_config.vocab_emb_dp
+        logger.info(f'ref_config.recompute_config:{ref_config.recompute_config}')
+        logger.info(f'grpo_config.ref_config.recompute_config:{grpo_config.ref_config.recompute_config.param_dict}')
+        ref_config.recompute_config = grpo_config.ref_config.recompute_config.param_dict
+        ref_config.model.model_config.offset = grpo_config.ref_config.offset
         ref_config.model.model_config.parallel_config = ref_config.parallel_config
+        ref_config.model.model_config.parallel_config.recompute = ref_config.recompute_config
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage
         self.ref_config = ref_config
         ref_config.model.model_config.use_past = False
         if args.custom_model_name in ["qwen", "llama"]:
+            use_eod_attn_mask_compression = grpo_config.ref_config.use_eod_attn_mask_compression
+            ref_config.model.model_config.use_eod_attn_mask_compression = use_eod_attn_mask_compression
             ref_model_config = LlamaConfig(**ref_config.model.model_config)
             ref_model_config.model_name = "llama"
         elif args.custom_model_name == "deepseek":
@@ -81,7 +96,7 @@ class RefWorker(Worker):
         create_group(pipeline_group_name, rank_list)
         logger.info(f"end create pipeline {pipeline_group_name}")
         self.all_reduce = ops.AllReduce(group=pipeline_group_name)
-        ref_model_config.checkpoint_name_or_path = args.load_ref_checkpoint
+        ref_model_config.checkpoint_name_or_path = grpo_config.ref_config.load
         self.ref_model_config = ref_model_config
         self.ref_ckpt_path = self.get_ref_ckpt_path
         ref_model_config.checkpoint_name_or_path = None
@@ -93,7 +108,7 @@ class RefWorker(Worker):
         self.grpo_config = grpo_config
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage or 1
         self.ref_dp = ref_config.parallel_config.data_parallel
-        self.save_strategy_dir = grpo_config.save_strategy_dir
+        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
     def model(self):
         return self.ref_model
@@ -111,17 +126,17 @@ class RefWorker(Worker):
         context.set_auto_parallel_context(
             pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False
         )
-        total_ref_model_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
+        total_ref_model_batch_size = self.grpo_config.ref_config.ref_model_batch_size * self.ref_dp
         fake_data = ms.Tensor(
-            shape=(total_ref_model_batch_size, self.grpo_config.seq_length),
+            shape=(total_ref_model_batch_size, self.grpo_config.rl_config.seq_length),
             dtype=ms.int32,
         )
         actual_seq_data = ms.Tensor(
-            shape=(total_ref_model_batch_size, self.grpo_config.pack_num),
+            shape=(total_ref_model_batch_size, self.grpo_config.rl_config.pack_num),
             dtype=ms.int32,
         )
         stage_name = "infer"
-        strategy_path = self.grpo_config.save_strategy_dir
+        strategy_path = self.grpo_config.rl_config.save_strategy_dir
         context.set_auto_parallel_context(
             strategy_ckpt_config={
                 "save_file": f"{strategy_path}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"
@@ -204,7 +219,8 @@ class RefWorker(Worker):
 
     def load_checkpoint(self):
         """load_checkpoint"""
-        if self.ref_ckpt_path and self.args.load_ckpt_format == "safetensors":
+        logger.info(f'ref_ckpt_path:{self.ref_ckpt_path}')
+        if self.ref_ckpt_path and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
             self.on_device = True
             self._load_checkpoint_safetensors()
             return
@@ -212,7 +228,7 @@ class RefWorker(Worker):
             load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         )
         logger.info(
-            f"self.grpo_config.use_parallel is {self.use_parallel} {load_ckpt_func}"
+            f"use_parallel is {self.use_parallel} {load_ckpt_func}"
         )
         if self.ref_ckpt_path:
             self.on_device = True
