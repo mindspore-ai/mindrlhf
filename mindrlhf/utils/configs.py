@@ -146,7 +146,7 @@ def init_configs(args=None):
 
 
 def init_network_and_optimizer(trainer):
-    '''init network and optimizer'''
+    """init network and optimizer"""
     sft_model_config = trainer.sft_model_config_train
     ppo_config = trainer.ppo_config
     if sft_model_config.parallel_config.pipeline_stage > 1:
@@ -201,6 +201,7 @@ def init_ppo_dataset(trainer):
         dataset = MindDataset(dataset_files=ppo_config.save_data_file, shuffle=False)
         dataset = dataset.project(columns=column_names)
     else:
+        from dataset import IteratorStore
         pipeline = IteratorStore(trainer.store)
         dataset = GeneratorDataset(pipeline, column_names=column_names)
     type_cast_op_int32 = TypeCast(mindspore.int32)

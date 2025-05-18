@@ -30,7 +30,10 @@ def accuracy_reward(completions, solution, **kwargs):
 
     for content, sol in zip(completions, solution):
         response = re.sub(r"(\d),(\d)", r"\1\2", content)
-        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", response)
+        if kwargs.get('model_name') == 'qwen':
+            numbers = re.findall(r"boxed{([-+]?\d+)}", response)
+        else:
+            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", response)
         if numbers:
             predictions = numbers[-1]
         else:
@@ -52,6 +55,7 @@ def accuracy_reward(completions, solution, **kwargs):
 # pylint: disable=W0613
 def accuracy_reward_2(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
+    import importlib
     latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
     # pylint: disable=C0103
     NormalizationConfig = latex2sympy2_extended.NormalizationConfig
@@ -107,6 +111,13 @@ def accuracy_reward_2(completions, solution, **kwargs):
         rewards.append(reward)
 
     return rewards, answer_parsed_lst
+
+
+def qwen_accuracy_reward(completions, solution, **kwargs):
+    """Reward function that checks if the completion is the same as the ground truth."""
+    rewards, answer_parsed_lst = accuracy_reward(completions, solution, model_name='qwen')
+    return rewards, answer_parsed_lst
+
 
 # pylint: disable=W0613
 def format_reward(completions, **kwargs):

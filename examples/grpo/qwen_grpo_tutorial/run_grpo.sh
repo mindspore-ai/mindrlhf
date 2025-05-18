@@ -22,15 +22,11 @@ msrun --worker_num=32 --local_worker_num=8 --node_rank=$noderank --master_addr=$
 --master_port=9190 --join=False --log_dir=./qwen2_one_log_$noderank \
 examples/grpo/qwen_grpo_tutorial/main.py \
 --config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
---sft_path_infer /path/to/predict_xxx.yaml \
---sft_path_train /path/to/finetune_xxx.yaml \
---vocab_path /path/to/vocab.json \
---merges_file_path /path/to/merges.txt \
---mind_dataset_dir /path/to/grpo_data/cvalues_one.mindrecord \
---save_data_file ./grpo_1024_$noderank.mindrecord \
---save_ckpt_dir /path/to/ckpt/train \
---use_parallel True \
---load_sft_checkpoint_infer "/path/to/ckpt/infer" \
---load_sft_checkpoint_train "/path/to/ckpt/train/" \
---load_ref_checkpoint "/path/to/ckpt/infer" \
---enable_compile_cache False \
+--tokenizer_dir /path/to/ \
+--dataset_file /path/to/grpo_data/cvalues_one.mindrecord \
+--save_checkpoint_dir /path/to/ckpt/train \
+--ref_checkpoint_path "/path/to/ckpt/infer" \
+--actor_checkpoint_path "/path/to/ckpt/train/" \
+--generate_checkpoint_path "/path/to/ckpt/infer" \
+--verifier_function "accuracy_reward,format_reward" \
+--verifier_weight "1.0,1.0"

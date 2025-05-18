@@ -9,17 +9,11 @@ msrun --worker_num=8 --local_worker_num=8 \
 --master_addr=127.0.0.1 --master_port=9887 \
 --join=True --log_dir=./prof_vllm_log \
 --sim_level=$MS_SIMULATION_LEVEL --sim_rank_id=0 \
-./main.py \
---config ./grpo_config.yaml \
---sft_path_infer /path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml \
---sft_path_train /path/to/mindrlhf/model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml \
---vocab_path /path/to/vocab.json \
---merges_file_path /path/to/merges.txt \
---mind_dataset_dir /path/to/limr_template_qwenr1.mindrecord \
---save_data_file /path/to/grpo_1024.mindrecord \
---save_ckpt_dir /path/to/train \
---use_parallel True \
---enable_compile_cache False \
---load_sft_checkpoint_infer "/path/to/qwen25_7b" \
---load_sft_checkpoint_train "/path/to/qwen25_7b" \
---load_ref_checkpoint "/path/to/qwen25_7b" > dryrun.log 2>&1 &
+examples/grpo/qwen_grpo_tutorial/main.py \
+--config examples/grpo/qwen_grpo_tutorial/grpo_config.yaml \
+--tokenizer_dir /path/to/configs/ \
+--dataset_file /path/to/limr_template_qwenr1.mindrecord \
+--save_checkpoint_dir /path/to/train \
+--actor_checkpoint_path "/path/to/qwen25_7b" \
+--ref_checkpoint_path "/path/to/qwen25_7b" \
+--generate_checkpoint_path "/path/to/qwen25_7b" > dryrun.log 2>&1 &

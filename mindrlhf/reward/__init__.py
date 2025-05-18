@@ -13,7 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """reward functions"""
-from .reward_fn import reward_func_from_jiaoda, accuracy_reward, accuracy_reward_2, format_reward
+from .reward_fn import reward_func_from_jiaoda, accuracy_reward, accuracy_reward_2, format_reward, qwen_accuracy_reward
 
 
-__all__ = ["reward_func_from_jiaoda", "accuracy_reward", "accuracy_reward_2", "format_reward"]
+__all__ = ["reward_func_from_jiaoda", "accuracy_reward", "accuracy_reward_2", "format_reward", "qwen_accuracy_reward"]

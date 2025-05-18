@@ -45,6 +45,7 @@ from mindformers.tools.ckpt_transform import TransformCkpt
 from mindformers import logger
 
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
+from mindrlhf.configs.grpo_configs import GRPOConfig
 
 __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'FP32StateAdamWeightDecay', 'TimePoint', 'LearningRate',
@@ -416,6 +417,8 @@ def get_valid_length_each_example(input_ids, pad_token_id):
 
 def transfer_from_str_to_bool(input_str):
     """transfer from string to bool"""
+    if isinstance(input_str, bool):
+        return input_str
     if input_str.lower() == "true":
         return True
     if input_str.lower() == "false":
@@ -474,9 +477,9 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
     )
 
 
-def set_perf_stats(grpo_config):
+def set_perf_stats(grpo_config: GRPOConfig):
     global PERF_STATS
-    if grpo_config.performance_stats:
+    if grpo_config.rl_config.performance_stats:
         logger.info("grpo performance statistics is on")
         PERF_STATS = True
 
