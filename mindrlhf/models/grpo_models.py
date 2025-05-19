@@ -216,10 +216,10 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.cast = P.Cast()
         self.dump = P.TensorDump()
 
-    def masked_mean(self, tensor, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
+    def masked_mean(self, data, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
         if mask is None:
-            return tensor.mean(axis=dim)
-        deno = self.batch_unsorted_segment_sum((tensor * mask), sample_index,
+            return data.mean(axis=dim)
+        deno = self.batch_unsorted_segment_sum((data * mask), sample_index,
                                                pack_sample_num)  # [bs, packed_sample_num]
         nume = sample_valid_len  # [bs, packed_sample_num]
         return deno / nume
