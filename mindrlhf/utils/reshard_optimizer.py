@@ -89,7 +89,11 @@ class ReshardOptimizer:
             tensor_map = [-1] * len(layout.tensor_map)
             tensor_map[cut_axises[0]] = len(dev_mat) - 1 - index
             return Layout(dev_mat, tensor_map)
-        return Layout([self.world_size, 1], [0])
+
+        dev_mat = [self.world_size]
+        dev_mat.extend([1] * len(layout.tensor_map))
+        tensor_map = list(range(len(layout.tensor_map)))[::-1]
+        return Layout(dev_mat, tensor_map)
 
     @classmethod
     def _find_layout(cls, same_data_labels: List) -> Tuple[List, int]:
@@ -265,3 +269,50 @@ class ReshardOptimizer:
         for i in range(n):
             ans.append(int_to_base_list(i, dev_matrix))
         return ans
+
+
+def apply_opt_communication_groups():
+    """
+    Modify the communication domain of the model
+    """
+    if OPT_COMMUNICATION_GROUPS:
+        from mindformers.experimental.parallel_core.pynative.parallel_state import GroupInfo, group_info_maps
+        from mindspore.communication import get_rank, create_group
+
+        logger.info(f"OPT_COMMUNICATION_GROUPS: {OPT_COMMUNICATION_GROUPS}")
+        rank = get_rank()
+
+        # Create tp group
+        group_info_maps["tp"] = GroupInfo()
+
+        for ranks in OPT_COMMUNICATION_GROUPS["tp"]:
+            if rank in ranks:
+                group = "tp" + "-" + "-".join([str(i) for i in ranks])
+                group_info_maps["tp"].group = group
+                group_info_maps["tp"].global_ranks = ranks
+                group_info_maps["tp"].world_size = len(ranks)
+                group_info_maps["tp"].is_group_created = True
+                create_group(group_info_maps["tp"].group, group_info_maps["tp"].global_ranks)
+                break
+
+        # Create dp group
+        group_info_maps["dp"] = GroupInfo()
+
+        for ranks in OPT_COMMUNICATION_GROUPS["dp"]:
+            if rank in ranks:
+                group = "dp" + "-" + "-".join([str(i) for i in ranks])
+                group_info_maps["dp"].group = group
+                group_info_maps["dp"].global_ranks = ranks
+                group_info_maps["dp"].world_size = len(ranks)
+                group_info_maps["dp"].is_group_created = True
+                create_group(group_info_maps["dp"].group, group_info_maps["dp"].global_ranks)
+                break
+
+        logger.info(
+            f"tp group_info_maps: {group_info_maps['tp'].group} | {group_info_maps['tp'].world_size} | "
+            f"{group_info_maps['tp'].rank} | {group_info_maps['tp'].global_ranks}"
+        )
+        logger.info(
+            f"dp group_info_maps: {group_info_maps['dp'].group} | {group_info_maps['dp'].world_size} | "
+            f"{group_info_maps['dp'].rank} | {group_info_maps['dp'].global_ranks}"
+        )

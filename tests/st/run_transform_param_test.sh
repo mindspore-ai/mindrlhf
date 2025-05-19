@@ -15,6 +15,7 @@
 # ============================================================================
 
 export GLOG_v=3
+export HCCL_IF_BASE_PORT=30002
 
 master_port=$1
 case_name=$2

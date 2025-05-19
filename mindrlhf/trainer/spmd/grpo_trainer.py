@@ -88,6 +88,24 @@ class GRPOTrainer:
         self.total_processed_tokens = 0
         self.total_time = 0
 
+        self.reshard_optimizer = None
+        if self.grpo_config.rl_config.enable_reshard_optimizer:
+            logger.info("GRPOTrainer: start init Reshard Optimizer")
+
+            self.reshard_optimizer = reshard_optimizer.ReshardOptimizer(
+                src_parallel=reshard_optimizer.Parallel(
+                    dp=self.grpo_config.actor_config.parallel_config.data_parallel,
+                    tp=self.grpo_config.actor_config.parallel_config.model_parallel,
+                    pp=self.grpo_config.actor_config.parallel_config.pipeline_stage,
+                ),
+                dst_parallel=reshard_optimizer.Parallel(
+                    dp=self.grpo_config.generate_config.parallel_config.data_parallel,
+                    tp=self.grpo_config.generate_config.parallel_config.model_parallel,
+                    pp=self.grpo_config.generate_config.parallel_config.pipeline_stage,
+                ),
+            )
+            reshard_optimizer.OPT_COMMUNICATION_GROUPS = self.reshard_optimizer.opt_communication_groups
+
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config, sft_path_infer=self.sft_path_infer, args=self.args)
         # grpo_config infer and train share
@@ -105,7 +123,6 @@ class GRPOTrainer:
             logger.info(f"set packing_sample_length to {self.grpo_config.rl_config.packing_sample_length}")
         logger.info("GRPOTrainer: finish init workers")
 
-        self.reshard_optimizer = None
         self.reshard_mem_opt_level = self.grpo_config.rl_config.reshard_mem_opt_level
         if self.reshard_mem_opt_level not in [0, 1]:
             raise ValueError(f"reshard_mem_opt_level can only be 0 or 1, but got {self.reshard_mem_opt_level}")
@@ -284,28 +301,6 @@ class GRPOTrainer:
         """
         compile model
         """
-        enable_reshard_optimizer = self.grpo_config.rl_config.enable_reshard_optimizer
-        logger.info(f"enable_reshard_optimizer:{enable_reshard_optimizer}")
-        if enable_reshard_optimizer:
-            logger.info("Reshard Optimizer is enabled")
-
-            train_parallel_config = self.grpo_config.actor_config.parallel_config
-            infer_parallel_config = self.grpo_config.generate_config.parallel_config
-
-            self.reshard_optimizer = reshard_optimizer.ReshardOptimizer(
-                src_parallel=reshard_optimizer.Parallel(
-                    dp=train_parallel_config.data_parallel,
-                    tp=train_parallel_config.model_parallel,
-                    pp=train_parallel_config.pipeline_stage,
-                ),
-                dst_parallel=reshard_optimizer.Parallel(
-                    dp=infer_parallel_config.data_parallel,
-                    tp=infer_parallel_config.model_parallel,
-                    pp=infer_parallel_config.pipeline_stage,
-                ),
-            )
-            reshard_optimizer.OPT_COMMUNICATION_GROUPS = self.reshard_optimizer.opt_communication_groups
-
         start_time = time.time()
         self.infer.generate_strategy(self.reshard_optimizer)
         self.ref.compile()

@@ -206,3 +206,34 @@ def test_tp_zero():
     src_layout = Layout(dev_mat=[2, 4], tensor_map=[-1, 0])
     dst_layout = reshard_optimizer.get_dst_layout(src_layout)
     assert dst_layout == Layout(dev_mat=[2, 2, 2], tensor_map=[-1, 1])
+
+
+@pytest.mark.reshard_optimizer_comm
+def test_comm_1():
+    """
+    Feature: transform param with zero redundancy
+    Description: dptppp transform
+    Expectation: Run success
+    """
+    reshard_optimizer = ReshardOptimizer(
+        src_parallel=Parallel(dp=2, tp=4, pp=1), dst_parallel=Parallel(dp=4, tp=2, pp=1)
+    )
+    assert reshard_optimizer.opt_communication_groups["tp"] == [[0, 2], [1, 3], [4, 6], [5, 7]]
+
+
+@pytest.mark.reshard_optimizer_comm
+def test_comm_2():
+    """
+    Feature: transform param with zero redundancy
+    Description: dptppp transform
+    Expectation: Run success
+    """
+    reshard_optimizer = ReshardOptimizer(
+        src_parallel=Parallel(dp=2, tp=8, pp=1), dst_parallel=Parallel(dp=4, tp=4, pp=1)
+    )
+    assert reshard_optimizer.opt_communication_groups["tp"] == [
+        [0, 2, 4, 6],
+        [1, 3, 5, 7],
+        [8, 10, 12, 14],
+        [9, 11, 13, 15],
+    ]
