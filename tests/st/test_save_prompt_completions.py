@@ -17,7 +17,7 @@
 import os
 import pytest
 
-from mindrlhf.utils import yaml_to_dataclass, MetricData, save_prompt_completions_data
+from mindrlhf.utils import MetricData, save_prompt_completions_data
 from mindrlhf.configs.grpo_configs import GRPOConfig
 
 prompts = [
@@ -54,7 +54,7 @@ def test_save_interval_1():
     Expectation: Run success
     """
     config_path = 'qwen2_5/grpo_config_st.yaml'
-    grpo_config = yaml_to_dataclass(config_path, GRPOConfig)
+    grpo_config = GRPOConfig(config_path)
     grpo_config.save_prompt_completions_data = True
     grpo_config.save_prompt_completions_interval = 1
     grpo_config.save_prompt_completions_dir = './test_save_interval_1'
@@ -84,7 +84,7 @@ def test_save_interval_5():
     Expectation: Run success
     """
     config_path = 'qwen2_5/grpo_config_st.yaml'
-    grpo_config = yaml_to_dataclass(config_path, GRPOConfig)
+    grpo_config = GRPOConfig(config_path)
     grpo_config.save_prompt_completions_data = True
     grpo_config.save_prompt_completions_interval = 5
     grpo_config.save_prompt_completions_dir = './test_save_interval_5'
