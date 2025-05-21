@@ -71,13 +71,10 @@ class InferWorker(Worker):
         self.args = args
         sft_config_infer = MindFormerConfig(sft_path_infer)
         sft_config_infer.use_parallel = grpo_config.rl_config.use_parallel
-        sft_config_infer.parallel_config.data_parallel = grpo_config.generate_config.parallel_config.data_parallel
-        sft_config_infer.parallel_config.model_parallel = grpo_config.generate_config.parallel_config.model_parallel
-        sft_config_infer.parallel_config.pipeline_stage = grpo_config.generate_config.parallel_config.pipeline_stage
-        sft_config_infer.parallel_config.expert_parallel = grpo_config.generate_config.parallel_config.expert_parallel
-        sft_config_infer.parallel_config.use_seq_parallel = grpo_config.generate_config.parallel_config.use_seq_parallel
-        sft_config_infer.parallel_config.micro_batch_num = grpo_config.generate_config.parallel_config.micro_batch_num
-        sft_config_infer.parallel_config.vocab_emb_dp = grpo_config.generate_config.parallel_config.vocab_emb_dp
+        sft_config_infer.parallel_config = MindFormerConfig(
+            **grpo_config.generate_config.parallel_config.param_dict
+        )
+        logger.info(f'generate parallel_config:{sft_config_infer.parallel_config}')
         sft_config_infer.model.model_config.offset = grpo_config.generate_config.offset
         sft_config_infer.model.model_config.max_decode_length = grpo_config.generate_config.sampling_config.max_tokens
         sft_config_infer.model.model_config.min_decode_length = grpo_config.generate_config.sampling_config.min_tokens
@@ -88,6 +85,8 @@ class InferWorker(Worker):
         # Reentrancy protection for distributed init.
         if not GlobalComm.INITED:
             logger.info(f"launch actor roll out sft_config_infer.use_parallel {sft_config_infer.use_parallel}")
+            sft_config_infer.context = grpo_config.context.param_dict
+            logger.info(f'sft_config_infer.context:{sft_config_infer.context}')
             build_context(sft_config_infer)
         build_parallel_config(sft_config_infer)
         context.set_context(

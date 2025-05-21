@@ -54,22 +54,18 @@ class OldPolicyWorker(Worker):
             self.args = args
             old_policy_config = MindFormerConfig(sft_path_train)
             old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
-            old_policy_config.parallel_config.data_parallel = grpo_config.actor_config.parallel_config.data_parallel
-            old_policy_config.parallel_config.model_parallel = grpo_config.actor_config.parallel_config.model_parallel
-            old_policy_config.parallel_config.pipeline_stage = grpo_config.actor_config.parallel_config.pipeline_stage
-            old_policy_config.parallel_config.expert_parallel = (
-                grpo_config.actor_config.parallel_config.expert_parallel)
-            old_policy_config.parallel_config.use_seq_parallel = (
-                grpo_config.actor_config.parallel_config.use_seq_parallel)
-            old_policy_config.parallel_config.micro_batch_num = (
-                grpo_config.actor_config.parallel_config.micro_batch_num)
-            old_policy_config.parallel_config.vocab_emb_dp = grpo_config.actor_config.parallel_config.vocab_emb_dp
+            old_policy_config.parallel_config = MindFormerConfig(
+                **grpo_config.actor_config.parallel_config.param_dict
+            )
+            logger.info(f'old_policy parallel_config:{old_policy_config.parallel_config}')
             old_policy_config.recompute_config = grpo_config.actor_config.recompute_config.param_dict
             logger.info(f'old_policy_config recompute_config:{old_policy_config.recompute_config}')
             old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
             old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
 
             if args.custom_model_name in ["qwen", "llama"]:
+                old_policy_config.model.model_config.use_eod_attn_mask_compression = \
+                    grpo_config.actor_config.use_eod_attn_mask_compression
                 old_policy_model_config = LlamaConfig(**old_policy_config.model.model_config)
                 old_policy_model_config.model_name = "llama"
             elif args.custom_model_name == "deepseek":

@@ -54,6 +54,4 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --tokenizer_dir "$WORKDIR/qwen2_5/" \
 --actor_checkpoint_path "" \
 --ref_checkpoint_path "" \
---generate_checkpoint_path "" \
---verifier_function "format_reward" \
---verifier_weight 1.0
+--generate_checkpoint_path ""

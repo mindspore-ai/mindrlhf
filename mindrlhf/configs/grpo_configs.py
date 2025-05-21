@@ -21,7 +21,7 @@ import yaml
 class VllmMode(Enum):
     ORIGIN = 0
     VLLM = 1
-    DEBUG = 2   # DEBUG mode：init model with vllm, but generate with mindformers
+    DEBUG = 2   # DEBUG mode: init model with vllm, but generate with mindformers
 
 
 @dataclass
@@ -34,6 +34,18 @@ class ParallelConfig:
     use_seq_parallel: bool = True
     micro_batch_num: int = 4
     vocab_emb_dp: bool = False
+    context_parallel: int = 1
+
+    param_dict = {
+        'data_parallel': data_parallel,
+        'model_parallel': model_parallel,
+        'pipeline_stage': pipeline_stage,
+        'expert_parallel': expert_parallel,
+        'use_seq_parallel': use_seq_parallel,
+        'micro_batch_num': micro_batch_num,
+        'vocab_emb_dp': vocab_emb_dp,
+        'context_parallel': context_parallel,
+    }
 
 
 @dataclass
@@ -86,7 +98,7 @@ class ActorConfig:
     offset: int = 0
     enable_parallel_optimizer: bool = True
     enable_alltoall: bool = False
-    use_eod_attn_mask_compression: bool = False
+    use_eod_attn_mask_compression: bool = True
     optimizer: Optimizer = Optimizer
     lr_schedule: LRSchedule = LRSchedule
 
@@ -103,7 +115,7 @@ class RefConfig:
     parallel_config: ParallelConfig = ParallelConfig
     recompute_config: RecomputeConfig = RecomputeConfig
     offset: int = 0
-    use_eod_attn_mask_compression: bool = False
+    use_eod_attn_mask_compression: bool = True
 
 
 @dataclass
@@ -133,7 +145,7 @@ class GenerateConfig:
     offset: int = 0
     use_eod_attn_mask_compression: bool = False
     # generate config
-    use_vllm: int = 1  #0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
+    use_vllm: int = 1  #0--MindFormers; 1--VLLM; 2--DEBUG mode: init model with vllm, but generate with mindformers
     hf_config_path: str = "config.json"   # vllm config path
     block_size: int = 16
     max_model_len: int = 25536
@@ -178,6 +190,19 @@ class Context:
     jit_config: JitConfig = JitConfig
     memory_optimize_level: str = "O0"
     ascend_config: AscendConfig = AscendConfig
+
+    param_dict = {
+        'mode': mode,
+        'device_target': device_target,
+        'max_call_depth': max_call_depth,
+        'max_device_memory': max_device_memory,
+        'save_graphs': save_graphs,
+        'save_graphs_path': save_graphs_path,
+        'device_id': device_id,
+        'jit_config': {'jit_level': jit_config.jit_level},
+        'memory_optimize_level': memory_optimize_level,
+        'ascend_config': {'precision_mode': ascend_config.precision_mode},
+    }
 
 
 @dataclass
@@ -241,6 +266,7 @@ class RLConfig:
     num_iterations: int = 1
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
+    seed: int = None
 
 
 @dataclass

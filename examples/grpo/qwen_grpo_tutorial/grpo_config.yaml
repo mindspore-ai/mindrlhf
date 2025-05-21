@@ -7,7 +7,7 @@ rl_config:
   tokenizer_dir: "/path/"
   epochs: 10
   batch_size: 1
-  sink_size: 2
+  sink_size: 1
   seq_length: 8192
   use_parallel: True
   load_ckpt_format: "safetensors"
@@ -24,7 +24,7 @@ rl_config:
   save_prompt_completions_interval: 1
   save_prompt_completions_dir: "/tmp/"
 
-  reshard_mem_opt_level: 0
+  reshard_mem_opt_level: 1
   save_checkpoint_steps: 5
   enable_reshard_optimizer: False
 
@@ -57,6 +57,7 @@ rl_config:
   num_iterations: 1
   epsilon_low: 0.2
   epsilon_high: 0.2
+  seed: 0
 
 
 # actor model config
@@ -66,14 +67,15 @@ actor_config:
   model_config: "./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml"  # need to be set
   enable_alltoall: False
   offset: 0
-  use_eod_attn_mask_compression: False
+  use_eod_attn_mask_compression: True
   parallel_config:
     data_parallel: 1  # need to be set
     model_parallel: 4  # need to be set
     pipeline_stage: 2  # need to be set
-    use_seq_parallel: True
-    micro_batch_num: 4
+    use_seq_parallel: False
+    micro_batch_num: 2
     vocab_emb_dp: False
+    context_parallel: 1
   recompute_config:
     recompute: True
     select_recompute: False
@@ -101,7 +103,7 @@ ref_config:
   load: "/path/"
   ref_model_batch_size: 2
   offset: 0
-  use_eod_attn_mask_compression: False
+  use_eod_attn_mask_compression: True
   # Whether to synchronize the reference model with the actor model every `ref_model_sync_steps`"
   sync_ref_model: False
   ref_model_sync_steps: 50
@@ -110,6 +112,7 @@ ref_config:
     data_parallel: 2  # need to be set
     model_parallel: 4  # need to be set
     pipeline_stage: 1  # need to be set
+    context_parallel: 1
 
 
 # reward config
@@ -128,8 +131,9 @@ generate_config:
     data_parallel: 2  # need to be set
     model_parallel: 4  # need to be set
     pipeline_stage: 1  # need to be set
+    context_parallel: 1
 
-  use_vllm: 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode：init model with vllm, but generate with mindformers
+  use_vllm: 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode; init model with vllm, but generate with mindformers
   hf_config_path: "./config.json"   # vllm config path
   block_size: 16
   max_model_len: 25536
