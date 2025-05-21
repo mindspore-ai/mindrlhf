@@ -51,14 +51,10 @@ class RefWorker(Worker):
         self.use_parallel = grpo_config.rl_config.use_parallel
         ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = self.use_parallel
-        ref_config.parallel_config.data_parallel = grpo_config.ref_config.parallel_config.data_parallel
-        ref_config.parallel_config.model_parallel = grpo_config.ref_config.parallel_config.model_parallel
-        ref_config.parallel_config.pipeline_stage = grpo_config.ref_config.parallel_config.pipeline_stage
-        ref_config.parallel_config.expert_parallel = grpo_config.ref_config.parallel_config.expert_parallel
-        ref_config.parallel_config.use_seq_parallel = grpo_config.ref_config.parallel_config.use_seq_parallel
-        ref_config.parallel_config.micro_batch_num = grpo_config.ref_config.parallel_config.micro_batch_num
-        ref_config.parallel_config.vocab_emb_dp = grpo_config.ref_config.parallel_config.vocab_emb_dp
-        logger.info(f'ref_config.recompute_config:{ref_config.recompute_config}')
+        ref_config.parallel_config = MindFormerConfig(
+            **grpo_config.ref_config.parallel_config.param_dict
+        )
+        logger.info(f'ref parallel_config:{ref_config.parallel_config}')
         logger.info(f'grpo_config.ref_config.recompute_config:{grpo_config.ref_config.recompute_config.param_dict}')
         ref_config.recompute_config = grpo_config.ref_config.recompute_config.param_dict
         ref_config.model.model_config.offset = grpo_config.ref_config.offset
@@ -68,8 +64,8 @@ class RefWorker(Worker):
         self.ref_config = ref_config
         ref_config.model.model_config.use_past = False
         if args.custom_model_name in ["qwen", "llama"]:
-            use_eod_attn_mask_compression = grpo_config.ref_config.use_eod_attn_mask_compression
-            ref_config.model.model_config.use_eod_attn_mask_compression = use_eod_attn_mask_compression
+            ref_config.model.model_config.use_eod_attn_mask_compression = \
+                grpo_config.ref_config.use_eod_attn_mask_compression
             ref_model_config = LlamaConfig(**ref_config.model.model_config)
             ref_model_config.model_name = "llama"
         elif args.custom_model_name == "deepseek":

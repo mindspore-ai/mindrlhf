@@ -69,14 +69,10 @@ class TrainWorker(Worker):
         sft_config_train = MindFormerConfig(sft_path_train)
         sft_config_train.use_parallel = grpo_config.rl_config.use_parallel
         self.sft_config_train = sft_config_train
-        sft_config_train.parallel_config.data_parallel = grpo_config.actor_config.parallel_config.data_parallel
-        sft_config_train.parallel_config.model_parallel = grpo_config.actor_config.parallel_config.model_parallel
-        sft_config_train.parallel_config.pipeline_stage = grpo_config.actor_config.parallel_config.pipeline_stage
-        sft_config_train.parallel_config.expert_parallel = grpo_config.actor_config.parallel_config.expert_parallel
-        sft_config_train.parallel_config.use_seq_parallel = grpo_config.actor_config.parallel_config.use_seq_parallel
-        sft_config_train.parallel_config.micro_batch_num = grpo_config.actor_config.parallel_config.micro_batch_num
-        sft_config_train.parallel_config.vocab_emb_dp = grpo_config.actor_config.parallel_config.vocab_emb_dp
-        logger.info(f'sft_config_train.recompute_config:{sft_config_train.recompute_config}')
+        sft_config_train.parallel_config = MindFormerConfig(
+            **grpo_config.actor_config.parallel_config.param_dict
+        )
+        logger.info(f'actor parallel_config:{sft_config_train.parallel_config}')
         logger.info(f'grpo_config.actor_config.recompute_config:{grpo_config.actor_config.recompute_config.param_dict}')
         sft_config_train.recompute_config = grpo_config.actor_config.recompute_config.param_dict
         sft_config_train.model.model_config.offset = grpo_config.actor_config.offset
@@ -88,8 +84,8 @@ class TrainWorker(Worker):
             sft_config_train.recompute_config
         )
         if args.custom_model_name in ["qwen", "llama"]:
-            use_eod_attn_mask_compression = grpo_config.actor_config.use_eod_attn_mask_compression
-            sft_config_train.model.model_config.use_eod_attn_mask_compression = use_eod_attn_mask_compression
+            sft_config_train.model.model_config.use_eod_attn_mask_compression = \
+                grpo_config.actor_config.use_eod_attn_mask_compression
             sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
             sft_model_config_train.model_name = "llama"
         elif args.custom_model_name == "deepseek":

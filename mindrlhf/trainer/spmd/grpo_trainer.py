@@ -194,8 +194,7 @@ class GRPOTrainer:
         elif args.custom_model_name == "llama":
             args.vocab_path = grpo_config.rl_config.tokenizer_dir
             sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
-            sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
-            # bugfix to mindformers: cbee69bf
+            sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
             sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
@@ -206,6 +205,8 @@ class GRPOTrainer:
         self.sft_path_infer = grpo_config.generate_config.model_config
         self.sft_path_train = grpo_config.actor_config.model_config
         self.sft_path_ref = grpo_config.ref_config.model_config
+        if isinstance(self.grpo_config.rl_config.seed, int):
+            ms.set_seed(self.grpo_config.rl_config.seed)
 
     def _init_reward_fn(self):
         """ init reward function """
@@ -302,6 +303,7 @@ class GRPOTrainer:
         start_time = time.time()
         self.infer.load_checkpoint()
         self.ref.load_checkpoint()
+        self.old_policy.load_checkpoint()
         self.train.load_checkpoint()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
@@ -982,17 +984,17 @@ class GRPOTrainer:
                 if self.reshard_mem_opt_level == 1:
                     self.train.offload_model()
                     assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                            "train model must on device before transform param")
+                                                            "train model must not on device before transform param")
                     assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                      "infer model must on device before transform param")
+                                                      "infer model must not on device before transform param")
                     self.old_policy.check_not_on_device()
                 else:
                     self.infer.load()
                     self.old_policy.load()
                     assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                        "train model must not on device before transform param")
+                                                        "train model must on device before transform param")
                     assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                  "infer model must not on device before transform param")
+                                                  "infer model must on device before transform param")
 
                 if self.transform.sync_ref_model and \
                         ((i + 1) % self.transform.ref_model_sync_steps == 0):
@@ -1048,7 +1050,8 @@ class GRPOTrainer:
             convert_func_lst = []
             convert_func_lst.append(self.infer.convert_map_dict)
             convert_func_lst.append(self.ref.convert_map_dict)
-            convert_func_lst.append(self.old_policy.convert_map_dict)
+            if self.grpo_config.rl_config.num_iterations > 1:
+                convert_func_lst.append(self.old_policy.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
             convert_index_json_total(config.load_checkpoint,
                                      config.load_checkpoint, convert_func_lst, False)

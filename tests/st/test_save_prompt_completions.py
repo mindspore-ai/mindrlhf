@@ -55,13 +55,13 @@ def test_save_interval_1():
     """
     config_path = 'qwen2_5/grpo_config_st.yaml'
     grpo_config = GRPOConfig(config_path)
-    grpo_config.save_prompt_completions_data = True
-    grpo_config.save_prompt_completions_interval = 1
-    grpo_config.save_prompt_completions_dir = './test_save_interval_1'
+    grpo_config.rl_config.save_prompt_completions_data = True
+    grpo_config.rl_config.save_prompt_completions_interval = 1
+    grpo_config.rl_config.save_prompt_completions_dir = './test_save_interval_1'
 
     for make_exp_step in range(0, 10):
-        if (grpo_config.save_prompt_completions_data and
-                make_exp_step % grpo_config.save_prompt_completions_interval == 0):
+        if (grpo_config.rl_config.save_prompt_completions_data and
+                make_exp_step % grpo_config.rl_config.save_prompt_completions_interval == 0):
             save_kwargs = {
                 MetricData.QUESTION.value: prompts,
                 MetricData.ANSWER.value: completions,
@@ -70,10 +70,11 @@ def test_save_interval_1():
                 MetricData.REWARD_PER_QUESTION.value: rewards,
                 MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list
             }
-            save_prompt_completions_data(grpo_config.save_prompt_completions_dir, make_exp_step, **save_kwargs)
+            save_prompt_completions_data(grpo_config.rl_config.save_prompt_completions_dir, make_exp_step,
+                                         **save_kwargs)
     for i in range(10):
         filename = f"prompt_completions_step_{i}.json"
-        assert os.path.isfile(os.path.join(grpo_config.save_prompt_completions_dir, filename))
+        assert os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
 
 
 @pytest.mark.save_prompt_completions
@@ -85,13 +86,13 @@ def test_save_interval_5():
     """
     config_path = 'qwen2_5/grpo_config_st.yaml'
     grpo_config = GRPOConfig(config_path)
-    grpo_config.save_prompt_completions_data = True
-    grpo_config.save_prompt_completions_interval = 5
-    grpo_config.save_prompt_completions_dir = './test_save_interval_5'
+    grpo_config.rl_config.save_prompt_completions_data = True
+    grpo_config.rl_config.save_prompt_completions_interval = 5
+    grpo_config.rl_config.save_prompt_completions_dir = './test_save_interval_5'
 
     for make_exp_step in range(0, 10):
-        if (grpo_config.save_prompt_completions_data and
-                make_exp_step % grpo_config.save_prompt_completions_interval == 0):
+        if (grpo_config.rl_config.save_prompt_completions_data and
+                make_exp_step % grpo_config.rl_config.save_prompt_completions_interval == 0):
             save_kwargs = {
                 MetricData.QUESTION.value: prompts,
                 MetricData.ANSWER.value: completions,
@@ -100,10 +101,11 @@ def test_save_interval_5():
                 MetricData.REWARD_PER_QUESTION.value: rewards,
                 MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list
             }
-            save_prompt_completions_data(grpo_config.save_prompt_completions_dir, make_exp_step, **save_kwargs)
+            save_prompt_completions_data(grpo_config.rl_config.save_prompt_completions_dir, make_exp_step,
+                                         **save_kwargs)
     for i in range(10):
         filename = f"prompt_completions_step_{i}.json"
         if i in (0, 5):
-            assert os.path.isfile(os.path.join(grpo_config.save_prompt_completions_dir, filename))
+            assert os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
         else:
-            assert not os.path.isfile(os.path.join(grpo_config.save_prompt_completions_dir, filename))
+            assert not os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
