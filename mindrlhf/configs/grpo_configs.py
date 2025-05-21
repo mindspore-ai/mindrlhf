@@ -238,7 +238,7 @@ class RLConfig:
     ref_std: bool = False
     gen_experience_kwargs: bool = False
     # clip higher
-    num_iterations: int = 2
+    num_iterations: int = 1
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
 

@@ -54,7 +54,7 @@ rl_config:
   ref_std: False
   gen_experience_kwargs: False
   # clip higher
-  num_iterations: 2
+  num_iterations: 1
   epsilon_low: 0.2
   epsilon_high: 0.2
 

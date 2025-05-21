@@ -1048,7 +1048,8 @@ class GRPOTrainer:
             convert_func_lst = []
             convert_func_lst.append(self.infer.convert_map_dict)
             convert_func_lst.append(self.ref.convert_map_dict)
-            convert_func_lst.append(self.old_policy.convert_map_dict)
+            if self.grpo_config.rl_config.num_iterations > 1:
+                convert_func_lst.append(self.old_policy.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
             convert_index_json_total(config.load_checkpoint,
                                      config.load_checkpoint, convert_func_lst, False)
