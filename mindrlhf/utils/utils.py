@@ -532,13 +532,16 @@ def save_prompt_completions_data(save_file_dir, global_step, **kwargs):
         for i in range(data_length):
             new_row = {}
             for key, values in kwargs.items():
-                value = values[i]
-                if value is None:
+                if values is None or len(values)==0:
                     new_row[key] = None
-                elif hasattr(value, 'item') and callable(getattr(value, 'item', None)):
-                    new_row[key] = value.item()
                 else:
-                    new_row[key] = value
+                    value = values[i]
+                    if value is None:
+                        new_row[key] = None
+                    elif hasattr(value, 'item') and callable(getattr(value, 'item', None)):
+                        new_row[key] = value.item()
+                    else:
+                        new_row[key] = value
             data_dict.append(new_row)
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
