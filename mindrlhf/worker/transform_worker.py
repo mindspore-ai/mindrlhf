@@ -54,8 +54,9 @@ def match_func_vllm(s1, s2):
 
 class TransformWorker(Worker):
     """ TransformWorker """
-    def __init__(self, grpo_config, sft_train_model, sft_infer_model, ref_model):
+    def __init__(self, grpo_config, sft_train_model, sft_infer_model, ref_model, args):
         super(TransformWorker, self).__init__()
+        self.args = args
         logger.info("Start prepare for parameter resharding in sft training.")
         self.sync_ref_model = grpo_config.sync_ref_model
         self.ref_model_sync_steps = grpo_config.ref_model_sync_steps
@@ -86,6 +87,8 @@ class TransformWorker(Worker):
         self.reshard_param_policy2ref = TransformParametersD2D(
             sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref)
         ms.communication.comm_func.barrier()
+        self.tensor_writer = self.args.tensor_writer
+        self.global_transform_step = 0
 
     def reshard_params(self, step_num,
                        input_on_device_flag_dict=None):
@@ -102,3 +105,6 @@ class TransformWorker(Worker):
             self.reshard_param_policy2ref.transform(policy2ref_flag)
         end_time = time.time()
         logger.info(f"Total time for transferring policy to ref{format_time_delta(end_time - start_time)}")
+        if self.tensor_writer is not None:
+            self.tensor_writer.add_scalar("transform-time", end_time - start_time, self.global_transform_step)
+        self.global_transform_step += 1

@@ -67,7 +67,7 @@ class GRPOTrainer:
         self._init_reward_fn(args)
 
         # ================== Initial Tensorboard ==================
-        if args.tensorboard_dir:
+        if hasattr(args, 'tensorboard_dir') and args.tensorboard_dir:
             args.tensorboard_dir = os.path.join(args.tensorboard_dir, f"rank_{get_rank()}")
             _set_tensorboard_writer(args)
         self.tensor_writer = get_tensorboard_writer()
@@ -116,7 +116,7 @@ class GRPOTrainer:
         self._compile()
         logger.info(f'self.grpo_config.save_strategy_dir {self.grpo_config.save_strategy_dir}')
         self.transform = TransformWorker(self.grpo_config, self.train.model(),
-                                         self.infer.model(), self.ref.model())
+                                         self.infer.model(), self.ref.model(), args=self.args)
         self._load_checkpoint()
 
     def _init_grpo_configs(self, args):
@@ -510,7 +510,6 @@ class GRPOTrainer:
         logger.info(f"solution: {solution}")
 
         n_questions = batch[0].shape[0] // num_rollouts
-        all_rewards = np.zeros((num_generations * num_rollouts * n_questions), dtype=np.float32)
         all_prompt_completion_ids = np.zeros(
             (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
         all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
@@ -538,17 +537,16 @@ class GRPOTrainer:
                     else:
                         results.append(result[res_idx])
         else:
-
             results = self.infer.generate(input_ids_numpy, max_decode_length)
 
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        logger.info("generate end at {}, elapsed time {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(end_time)), elapsed_time))
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("actor-inference-time", elapsed_time, global_step=self.make_exp_step)
         self.infer.offload()
         logger.info("model_infer offload")
-
-        end_time = time.time()
-        logger.info("generate end at {}, elapsed time {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
-
-        logger.info(f"generate sequence results is {results} type {type(results)}")
 
         right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather \
             = self.infer.post_process_infer_outputs(results) # allgather data
@@ -558,7 +556,7 @@ class GRPOTrainer:
                                              responses_mask_gather), axis=1)
         all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
                                                    axis=1)
-        # Step 3: calculate reward.
+        # Step 2: calculate reward.
         start_time = time.time()
         logger.info("calculate reward start at {}-------------------------------".format(
             time.strftime('%H:%M:%S', time.localtime(start_time))))
@@ -577,10 +575,13 @@ class GRPOTrainer:
         self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
         self.total_processed_tokens += self.step_total_tokens
         logger.info(
-            f"token_count mean_prompt_len: {mean_prompts_length}, max_prompt_len: {prompts_length_array.max()}, min_prompt_len: {prompts_length_array.min()}")
+            f"token_count mean_prompt_len: {mean_prompts_length}, "
+            f"max_prompt_len: {prompts_length_array.max()}, "
+            f"min_prompt_len: {prompts_length_array.min()}")
         logger.info(
-            f"token_count mean_response_len: {mean_responses_length}, max_response_len: {responses_length_array.max()}, min_response_len: {responses_length_array.min()}")
-
+            f"token_count mean_response_len: {mean_responses_length}, "
+            f"max_response_len: {responses_length_array.max()}, "
+            f"min_response_len: {responses_length_array.min()}")
         prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=False)
         completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=False)
 
@@ -608,8 +609,11 @@ class GRPOTrainer:
         logger.info(f"precision parse answer are {answer_parsed_lst}")
 
         end_time = time.time()
+        elapsed_time = end_time - start_time
         logger.info("calculate reward end at {}, elapsed time {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
+            time.strftime('%H:%M:%S', time.localtime(end_time)), elapsed_time))
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("reward-calculation-time", elapsed_time, global_step=self.make_exp_step)
 
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
@@ -629,6 +633,7 @@ class GRPOTrainer:
 
         self.ref.load()
         logger.info("ref_model load")
+        ref_start_time = time.time()
         # regroup the index of all data
         # assume the input shape is [num_generations*num_rollout*num_questions, -1]
         # [1,2,3,4,1,2,3,4]--->[1,1,2,2,3,3,4,4]
@@ -642,8 +647,8 @@ class GRPOTrainer:
         all_prompts_mask = reconstruct_index(all_prompts_mask, num_generations)
         all_responses_mask = reconstruct_index(all_responses_mask, num_generations)
         advantages = reconstruct_index(advantages, num_generations)
-        logger.info(f"all_prompt_completion_ids {all_prompt_completion_ids}")
-        logger.info(f"advantages {advantages}")
+        logger.info(f"reconstruct_index all_prompt_completion_ids {all_prompt_completion_ids}")
+        logger.info(f"reconstruct_index advantages {advantages}")
         if self.grpo_config.packing:
             pack_num = self.grpo_config.pack_num
             all_packed = self.pack_grpo_data(
@@ -669,7 +674,7 @@ class GRPOTrainer:
                 input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
                 actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
 
-                # Step 2: run ref model.
+                # Step 3: run ref model.
                 start_time = time.time()
                 logger.info("reference model step {} start at {}-------------------------------".format(
                     idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
@@ -685,9 +690,13 @@ class GRPOTrainer:
 
                 all_ref_per_token_logps[idx * total_ref_batch_size:
                                         (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
-
+            ref_end_time = time.time()
+            if self.tensor_writer:
+                self.tensor_writer.add_scalar("ref-inference-time", ref_end_time - ref_start_time,
+                                              global_step=self.make_exp_step)
             self.ref.offload()
             logger.info("ref_model offload")
+
             if self.grpo_config.save_prompt_completions_data and \
                 (step % self.grpo_config.save_prompt_completions_interval == 0):
                 save_kwargs = {
@@ -739,8 +748,12 @@ class GRPOTrainer:
             self.tensor_writer.add_scalar("average-scores", avg_scores, global_step=self.make_exp_step)
 
         end_time = time.time()
+        elapsed_time = end_time - ep_begin_time
         logger.info("Make experience, end at {}, elapsed time {} ------------------------------- ".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - ep_begin_time))
+            time.strftime('%H:%M:%S', time.localtime(end_time)), elapsed_time))
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("make-experience-time", elapsed_time, global_step=self.make_exp_step)
+
         if self.grpo_config.save_data_file:
             if get_rank() % 8 == 0:
                 self._save_grpoelement(self.grpo_config.save_data_file)
@@ -787,7 +800,6 @@ class GRPOTrainer:
         # The params will be automatically loaded to npu device without 'load' or 'offload'.
         for n in range(self.grpo_config.epochs):
             for i in range(self.step_num):
-
                 step_begin_time = time.time()
                 logger.info("step begin at {} \n------------------------------- "
                             .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
@@ -829,6 +841,8 @@ class GRPOTrainer:
 
                 step_end_time = time.time()
                 step_time = step_end_time - step_begin_time
+                if self.tensor_writer:
+                    self.tensor_writer.add_scalar("step-time", step_time, global_step=total_step)
                 self.total_time += step_time
                 logger.info("step end at  {}, elapsed time {} \n------------------------------- ".format(
                     time.strftime('%H:%M:%S', time.localtime(step_end_time)), step_time))

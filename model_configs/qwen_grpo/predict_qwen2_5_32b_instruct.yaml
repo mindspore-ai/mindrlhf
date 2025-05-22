@@ -73,6 +73,7 @@ model:
     repetition_penalty: 1.05
     temperature: 0.7
     max_decode_length: 512
+    min_decode_length: 2
     top_k: 20
     top_p: 0.8
     do_sample: True

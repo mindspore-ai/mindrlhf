@@ -85,6 +85,8 @@ class TrainWorker(Worker):
         self.optimizer_on_device = True
 
         self.tensor_writer = self.args.tensor_writer
+        self.global_training_step = 0
+        self.global_training_count = 0
 
     def model(self):
         return self.grpo_model_train
@@ -277,6 +279,7 @@ class TrainWorker(Worker):
 
     def train(self):
         """ train """
+        train_start_time = time.time()
         dataset = self._init_grpo_dataset_before_train()
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         context.set_auto_parallel_context(pipeline_stages=self.train_pp_stage,
@@ -287,7 +290,6 @@ class TrainWorker(Worker):
         logger.info(f"dataset size is {len(dataset)}")
 
         for step, databatch in enumerate(iterator):
-
             ep_begin_time = time.time()
             prompt_completion_ids = databatch["prompt_completion_ids"]
             responses_mask = databatch["responses_mask"]
@@ -307,10 +309,16 @@ class TrainWorker(Worker):
                     end_time - ep_begin_time))
 
             if self.tensor_writer:
-                self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=step)
-                self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=step)
-                self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=step)
-                self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=step)
+                self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=self.global_training_step)
+                self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=self.global_training_step)
+            self.global_training_step += 1
+
+        train_time = time.time() - train_start_time
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("actor-train-time", train_time, global_step=self.global_training_count)
+        self.global_training_count += 1
 
     def offload_optimizer(self):
         """ offload_optimizer """
