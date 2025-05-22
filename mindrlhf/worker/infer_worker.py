@@ -32,7 +32,10 @@ from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers import LlamaConfig
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
-from mindformers.experimental.infer.core.utils import generate_state_dict
+try:
+    from mindformers.experimental.infer.core.utils import generate_state_dict
+except ImportError:
+    from mindformers.parallel_core.inference.utils import generate_state_dict
 from mindformers.experimental.parallel_core.pynative.utils import save_strategy_file
 from mindformers import logger
 
