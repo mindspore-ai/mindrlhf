@@ -1,4 +1,4 @@
-# Copyright 2023 Huawei Technologies Co., Ltd
+# Copyright 2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import json
 import time
 import hashlib
 import copy
+import stat
 import yaml
 import numpy as np
 import mindspore.nn as nn
@@ -52,7 +53,9 @@ __all__ = ['set_pipeline_parallel_context', 'is_last_stage', 'is_first_stage',
            'GlobalNorm', 'ClipByGlobalNorm', "transfer_from_str_to_bool",
            "ckpt_transfer_for_generate", "yaml_to_dataclass", "set_perf_stats",
            "print_perf_stat", "_get_pipeline_group", "convert_index_json_total",
-           "save_prompt_completions_data", "add_metrics_to_tensorboard", "get_dp_rank"]
+           "save_prompt_completions_data", "add_metrics_to_tensorboard", "get_dp_rank",
+           "get_checkpoint_name", "ensure_total_ckpt_is_less_than_limit",
+           "load_param_to_net", "record_last_ckpt_to_json"]
 
 
 PERF_STATS = False
@@ -570,3 +573,64 @@ def get_dp_rank(data_parallel):
 def add_metrics_to_tensorboard(tensor_writer, metrics, global_step):
     for key, value in metrics.items():
         tensor_writer.add_scalar(key, value, global_step=global_step)
+
+def get_checkpoint_name(ckpt_path, prefix: str = "network", epoch_num: int = None, step_num: int = None,
+                        formats: str = "ckpt"):
+    """
+    Get checkpoint file name of model.
+    The layout of the ckpt_path will be like:
+    ckpt_path/
+    ├── rank_0
+    │   ├── network_rank_0-0_1.ckpt
+    │   └── network_rank_0-0_2.ckpt
+    """
+    rank = get_rank()
+    # ensure ckpt path exist
+    ckpt_path = os.path.normpath(os.path.abspath(ckpt_path))
+    ckpt_local_path = os.path.join(ckpt_path, f"rank_{rank}")
+    os.makedirs(ckpt_local_path, exist_ok=True)
+    ckpt_file = os.path.join(ckpt_local_path, f"{prefix}_rank_{rank}-{epoch_num}_{step_num}.{formats}")
+    return ckpt_file
+
+def ensure_total_ckpt_is_less_than_limit(ckpt_path: str, limit: int = 5, formats: str = "ckpt"):
+    """
+    make sure the provided path contain less than limited number of checkpoint file
+    Args:
+        ckpt_path (str): Checkpoint file path.
+        limit (int): limited number of checkpoint file. Default: 5
+        formats (str): checkpoint format. Default: 'ckpt'
+    """
+    ckpt_list = [
+        checkpoint
+        for checkpoint in os.listdir(ckpt_path)
+        if checkpoint.endswith(f'.{formats}')
+    ]
+    # ckpt_list: [oldest, ..., newest]
+    ckpt_list = sorted(ckpt_list, key=lambda x: os.path.getmtime(os.path.join(ckpt_path, x)))
+    ckpt_num = len(ckpt_list)
+    if ckpt_num >= limit:
+        for rm_ckpt_name in ckpt_list[: (ckpt_num - limit)]:
+            logger.warning(f"Current checkpoint file exceed keep_checkpoint_max, "
+                           f"removing {rm_ckpt_name}")
+            rm_ckpt_path = os.path.join(ckpt_path, rm_ckpt_name)
+            os.remove(rm_ckpt_path)
+
+def load_param_to_net(net, param_dict):
+    """load param to net."""
+    param_not_load, ckpt_not_load = ms.load_param_into_net(net, param_dict)
+    if param_not_load:
+        logger.warning(f"When loading ckpt into the net, param_not_load:{param_not_load}")
+    if ckpt_not_load:
+        logger.warning(f"When loading ckpt into the net, ckpt_not_load:{ckpt_not_load}")
+
+def record_last_ckpt_to_json(epoch: int, step: int, ckpt_file: str, meta_json: str):
+    """record last ckpt info to json"""
+    meta_data = {
+        "last_epoch": epoch,
+        "last_step": step,
+        "last_ckpt_file": ckpt_file
+    }
+    flags = os.O_WRONLY | os.O_CREAT
+    mode = stat.S_IWUSR | stat.S_IRUSR
+    with os.fdopen(os.open(meta_json, flags, mode), 'w', encoding="utf-8") as fp:
+        json.dump(meta_data, fp)

@@ -90,7 +90,6 @@ class GRPOTrainer:
                                  args=self.args)
         # grpo_config infer and train share
         self.infer_dp = self.infer.get_infer_dp()
-        self._init_grpo_infer_dataset()
 
         self.ref = RefWorker(grpo_config=self.grpo_config,
                              sft_path_ref=self.sft_path_ref,
@@ -121,9 +120,15 @@ class GRPOTrainer:
         self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
                                          self.train.model(), self.infer.model(), self.ref.model(),
                                          self.old_policy.model())
+        self.i_step = 0
+        self.n_epoch = 0
         self._load_checkpoint()
         if not self.grpo_config.generate_config.load:
             self.transform.reshard_params(0)
+        self._init_grpo_infer_dataset()
+        if self.grpo_config.rl_config.save_ckpt_interval <= 0:
+            raise ValueError(f"save_ckpt_interval should be lager than 0, but got "
+                             f"{self.grpo_config.rl_config.save_ckpt_interval}")
 
     @staticmethod
     def _set_args_to_config(args, grpo_config: GRPOConfig):
@@ -255,13 +260,17 @@ class GRPOTrainer:
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids"]
             ms.dataset.config.set_seed(2023)
-            dataset = MindDataset(self.mind_dataset_dir).project(columns=columns_to_project)
-            self.prompt_dataset = dataset
-            self.prompt_dataloader = dataset.take()
             bs = self.grpo_config.rl_config.chunk_size * self.infer_dp
+            self.prompt_dataset = MindDataset(self.mind_dataset_dir).project(columns=columns_to_project)
+            self.prompt_dataloader = self.prompt_dataset.take()
             self.prompt_dataloader = self.prompt_dataloader.batch(batch_size=bs, drop_remainder=True)
             self.prompt_iterator = self.prompt_dataloader.create_tuple_iterator()
             self.step_num = self.prompt_dataloader.get_dataset_size() // self.grpo_config.rl_config.num_rollouts
+            logger.info(f"total step is: {self.step_num}.")
+            if self.i_step > 0:
+                for _ in range(self.i_step):
+                    _ = self._get_batch(self.grpo_config.rl_config.num_rollouts)
+                logger.info(f"The beginning {self.i_step} batch data will be skipped.")
         else:
             logger.info("In main task, there is not dataset for making experience")
 
@@ -300,6 +309,25 @@ class GRPOTrainer:
         print_perf_stat(start_time, end_time, "GRPOTrainer compile")
 
     def _load_checkpoint(self):
+        """
+        load checkpoint files
+        """
+        if self.args.resume_training:
+            epoch_step_info = self.train.reload_ckpt()
+            if epoch_step_info is None:
+                raise ValueError("epoch/step info not read")
+            self.ref.reload_ckpt()
+            self.transform.reshard_params(0)
+            self.train.offload_model()
+            epoch_num = epoch_step_info["epoch_num"]
+            data_skip_steps = epoch_step_info["step_num"]
+            if epoch_num > 0:
+                logger.info(f"epoch in resume training is: {epoch_num}.")
+                self.n_epoch = epoch_num
+            if data_skip_steps > 0:
+                logger.info(f"Skip step in resume training is: {data_skip_steps}.")
+                self.i_step = data_skip_steps
+            return
         start_time = time.time()
         self.infer.load_checkpoint()
         self.ref.load_checkpoint()
@@ -958,26 +986,24 @@ class GRPOTrainer:
             f"generation num:{self.grpo_config.rl_config.num_generations}")
         np.set_printoptions(threshold=1024)
         # 第一次执行前, load ckpt后参数在host上, 在网络第一次执行时会将参数自动加载到device上, 不需要手动load/offload
-        total_step = 0
-        for n in range(self.grpo_config.rl_config.epochs):
-            for i in range(self.step_num):
+        while self.n_epoch < self.grpo_config.rl_config.epochs:
+            while self.i_step < self.step_num:
+                if self.i_step != 0 and self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
+                    self.train.save_checkpoints(epochs=self.n_epoch, steps=self.i_step)
+
+                if self.i_step != 0 and self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
+                    self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step)
 
                 step_begin_time = time.time()
                 logger.info("step begin at {} \n------------------------------- "
                             .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
 
-                logger.info(f"epoch: {n}, step: {i}")
+                logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
                 self._make_experience(num_rollouts=self.grpo_config.rl_config.num_rollouts,
                                       num_generations=self.grpo_config.rl_config.num_generations)
                 self.train.load_optimizer()
                 self.train.load_model()
-
                 self.train.train()
-
-                total_step += 1
-                if total_step % self.grpo_config.rl_config.save_checkpoint_steps == 0:
-                    self.train.save_checkpoint(rank_id=get_rank(), steps=total_step)
-
                 self.train.offload_optimizer()
 
                 # load for reshard
@@ -997,21 +1023,21 @@ class GRPOTrainer:
                                                   "infer model must on device before transform param")
 
                 if self.transform.sync_ref_model and \
-                        ((i + 1) % self.transform.ref_model_sync_steps == 0):
+                    ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
                     if self.reshard_mem_opt_level == 0:
                         self.ref.load()
                     input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
                                                  "policy2ref": (self.train.model_on_device, self.ref.on_device),
                                                  "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
-                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                    self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
                     if self.reshard_mem_opt_level == 0:
                         self.ref.offload()
                 else:
                     input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
                                                  "policy2ref": (self.train.model_on_device, self.ref.on_device),
                                                  "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
-                    self.transform.reshard_params(i, input_on_device_flag_dict)
+                    self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
                 if self.reshard_mem_opt_level == 0:
                     assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
                                                         "train model must on device after transform param")
@@ -1028,13 +1054,16 @@ class GRPOTrainer:
                     self.old_policy.check_not_on_device()
 
                 step_end_time = time.time()
-                print_perf_stat(step_begin_time, step_end_time, f"epoch {n} step {i}")
+                print_perf_stat(step_begin_time, step_end_time, f"epoch {self.n_epoch} step {self.i_step}")
                 logger.info("step end at  {}\n------------------------------- ".format(
                     time.strftime('%H:%M:%S', time.localtime(step_end_time))))
+                self.i_step += 1
+            self.i_step = 0
+            self.n_epoch += 1
 
         # save checkpoint
         self.train.load_model()
-        self.train.save_checkpoint(rank_id=get_rank(), steps=total_step)
+        self.train.save_checkpoints(epochs=self.grpo_config.rl_config.epochs, steps=self.step_num)
         logger.info("run grpo train end")
 
     def rename_safetensors_weights(self):

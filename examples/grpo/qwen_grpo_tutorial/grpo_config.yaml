@@ -25,7 +25,9 @@ rl_config:
   save_prompt_completions_dir: "/tmp/"
 
   reshard_mem_opt_level: 1
-  save_checkpoint_steps: 5
+  save_ckpt_interval: 5
+  save_max_ckpt_num: 5
+  save_ckpt_format: "safetensors" # format support safetensors/ckpt
   enable_reshard_optimizer: False
 
   tensorboard: False
