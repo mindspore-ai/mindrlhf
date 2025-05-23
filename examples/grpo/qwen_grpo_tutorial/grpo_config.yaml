@@ -99,7 +99,7 @@ actor_config:
 
 # reference model config
 ref_config:
-  model_config: "./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml"  # need to be set
+  model_config: "./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml"  # need to be set
   load: "/path/"
   ref_model_batch_size: 2
   offset: 0

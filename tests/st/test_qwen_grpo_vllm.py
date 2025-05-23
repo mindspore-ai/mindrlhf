@@ -35,5 +35,15 @@ def test_qwen_grpo_vllm():
 
     log_path = f"{root_path}/qwen2_vllm_log/worker_0.log"
     check_pair = {"Save checkpoints in": 1}
+    check_values = [
+        "generate parallel_config:{'data_parallel': 4, 'model_parallel': 2, 'pipeline_stage': 1}",
+        "actor parallel_config:{'data_parallel': 1, 'model_parallel': 4, 'pipeline_stage': 2,"
+        " 'use_seq_parallel': False, 'micro_batch_num': 2, 'vocab_emb_dp': False}",
+        "parallel_config:{'data_parallel': 4, 'model_parallel': 2, 'pipeline_stage': 1}",
+        "grpo_config.actor_config.recompute_config:{'recompute': False, 'select_recompute': False, "
+        "'parallel_optimizer_comm_recompute': False, 'mp_comm_recompute': True, "
+        "'recompute_slice_activation': False}",
+        "total_ref_batch_size: ref_model_batch_size * ref_dp, 2 * 4 = 8",
+    ]
 
-    check_log(log_path, check_pair)
+    check_log(log_path, check_pair, check_values)

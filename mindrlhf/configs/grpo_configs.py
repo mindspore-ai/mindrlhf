@@ -92,7 +92,7 @@ class ActorConfig:
     """actor model config"""
     load: str = "/path/"
     save: str = "/tmp/"
-    model_config: str = "./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml"
+    model_config: str = "/path/finetune.yaml"
     parallel_config: ParallelConfig = ParallelConfig
     recompute_config: RecomputeConfig = RecomputeConfig
     offset: int = 0
@@ -106,7 +106,7 @@ class ActorConfig:
 @dataclass
 class RefConfig:
     """reference model config"""
-    model_config: str = "./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml"
+    model_config: str = "/path/finetune.yaml"
     load: str = "/path/"
     ref_model_batch_size: int = 2
     # Whether to synchronize the reference model with the policy model every `ref_model_sync_steps`
@@ -138,12 +138,12 @@ class SamplingConfig:
 @dataclass
 class GenerateConfig:
     """generate model config"""
-    model_config: str = "./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml"
+    model_config: str = "/path/predict.yaml"
     load: str = "/path/"
     infer_model_batch_size: int = 2
     parallel_config: ParallelConfig = ParallelConfig
     offset: int = 0
-    use_eod_attn_mask_compression: bool = False
+    use_eod_attn_mask_compression: bool = True
     # generate config
     use_vllm: int = 1  #0--MindFormers; 1--VLLM; 2--DEBUG mode: init model with vllm, but generate with mindformers
     hf_config_path: str = "config.json"   # vllm config path
@@ -305,12 +305,11 @@ class GRPOConfig:
         self._set_config(data, 'actor_config', 'optimizer', Optimizer)
         self._set_config(data, 'actor_config', 'lr_schedule', LRSchedule)
         self._set_config(data, 'generate_config', 'sampling_config', SamplingConfig)
-
-
-if __name__ == '__main__':
-    grpo_config = GRPOConfig('../../examples/grpo/qwen_grpo_tutorial/grpo_config.yaml')
-    for item in dir(grpo_config):
-        if not item.startswith('_'):
-            for sub_item in dir(getattr(grpo_config, item)):
-                if not sub_item.startswith('_'):
-                    print(f'grpo_config.{item}.{sub_item}: {getattr(getattr(grpo_config, item), sub_item)}')
+        if 'actor_config' in data and 'parallel_config' in data['actor_config']:
+            self.actor_config.parallel_config.param_dict = data['actor_config']['parallel_config']
+        if 'ref_config' in data and 'parallel_config' in data['ref_config']:
+            self.ref_config.parallel_config.param_dict = data['ref_config']['parallel_config']
+        if 'generate_config' in data and 'parallel_config' in data['generate_config']:
+            self.generate_config.parallel_config.param_dict = data['generate_config']['parallel_config']
+        if 'context' in data:
+            self.context.param_dict = data['context']
