@@ -30,14 +30,15 @@ from mindformers import MindFormerConfig
 from mindformers import logger
 from mindformers import LlamaConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
+from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
 from research.deepseek3.deepseek3_config import DeepseekV3Config
-
 # mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import print_perf_stat, _get_pipeline_group
 from mindrlhf.configs.grpo_configs import GRPOConfig
-
+from mindrlhf.utils.utils import (load_param_to_net, record_last_ckpt_to_json,
+                                  get_checkpoint_name, ensure_total_ckpt_is_less_than_limit)
 
 class RefWorker(Worker):
     """
@@ -62,6 +63,7 @@ class RefWorker(Worker):
         ref_config.model.model_config.parallel_config.recompute = ref_config.recompute_config
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage
         self.ref_config = ref_config
+        self.ref_config.moe_config.num_experts = self.ref_config.moe_config.expert_num
         ref_config.model.model_config.use_past = False
         if args.custom_model_name in ["qwen", "llama"]:
             ref_config.model.model_config.use_eod_attn_mask_compression = \
@@ -102,6 +104,10 @@ class RefWorker(Worker):
             param.name = name
         self.on_device = True
         self.grpo_config = grpo_config
+        if grpo_config.actor_config.save and get_rank() == 0:
+            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, 'ref')
+            if not os.path.exists(ref_save_dir):
+                os.makedirs(ref_save_dir)
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage or 1
         self.ref_dp = ref_config.parallel_config.data_parallel
         self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
@@ -212,6 +218,45 @@ class RefWorker(Worker):
         print_perf_stat(start_time, end_time, "load ref model")
         logger.info(f"after load ref model {ms.hal.memory_stats()}")
         self.on_device = True
+
+    def save_checkpoints(self, epochs=0, steps=0, formats="ckpt"):
+        """ save checkpoint """
+        if epochs == 0 and steps == 0:
+            return
+        if self.grpo_config.actor_config.save:
+            if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
+                formats = "safetensors"
+            logger.info("Save checkpoints in {}".format(self.grpo_config.actor_config.save))
+            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, 'ref')
+            rank_path = os.path.join(ref_save_dir, f"rank_{get_rank()}")
+            ckpt_file = get_checkpoint_name(ref_save_dir, prefix='ref', epoch_num=epochs,
+                                            step_num=steps, formats=formats)
+            self.load()
+            ensure_total_ckpt_is_less_than_limit(ckpt_path=rank_path,
+                                                 limit=self.grpo_config.rl_config.save_max_ckpt_num,
+                                                 formats=formats)
+            ms.save_checkpoint(self.ref_model, ckpt_file, integrated_save=False, format=formats)
+            self.offload()
+            record_last_ckpt_to_json(epoch=epochs, step=steps, ckpt_file=os.path.basename(ckpt_file),
+                                     meta_json=os.path.join(rank_path, 'meta.json'))
+
+    def reload_ckpt(self, formats="ckpt"):
+        """ reload checkpoint for resume training """
+        if self.ref_ckpt_path:
+            if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
+                formats = "safetensors"
+            src_ckpt_file = os.path.join(self.ref_ckpt_path, f"rank_{get_rank()}")
+            if not os.path.isdir(src_ckpt_file):
+                raise ValueError(f"There is no *.{formats} in {src_ckpt_file}, load failed.")
+            logger.info(f"Loading latest ref checkpoint: {src_ckpt_file}, this may take a while.")
+            meta_path = os.path.join(src_ckpt_file, "meta.json")
+            if not os.path.exists(meta_path):
+                raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+            resume_ckpt = get_resume_checkpoint_by_meta(self.ref_ckpt_path, formats)
+            ckpt_path = os.path.join(src_ckpt_file, resume_ckpt)
+            param_dict = ms.load_checkpoint(ckpt_path, format=formats)
+            load_param_to_net(self.ref_model, param_dict)
+            self.on_device = True
 
     def load_checkpoint(self):
         """load_checkpoint"""

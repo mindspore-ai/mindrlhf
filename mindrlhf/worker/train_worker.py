@@ -40,8 +40,8 @@ from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers.core.callback.callback import TopkBiasBalanceCallback
 from mindformers import LlamaConfig
 from mindformers import logger
+from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
 from research.deepseek3.deepseek3_config import DeepseekV3Config
-
 # mindrlhf
 from mindrlhf.utils.adam import AdamWeightDecayOp
 from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, print_perf_stat
@@ -49,6 +49,8 @@ from mindrlhf.wrapper import (
     TrainOneStepWithLossScaleGRPO,
     TrainPipelineWithLossScaleCellGRPO,
 )
+from mindrlhf.utils.utils import (load_param_to_net, record_last_ckpt_to_json,
+                                  get_checkpoint_name, ensure_total_ckpt_is_less_than_limit)
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.worker.worker import Worker
@@ -79,6 +81,15 @@ class TrainWorker(Worker):
         sft_config_train.model.model_config.parallel_config = (
             sft_config_train.parallel_config
         )
+
+        if grpo_config.actor_config.save and get_rank() == 0:
+            train_save_dir = os.path.join(grpo_config.actor_config.save, 'train')
+            optimizer_save_dir = os.path.join(grpo_config.actor_config.save, 'optimizer')
+            if not os.path.exists(train_save_dir):
+                os.makedirs(train_save_dir)
+            if not os.path.exists(optimizer_save_dir):
+                os.makedirs(optimizer_save_dir)
+
         os.environ["RUN_MODE"] = sft_config_train.run_mode
         sft_config_train.model.model_config.parallel_config.recompute = (
             sft_config_train.recompute_config
@@ -132,6 +143,8 @@ class TrainWorker(Worker):
 
         self.tensor_writer = self.args.tensor_writer
         self.global_training_step = 0
+        if self.grpo_config.rl_config.save_max_ckpt_num <= 1:
+            raise ValueError(f"save_max_ckpt_num should be lager than 0, but got {self.grpo_config.save_max_ckpt_num}")
 
     def model(self):
         return self.grpo_model_train
@@ -227,11 +240,53 @@ class TrainWorker(Worker):
             logger.info(f"dryrun finished")
             exit(0)
 
+    def reload_ckpt(self, formats="ckpt"):
+        """reload checkpoint"""
+        resume_dict = None
+        if self.sft_ckpt_path_train:
+            if self.grpo_config.rl_config.load_ckpt_format == "safetensors":
+                formats = "safetensors"
+            src_ckpt_file = os.path.join(self.sft_ckpt_path_train, f"rank_{get_rank()}")
+            if not os.path.isdir(src_ckpt_file):
+                raise ValueError(f"There is no *.{formats} in {self.sft_ckpt_path_train}, load failed.")
+            logger.info(f"Loading latest checkpoint: {src_ckpt_file}, this may take a while.")
+            meta_path = os.path.join(src_ckpt_file, "meta.json")
+            if not os.path.exists(meta_path):
+                raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+            resume_ckpt = get_resume_checkpoint_by_meta(self.sft_ckpt_path_train, formats)
+            ckpt_path = os.path.join(src_ckpt_file, resume_ckpt)
+
+            param_dict = ms.load_checkpoint(ckpt_path, format=formats)
+            resume_dict = {
+                "epoch_num": int(param_dict.pop("epoch_num", 0)),
+                "step_num": int(param_dict.pop("step_num", 0))
+            }
+            load_param_to_net(self.grpo_model_train.grpo_model_train.policy_model, param_dict)
+
+            parent_dir = os.path.dirname(os.path.normpath(self.sft_ckpt_path_train))
+            optimizer_dir = os.path.join(parent_dir, "optimizer")
+            src_opt_ckpt_file = os.path.join(optimizer_dir, f"rank_{get_rank()}")
+            if not os.path.isdir(src_opt_ckpt_file):
+                src_opt_ckpt_file = None
+            if src_opt_ckpt_file is not None:
+                logger.info(f"start load ckpt optimizer: {src_opt_ckpt_file}")
+                meta_path = os.path.join(src_opt_ckpt_file, "meta.json")
+                if not os.path.exists(meta_path):
+                    raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+                resume_ckpt = get_resume_checkpoint_by_meta(optimizer_dir, formats)
+                ckpt_path = os.path.join(src_opt_ckpt_file, resume_ckpt)
+                param_dict_opt = ms.load_checkpoint(ckpt_path, format=formats)
+                load_param_to_net(self.grpo_with_grad.optimizer, param_dict_opt)
+            self.model_on_device = True
+            self.optimizer_on_device = True
+        return resume_dict
+
     def load_checkpoint(self):
         """load_checkpoint"""
         logger.info(f'sft_ckpt_path_train:{self.sft_ckpt_path_train}')
         if self.sft_ckpt_path_train and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
-            self.on_device = True
+            self.model_on_device = True
+            self.optimizer_on_device = True
             self._load_checkpoint_safetensors()
             return
         load_ckpt_func = (
@@ -529,24 +584,42 @@ class TrainWorker(Worker):
     def push_to_store(self, data):
         self.store = data
 
-    def save_checkpoint(self, rank_id=0, steps=0):
-        """save checkpoint"""
+    def save_checkpoints(self, epochs=0, steps=0, formats="ckpt"):
+        """ save checkpoint """
+        if epochs == 0 and steps == 0:
+            return
         if self.grpo_config.actor_config.save:
-            train_save_dir = os.path.join(
-                self.grpo_config.actor_config.save, "train", f"rank_{rank_id}"
-            )
-            if not os.path.exists(train_save_dir):
-                os.makedirs(train_save_dir)
-            grpo_filename = os.path.join(train_save_dir, "policy_model_step_{}".format(steps))
-            if self.grpo_config.rl_config.load_ckpt_format == 'ckpt':
-                grpo_filename += '.ckpt'
-            logger.info(f"Save checkpoints in {grpo_filename}")
-            ms.save_checkpoint(
-                self.grpo_model_train.grpo_model_train.policy_model,
-                grpo_filename,
-                integrated_save=False,
-                format=self.grpo_config.rl_config.load_ckpt_format,
-            )
+            if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
+                formats = "safetensors"
+            logger.info("Save checkpoints in {}".format(self.grpo_config.actor_config.save))
+            train_save_dir = os.path.join(self.grpo_config.actor_config.save, 'train')
+            rank_path = os.path.join(train_save_dir, f"rank_{get_rank()}")
+            ckpt_file = get_checkpoint_name(train_save_dir, prefix='policy_model', epoch_num=epochs,
+                                            step_num=steps, formats=formats)
+            self.load_model()
+            append_dict = {"epoch_num": epochs, "step_num": steps}
+            # ensure ckpt number is less than `keep_checkpoint_max` after saving
+            ensure_total_ckpt_is_less_than_limit(ckpt_path=rank_path,
+                                                 limit=self.grpo_config.rl_config.save_max_ckpt_num,
+                                                 formats=formats)
+            ms.save_checkpoint(self.grpo_model_train.grpo_model_train.policy_model, ckpt_file,
+                               append_dict=append_dict, integrated_save=False, format=formats)
+            self.offload_model()
+
+            optimizer_save_dir = os.path.join(self.grpo_config.actor_config.save, 'optimizer')
+            rank_path_opt = os.path.join(optimizer_save_dir, f"rank_{get_rank()}")
+            ckpt_file_opt = get_checkpoint_name(optimizer_save_dir, prefix='optimizer',
+                                                epoch_num=epochs, step_num=steps, formats=formats)
+            self.load_optimizer()
+            ensure_total_ckpt_is_less_than_limit(ckpt_path=rank_path_opt,
+                                                 limit=self.grpo_config.rl_config.save_max_ckpt_num,
+                                                 formats=formats)
+            ms.save_checkpoint(self.grpo_with_grad.optimizer, ckpt_file_opt, integrated_save=False, format=formats)
+            self.offload_optimizer()
+            record_last_ckpt_to_json(epoch=epochs, step=steps, ckpt_file=os.path.basename(ckpt_file),
+                                     meta_json=os.path.join(rank_path, 'meta.json'))
+            record_last_ckpt_to_json(epoch=epochs, step=steps, ckpt_file=os.path.basename(ckpt_file_opt),
+                                     meta_json=os.path.join(rank_path_opt, 'meta.json'))
         else:
             logger.info("There is no checkpoint to save!")
 

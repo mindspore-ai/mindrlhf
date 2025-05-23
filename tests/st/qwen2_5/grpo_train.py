@@ -25,6 +25,7 @@ if __name__ == '__main__':
     parser.add_argument("--config", type=str, default=None, help="configs path", required=True)
     parser.add_argument("--custom_model_name", type=str, default='qwen', help="custom model name")
     parser.add_argument("--dataset_file", type=str, default=None, help="dataset file for training")
+    parser.add_argument("--resume_training", action="store_true", default=False, help="resume training")
     parser.add_argument("--tokenizer_dir", type=str, default=None,
                         help="the directory contain hf tokenizer files")
     parser.add_argument("--actor_checkpoint_path", type=str, default=None,
