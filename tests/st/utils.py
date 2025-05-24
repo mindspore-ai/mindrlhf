@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+""" utils.py """
 
 import subprocess
 
 
-def check_log(file_path, check_pairs=None):
+def check_log(file_path, check_pairs=None, check_values=None):
+    """ check log """
     # check the number of key in check_pairs in log file is equal to the value
     if check_pairs is not None:
         for key_word, value in check_pairs.items():
@@ -26,3 +28,11 @@ def check_log(file_path, check_pairs=None):
             log_cnt = str(log_output, 'utf-8').strip()
             assert log_cnt == str(value), (f"Failed to find {key_word} in {file_path} or content is not correct."
                                            f"Expected occurrences: {value}, but got {log_cnt}")
+    if check_values is not None:
+        log_output = subprocess.check_output(
+            [f"cat {file_path}"],
+            shell=True)
+        log_output = str(log_output, 'utf-8')
+        for value in check_values:
+            if value not in log_output:
+                raise ValueError(f'"{value}" is not in logs, config may be not set right')
