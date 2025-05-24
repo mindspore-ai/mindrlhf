@@ -11,15 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Infererence Worker."""
+"""Inference Worker."""
 
-# python
 import os
 import time
 from glob import glob
 import numpy as np
 
-# mindspore
 import mindspore as ms
 from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
@@ -27,7 +25,6 @@ from mindspore import context
 from mindspore import communication as D
 from mindspore.common.api import _pynative_executor
 
-# mindformers
 from mindformers import LlamaConfig
 from mindformers import MindFormerConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
@@ -39,7 +36,6 @@ from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
-# mindrlhf
 from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
@@ -51,13 +47,7 @@ import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
-DTYPE_STR = {
-    ms.float16: 'float16',
-    ms.bfloat16: 'bfloat16',
-    ms.float32: 'float32',
-    ms.int8: 'int8',
-    ms.uint8: 'uint8',
-}
+DTYPE_STR = {ms.float16: "float16", ms.bfloat16: "bfloat16", ms.float32: "float32", ms.int8: "int8", ms.uint8: "uint8"}
 
 
 class InferWorker(Worker):
@@ -71,10 +61,8 @@ class InferWorker(Worker):
         self.args = args
         sft_config_infer = MindFormerConfig(sft_path_infer)
         sft_config_infer.use_parallel = grpo_config.rl_config.use_parallel
-        sft_config_infer.parallel_config = MindFormerConfig(
-            **grpo_config.generate_config.parallel_config.param_dict
-        )
-        logger.info(f'generate parallel_config:{sft_config_infer.parallel_config}')
+        sft_config_infer.parallel_config = MindFormerConfig(**grpo_config.generate_config.parallel_config.param_dict)
+        logger.info(f"generate parallel_config:{sft_config_infer.parallel_config}")
         sft_config_infer.model.model_config.offset = grpo_config.generate_config.offset
         sft_config_infer.model.model_config.max_decode_length = grpo_config.generate_config.sampling_config.max_tokens
         sft_config_infer.model.model_config.min_decode_length = grpo_config.generate_config.sampling_config.min_tokens
@@ -86,32 +74,24 @@ class InferWorker(Worker):
         if not GlobalComm.INITED:
             logger.info(f"launch actor roll out sft_config_infer.use_parallel {sft_config_infer.use_parallel}")
             sft_config_infer.context = grpo_config.context.param_dict
-            logger.info(f'sft_config_infer.context:{sft_config_infer.context}')
+            logger.info(f"sft_config_infer.context:{sft_config_infer.context}")
             build_context(sft_config_infer)
         build_parallel_config(sft_config_infer)
-        context.set_context(
-            enable_compile_cache=enable_compile_cache,
-            compile_cache_path="./generate_cache"
-        )
+        context.set_context(enable_compile_cache=enable_compile_cache, compile_cache_path="./generate_cache")
 
         # init sft infer model
-        sft_config_infer.model.model_config.parallel_config = (
-            sft_config_infer.parallel_config
-        )
+        sft_config_infer.model.model_config.parallel_config = sft_config_infer.parallel_config
         logger.info(f"sft_config_infer:\n{sft_config_infer}")
 
         if args.custom_model_name in ["qwen", "llama"]:
             sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
             sft_model_config_infer.model_name = "llama"
         elif args.custom_model_name == "deepseek":
-            sft_config_infer.model.model_config.moe_config = (
-                sft_config_infer.moe_config
-            )
+            sft_config_infer.model.model_config.moe_config = sft_config_infer.moe_config
             sft_model_config_infer = DeepseekV3Config(**sft_config_infer.model.model_config)
             sft_model_config_infer.model_name = "deepseek_infer"
         else:
-            raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
         sft_model_config_infer.checkpoint_name_or_path = grpo_config.generate_config.load
 
@@ -124,20 +104,21 @@ class InferWorker(Worker):
 
         if self.args.custom_model_name == "qwen":
             self.tokenizer = Qwen2Tokenizer(
-                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False)
+                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
+            )
         elif self.args.custom_model_name == "deepseek":
             self.tokenizer = LlamaTokenizerFast(
-                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False)
+                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
+            )
         elif args.custom_model_name == "llama":
             sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
             # bugfix to mindformers: cbee69bf
             sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
-            raise ValueError(
-                f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
-        sim_level = os.getenv('MS_SIMULATION_LEVEL')
+        sim_level = os.getenv("MS_SIMULATION_LEVEL")
         if sim_level:
             logger.warning(f"MS_SIMULATION_LEVEL is set to {sim_level}, will not use vllm")
             self.use_vllm = VllmMode.ORIGIN
@@ -169,51 +150,60 @@ class InferWorker(Worker):
         """
         # pylint: disable=W0611
         import vllm_mindspore
+
         _pynative_executor.set_async_for_graph(False)
         import mindrlhf.third_party.vllm.ascend
         import mindrlhf.third_party.vllm.qwen2
         from mindrlhf.third_party.vllm.llm import LLM
         from vllm import SamplingParams
+
         if self.sft_model_config_infer.model_name == "deepseek_infer":
             hf_config = self.build_deepseek_hf_config()
         elif self.sft_model_config_infer.model_name == "llama":
             hf_config = self.build_qwen_hf_config()
         else:
             raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {self.sft_model_config_infer.model_name}")
+                f"model_name should in ['qwen', 'llama','deepseek'], but get {self.sft_model_config_infer.model_name}"
+            )
 
         self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
         # 初始化vllm
-        logger.info(f"init LLM, block_size: {self.grpo_config.generate_config.block_size}, "
-                    f"max_model_len = {self.grpo_config.generate_config.max_model_len}, "
-                    f"max_num_batched_tokens: {self.grpo_config.generate_config.max_num_batched_tokens}, "
-                    f"max_num_seqs: {self.grpo_config.generate_config.max_num_seqs}, "
-                    f"num_scheduler_steps: {self.grpo_config.generate_config.num_scheduler_steps}, "
-                    f"gpu_memory_utilization: {self.grpo_config.generate_config.gpu_memory_utilization}, "
-                    f"seed: {self.dp_rank_id}")
+        logger.info(
+            f"init LLM, block_size: {self.grpo_config.generate_config.block_size}, "
+            f"max_model_len = {self.grpo_config.generate_config.max_model_len}, "
+            f"max_num_batched_tokens: {self.grpo_config.generate_config.max_num_batched_tokens}, "
+            f"max_num_seqs: {self.grpo_config.generate_config.max_num_seqs}, "
+            f"num_scheduler_steps: {self.grpo_config.generate_config.num_scheduler_steps}, "
+            f"gpu_memory_utilization: {self.grpo_config.generate_config.gpu_memory_utilization}, "
+            f"seed: {self.dp_rank_id}"
+        )
         vllm_start_time = time.time()
-        self.inference_engine = LLM(tokenizer=self.tokenizer,
-                                    model_hf_config=hf_config,
-                                    tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
-                                    dtype="bfloat16",
-                                    block_size=self.grpo_config.generate_config.block_size,
-                                    skip_tokenizer_init=False,
-                                    max_model_len=self.grpo_config.generate_config.max_model_len,
-                                    # 上下文总长，影响prompt长度和生成长度，小于max_num_batched_tokens
-                                    max_num_batched_tokens=self.grpo_config.generate_config.max_num_batched_tokens,
-                                    max_num_seqs=self.grpo_config.generate_config.max_num_seqs,
-                                    num_scheduler_steps=self.grpo_config.generate_config.num_scheduler_steps,
-                                    gpu_memory_utilization=self.grpo_config.generate_config.gpu_memory_utilization,
-                                    trust_remote_code=self.grpo_config.generate_config.trust_remote_code,
-                                    seed=self.dp_rank_id)
+        self.inference_engine = LLM(
+            tokenizer=self.tokenizer,
+            model_hf_config=hf_config,
+            tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
+            dtype="bfloat16",
+            block_size=self.grpo_config.generate_config.block_size,
+            skip_tokenizer_init=False,
+            max_model_len=self.grpo_config.generate_config.max_model_len,
+            # 上下文总长，影响prompt长度和生成长度，小于max_num_batched_tokens
+            max_num_batched_tokens=self.grpo_config.generate_config.max_num_batched_tokens,
+            max_num_seqs=self.grpo_config.generate_config.max_num_seqs,
+            num_scheduler_steps=self.grpo_config.generate_config.num_scheduler_steps,
+            gpu_memory_utilization=self.grpo_config.generate_config.gpu_memory_utilization,
+            trust_remote_code=self.grpo_config.generate_config.trust_remote_code,
+            seed=self.dp_rank_id,
+        )
         logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
-        logger.info(f"temperature: {self.grpo_config.generate_config.sampling_config.temperature}, "
-                    f"repetition_penalty: {self.grpo_config.generate_config.sampling_config.repetition_penalty}, "
-                    f"top_p: {self.grpo_config.generate_config.sampling_config.top_p}, "
-                    f"top_k: {self.grpo_config.generate_config.sampling_config.top_k}, "
-                    f"stop_token_ids: {self.grpo_config.generate_config.sampling_config.eos_token_id}, "
-                    f"max_tokens: {self.grpo_config.generate_config.sampling_config.max_tokens}, "
-                    f"detokenize: {self.grpo_config.generate_config.sampling_config.detokenize}")
+        logger.info(
+            f"temperature: {self.grpo_config.generate_config.sampling_config.temperature}, "
+            f"repetition_penalty: {self.grpo_config.generate_config.sampling_config.repetition_penalty}, "
+            f"top_p: {self.grpo_config.generate_config.sampling_config.top_p}, "
+            f"top_k: {self.grpo_config.generate_config.sampling_config.top_k}, "
+            f"stop_token_ids: {self.grpo_config.generate_config.sampling_config.eos_token_id}, "
+            f"max_tokens: {self.grpo_config.generate_config.sampling_config.max_tokens}, "
+            f"detokenize: {self.grpo_config.generate_config.sampling_config.detokenize}"
+        )
         vllm_start_time = time.time()
         self.sampling_params = SamplingParams(
             repetition_penalty=self.grpo_config.generate_config.sampling_config.repetition_penalty,
@@ -246,7 +236,7 @@ class InferWorker(Worker):
         for array in batch_input:
             lengths.append(len(array))
             padded_array = [0] * padding_length
-            padded_array[:len(array)] = array
+            padded_array[: len(array)] = array
             padded_arrays.append(padded_array)
         padded_arrays = Tensor(padded_arrays).astype(ms.int32)
         lengths = Tensor(lengths).astype(ms.int32)
@@ -260,19 +250,19 @@ class InferWorker(Worker):
         all_other_group_size = world_size // data_parallel_size
         output_batch = []
         if reshard_optimizer.OPT_COMMUNICATION_GROUPS:
-            collect_range = [_ * local_bs for _ in reshard_optimizer.OPT_COMMUNICATION_GROUPS['dp'][0]]
+            collect_range = [_ * local_bs for _ in reshard_optimizer.OPT_COMMUNICATION_GROUPS["dp"][0]]
         else:
             collect_range = range(0, world_size * local_bs, all_other_group_size * local_bs)
 
         for i in collect_range:
             for k in range(local_bs):
                 global_idx = i + k
-                output_batch.append(list(all_padded_arrays[global_idx][:all_lengths[global_idx]]))
+                output_batch.append(list(all_padded_arrays[global_idx][: all_lengths[global_idx]]))
 
         return output_batch
 
     def post_process_infer_outputs(self, results):
-        """ post_process_infer_outputs """
+        """post_process_infer_outputs"""
         start_time = time.time()
         right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
         max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
@@ -282,17 +272,18 @@ class InferWorker(Worker):
             self.sft_model_config_infer.parallel_config.data_parallel,
             padding_length=max_tokens,
         )
-        responses_mask_batch = self._allgather_data(responses_mask,
-                                                    self.sft_model_config_infer.parallel_config.data_parallel,
-                                                    padding_length=max_tokens)
+        responses_mask_batch = self._allgather_data(
+            responses_mask, self.sft_model_config_infer.parallel_config.data_parallel, padding_length=max_tokens
+        )
         left_padding_prompts_batch = self._allgather_data(
             left_padding_prompts,
             self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens
+            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
         )
         prompts_mask_batch = self._allgather_data(
-            prompts_mask, self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens
+            prompts_mask,
+            self.sft_model_config_infer.parallel_config.data_parallel,
+            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
         )
         right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
         responses_mask = np.array(responses_mask_batch).astype(np.int32)
@@ -306,14 +297,16 @@ class InferWorker(Worker):
     # For SPMD, developer could call 'post_process_infer_outputs' to process data.
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
     def generate(self, input_ids_numpy, max_tokens=0):
-        """ Policy model generates responses for a batch of prompts. """
-        context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
-                                          parallel_mode="stand_alone", full_batch=False)
+        """Policy model generates responses for a batch of prompts."""
+        context.set_auto_parallel_context(
+            pipeline_stages=self.infer_pp_stage, parallel_mode="stand_alone", full_batch=False
+        )
 
         logger.info(f"input_ids shape {input_ids_numpy.shape}")
 
         valid_length_each_example, max_valid_length = get_valid_length_each_example(
-            input_ids_numpy, self.grpo_model_infer.grpo_model.pad_token_id)  # get valid length and max length in a batch
+            input_ids_numpy, self.grpo_model_infer.grpo_model.pad_token_id
+        )  # get valid length and max length in a batch
 
         generate_begin_time = time.time()
         if max_tokens == 0:
@@ -324,11 +317,13 @@ class InferWorker(Worker):
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(input_ids_numpy[:, :max_valid_length],
-                                                                             max_new_tokens=max_tokens,
-                                                                             min_new_tokens=min_tokens,
-                                                                             do_sample=True,
-                                                                             seed=self.dp_rank_id)
+            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(
+                input_ids_numpy[:, :max_valid_length],
+                max_new_tokens=max_tokens,
+                min_new_tokens=min_tokens,
+                do_sample=True,
+                seed=self.dp_rank_id,
+            )
             logger.info("infer without vllm end, use vllm model")
         elif self.use_vllm == VllmMode.ORIGIN:
             logger.info("infer without vllm, not use vllm model")
@@ -337,7 +332,8 @@ class InferWorker(Worker):
                 max_new_tokens=max_tokens,
                 min_new_tokens=min_tokens,
                 do_sample=True,
-                seed=self.dp_rank_id)
+                seed=self.dp_rank_id,
+            )
             logger.info("infer without vllm end, not use vllm model")
         else:
             logger.info("start vllm")
@@ -345,10 +341,8 @@ class InferWorker(Worker):
             vllm_prompt = prompt.tolist()
             token_ids = self.inference_engine.pre_process_inputs(vllm_prompt, valid_length_each_example)
             outputs = self.inference_engine.generate(
-                prompts=None,
-                sampling_params=self.sampling_params,
-                prompt_token_ids=token_ids,
-                use_tqdm=False)
+                prompts=None, sampling_params=self.sampling_params, prompt_token_ids=token_ids, use_tqdm=False
+            )
             logger.info("end vllm")
             outputs = outputs[0]
 
@@ -369,27 +363,32 @@ class InferWorker(Worker):
         for i in range(num_sample):
             # 只包含response, 范围是从 "prompt结束位置" 到 "prompt结束位置+最大生成长度"
             if self.use_vllm == VllmMode.DEBUG or self.use_vllm == VllmMode.ORIGIN:
-                response = outputs[i][prompt_len[i]: prompt_len[i] + max_tokens]
+                response = outputs[i][prompt_len[i] : prompt_len[i] + max_tokens]
             else:
                 # vllm output中不包含prompt
                 response = outputs[i]
-            right_padding_responses[i, :len(response)] = response
+            right_padding_responses[i, : len(response)] = response
 
             # 整个batch的样本右对齐（左侧进行padding）
-            left_padding_prompts[i, max_prompt_length - prompt_len[i]:] = input_ids_list[i][:prompt_len[i]]
+            left_padding_prompts[i, max_prompt_length - prompt_len[i] :] = input_ids_list[i][: prompt_len[i]]
 
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != pad_token_id).astype(np.int32)
 
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
-        return (right_padding_responses.astype(np.int32), responses_mask,
-                left_padding_prompts.astype(np.int32), prompts_mask)
+        return (
+            right_padding_responses.astype(np.int32),
+            responses_mask,
+            left_padding_prompts.astype(np.int32),
+            prompts_mask,
+        )
 
     def generate_strategy(self, reshard_optimizer_):
-        """ generate strategy """
-        context.set_auto_parallel_context(pipeline_stages=self.infer_pp_stage,
-                                          parallel_mode="stand_alone", full_batch=False)
-        stage_name = 'infer'
+        """generate strategy"""
+        context.set_auto_parallel_context(
+            pipeline_stages=self.infer_pp_stage, parallel_mode="stand_alone", full_batch=False
+        )
+        stage_name = "infer"
         ms.mint.distributed.barrier()
         if self.use_vllm == VllmMode.ORIGIN:
             static_dict = generate_state_dict(self.grpo_model_infer.grpo_model.policy_model.model)
@@ -400,18 +399,19 @@ class InferWorker(Worker):
             reshard_optimizer_,
             f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
         )
-        stage_name = 'other'
+        stage_name = "other"
         context.set_auto_parallel_context(
             strategy_ckpt_config={
-                "save_file":
-                    f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+            }
+        )
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
-        """ offload stf infer """
+        """offload stf infer"""
         if not self.on_device:
             return
-        logger.info(f'before offload stf infer {ms.hal.memory_stats()}')
+        logger.info(f"before offload stf infer {ms.hal.memory_stats()}")
         start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
@@ -424,14 +424,14 @@ class InferWorker(Worker):
             param._offload()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "offload stf infer")
-        logger.info(f'after offload stf infer {ms.hal.memory_stats()}')
+        logger.info(f"after offload stf infer {ms.hal.memory_stats()}")
         self.on_device = False
 
     def load(self):
-        """ load stf infer """
+        """load stf infer"""
         if self.on_device:
             return
-        logger.info(f'before load stf infer {ms.hal.memory_stats()}')
+        logger.info(f"before load stf infer {ms.hal.memory_stats()}")
         start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
@@ -444,13 +444,13 @@ class InferWorker(Worker):
             param._load()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "load stf infer")
-        logger.info(f'after load stf infer {ms.hal.memory_stats()}')
+        logger.info(f"after load stf infer {ms.hal.memory_stats()}")
         self.on_device = True
 
     def load_checkpoint(self):
-        """ load_checkpoint """
+        """load_checkpoint"""
         load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
-        logger.info(f'sft_ckpt_path_infer:{self.sft_ckpt_path_infer}')
+        logger.info(f"sft_ckpt_path_infer:{self.sft_ckpt_path_infer}")
         if self.sft_ckpt_path_infer and load_ckpt_format == "safetensors":
             self.on_device = True
             self._load_checkpoint_safetensors()
@@ -461,23 +461,25 @@ class InferWorker(Worker):
             self.on_device = True
             param_dict = load_ckpt_func(self.sft_ckpt_path_infer)
             if self.use_vllm == VllmMode.ORIGIN:
-                new_param_dict = {'grpo_model.policy_model.model.' + k: v for k, v in param_dict.items()}
+                new_param_dict = {"grpo_model.policy_model.model." + k: v for k, v in param_dict.items()}
             else:
-                new_param_dict = {'grpo_model.policy_model.' + k: v for k, v in param_dict.items()}
+                new_param_dict = {"grpo_model.policy_model." + k: v for k, v in param_dict.items()}
 
             logger.info(f"begin to load infer policy model from: {self.sft_ckpt_path_infer}")
             logger.info(new_param_dict.keys())
             for _, param in self.grpo_model_infer.grpo_model.policy_model.parameters_and_names():
                 logger.info(f"infer model para names:   {param.name}")
-            param_not_load, ckpt_not_load = ms.load_param_into_net(self.grpo_model_infer.grpo_model.policy_model,
-                                                                   new_param_dict)
+            param_not_load, ckpt_not_load = ms.load_param_into_net(
+                self.grpo_model_infer.grpo_model.policy_model, new_param_dict
+            )
             logger.info(f"param not load: {param_not_load}")
             logger.info(f"ckpt not load: {ckpt_not_load}")
 
     def build_qwen_hf_config(self):
-        """ build_qwen_hf_config """
+        """build_qwen_hf_config"""
         import json
         from transformers import AutoConfig
+
         # build qwen hf config 硬编码
 
         hf_config_path = self.grpo_config.generate_config.hf_config_path
@@ -485,11 +487,11 @@ class InferWorker(Worker):
         qwen_hf_config = dict()
         qwen_hf_config["architectures"] = ["Qwen2ForCausalLM"]
         qwen_hf_config["attention_dropout"] = 0.0
-        qwen_hf_config["bos_token_id"] = 151643 # 硬编码
-        qwen_hf_config["eos_token_id"] = 151643 # 硬编码
+        qwen_hf_config["bos_token_id"] = 151643  # 硬编码
+        qwen_hf_config["eos_token_id"] = 151643  # 硬编码
         qwen_hf_config["hidden_act"] = "silu"
         qwen_hf_config["hidden_size"] = self.sft_model_config_infer.hidden_size
-        qwen_hf_config["initializer_range"] = 0.02 # 硬编码，不知道对应哪一项
+        qwen_hf_config["initializer_range"] = 0.02  # 硬编码，不知道对应哪一项
         qwen_hf_config["intermediate_size"] = self.sft_model_config_infer.intermediate_size
         qwen_hf_config["max_position_embeddings"] = self.sft_model_config_infer.max_position_embeddings
         qwen_hf_config["max_window_layers"] = self.sft_model_config_infer.num_layers
@@ -499,7 +501,7 @@ class InferWorker(Worker):
         qwen_hf_config["num_key_value_heads"] = self.sft_model_config_infer.n_kv_heads
         qwen_hf_config["rms_norm_eps"] = 1e-06
         qwen_hf_config["rope_theta"] = 1000000.0
-        qwen_hf_config["sliding_window"] = self.sft_model_config_infer.max_position_embeddings # 不明白数值是131072
+        qwen_hf_config["sliding_window"] = self.sft_model_config_infer.max_position_embeddings  # 不明白数值是131072
         qwen_hf_config["tie_word_embeddings"] = False
         qwen_hf_config["torch_dtype"] = DTYPE_STR[self.sft_model_config_infer.compute_dtype]
         qwen_hf_config["transformers_version"] = "4.46.1"
@@ -519,7 +521,7 @@ class InferWorker(Worker):
         return hf_config
 
     def build_deepseek_hf_config(self):
-        """ build_deepseek_hf_config """
+        """build_deepseek_hf_config"""
         import json
         from transformers import AutoConfig
 
@@ -533,7 +535,7 @@ class InferWorker(Worker):
         deepseek_hf_config["auto_map"] = {
             "AutoConfig": "configuration_deepseek.DeepseekV3Config",
             "AutoModel": "modeling_deepseek.DeepseekV3Model",
-            "AutoModelForCausalLM": "modeling_deepseek.DeepseekV3ForCausalLM"
+            "AutoModelForCausalLM": "modeling_deepseek.DeepseekV3ForCausalLM",
         }
         deepseek_hf_config["n_group"] = self.sft_model_config_infer.moe_config.n_group
         deepseek_hf_config["moe_layer_freq"] = 1
@@ -566,10 +568,7 @@ class InferWorker(Worker):
             "activation_scheme": "dynamic",
             "fmt": "e4m3",
             "quant_method": "fp8",
-            "weight_block_size": [
-                128,
-                128
-            ]
+            "weight_block_size": [128, 128],
         }
         deepseek_hf_config["rope_scaling"] = {
             "beta_fast": 32,
@@ -578,7 +577,7 @@ class InferWorker(Worker):
             "mscale": 1.0,
             "mscale_all_dim": 1.0,
             "original_max_position_embeddings": 4096,
-            "type": "yarn"
+            "type": "yarn",
         }
         deepseek_hf_config["hidden_size"] = self.sft_model_config_infer.hidden_size
         deepseek_hf_config["initializer_range"] = 0.02  # 硬编码，不知道对应哪一项
@@ -604,28 +603,27 @@ class InferWorker(Worker):
         return hf_config
 
     def convert_map_dict(self, source_dict, **kwargs):
-        """ convert_map_dict """
+        """convert_map_dict"""
         if self.use_vllm != VllmMode.ORIGIN:
             network = self.grpo_model_infer.grpo_model.policy_model
-            prefix = 'grpo_model.policy_model.'
+            prefix = "grpo_model.policy_model."
         else:
             network = self.grpo_model_infer.grpo_model.policy_model.model
-            prefix = 'grpo_model.policy_model.model.'
+            prefix = "grpo_model.policy_model.model."
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
         new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
 
     def _load_checkpoint_safetensors(self):
-        """ load safetensors checkpoint """
+        """load safetensors checkpoint"""
         if self.use_vllm != VllmMode.ORIGIN:
             network = self.grpo_model_infer.grpo_model.policy_model
-            prefix = 'grpo_model.policy_model.'
+            prefix = "grpo_model.policy_model."
         else:
             network = self.grpo_model_infer.grpo_model.policy_model.model
-            prefix = 'grpo_model.policy_model.model.'
+            prefix = "grpo_model.policy_model.model."
         try:
-            load_checkpoint_files = glob(
-                os.path.join(self.sft_ckpt_path_infer, f"*.safetensors"))
+            load_checkpoint_files = glob(os.path.join(self.sft_ckpt_path_infer, f"*.safetensors"))
             load_checkpoint_files.sort()
             name_map = network.obtain_name_map(load_checkpoint_files)
             name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
@@ -638,6 +636,6 @@ class InferWorker(Worker):
             network=self.grpo_model_infer.grpo_model.policy_model,
             predict_strategy=strategy_path,
             unified_safetensors_dir=self.sft_ckpt_path_infer,
-            format='safetensors',
-            name_map=name_map
+            format="safetensors",
+            name_map=name_map,
         )

@@ -1,4 +1,4 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
+# Copyright 2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,12 +21,13 @@ import yaml
 class VllmMode(Enum):
     ORIGIN = 0
     VLLM = 1
-    DEBUG = 2   # DEBUG mode: init model with vllm, but generate with mindformers
+    DEBUG = 2  # DEBUG mode: init model with vllm, but generate with mindformers
 
 
 @dataclass
 class ParallelConfig:
     """parallel config"""
+
     data_parallel: int = 1
     model_parallel: int = 4
     pipeline_stage: int = 2
@@ -37,20 +38,21 @@ class ParallelConfig:
     context_parallel: int = 1
 
     param_dict = {
-        'data_parallel': data_parallel,
-        'model_parallel': model_parallel,
-        'pipeline_stage': pipeline_stage,
-        'expert_parallel': expert_parallel,
-        'use_seq_parallel': use_seq_parallel,
-        'micro_batch_num': micro_batch_num,
-        'vocab_emb_dp': vocab_emb_dp,
-        'context_parallel': context_parallel,
+        "data_parallel": data_parallel,
+        "model_parallel": model_parallel,
+        "pipeline_stage": pipeline_stage,
+        "expert_parallel": expert_parallel,
+        "use_seq_parallel": use_seq_parallel,
+        "micro_batch_num": micro_batch_num,
+        "vocab_emb_dp": vocab_emb_dp,
+        "context_parallel": context_parallel,
     }
 
 
 @dataclass
 class RecomputeConfig:
     """recompute config"""
+
     recompute: bool = False
     select_recompute: bool = False
     parallel_optimizer_comm_recompute: bool = False
@@ -58,18 +60,19 @@ class RecomputeConfig:
     recompute_slice_activation: bool = False
 
     param_dict = {
-        'recompute': recompute,
-        'select_recompute': select_recompute,
-        'parallel_optimizer_comm_recompute': parallel_optimizer_comm_recompute,
-        'mp_comm_recompute': mp_comm_recompute,
-        'recompute_slice_activation': recompute_slice_activation,
+        "recompute": recompute,
+        "select_recompute": select_recompute,
+        "parallel_optimizer_comm_recompute": parallel_optimizer_comm_recompute,
+        "mp_comm_recompute": mp_comm_recompute,
+        "recompute_slice_activation": recompute_slice_activation,
     }
 
 
 @dataclass
 class Optimizer:
     """optimizer"""
-    type: str = 'adamw'
+
+    type: str = "adamw"
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
     eps: float = 1.0e-8
@@ -80,16 +83,18 @@ class Optimizer:
 @dataclass
 class LRSchedule:
     """lr schedule"""
+
     lr: float = 5.0e-7
     min_lr: float = 1.0e-10
     warmup_step: int = 10
     decay_steps: int = 200000
-    lr_decay_style: str = 'cosine'
+    lr_decay_style: str = "cosine"
 
 
 @dataclass
 class ActorConfig:
     """actor model config"""
+
     load: str = "/path/"
     save: str = "/tmp/"
     model_config: str = "/path/finetune.yaml"
@@ -106,6 +111,7 @@ class ActorConfig:
 @dataclass
 class RefConfig:
     """reference model config"""
+
     model_config: str = "/path/finetune.yaml"
     load: str = "/path/"
     ref_model_batch_size: int = 2
@@ -121,6 +127,7 @@ class RefConfig:
 @dataclass
 class SamplingConfig:
     """sampling config"""
+
     temperature: float = 0.8
     repetition_penalty: float = 1.05
     top_p: float = 0.8
@@ -138,6 +145,7 @@ class SamplingConfig:
 @dataclass
 class GenerateConfig:
     """generate model config"""
+
     model_config: str = "/path/predict.yaml"
     load: str = "/path/"
     infer_model_batch_size: int = 2
@@ -145,8 +153,8 @@ class GenerateConfig:
     offset: int = 0
     use_eod_attn_mask_compression: bool = True
     # generate config
-    use_vllm: int = 1  #0--MindFormers; 1--VLLM; 2--DEBUG mode: init model with vllm, but generate with mindformers
-    hf_config_path: str = "config.json"   # vllm config path
+    use_vllm: int = 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode: init model with vllm, but generate with mindformers
+    hf_config_path: str = "config.json"  # vllm config path
     block_size: int = 16
     max_model_len: int = 25536
     max_num_batched_tokens: int = 25536
@@ -161,6 +169,7 @@ class GenerateConfig:
 @dataclass
 class RewardConfig:
     """grpo reward config"""
+
     verifier_function: list = None
     verifier_weight: list = None
 
@@ -168,19 +177,22 @@ class RewardConfig:
 @dataclass
 class JitConfig:
     """jit config"""
+
     jit_level: str = "O0"
 
 
 @dataclass
 class AscendConfig:
     """Ascend config"""
+
     precision_mode: str = "must_keep_origin_dtype"
 
 
 @dataclass
 class Context:
     """context"""
-    mode: int = 0 #0--Graph Mode; 1--Pynative Mode
+
+    mode: int = 0  # 0--Graph Mode; 1--Pynative Mode
     device_target: str = "Ascend"
     max_call_depth: int = 10000
     max_device_memory: str = "55GB"
@@ -192,25 +204,26 @@ class Context:
     ascend_config: AscendConfig = AscendConfig
 
     param_dict = {
-        'mode': mode,
-        'device_target': device_target,
-        'max_call_depth': max_call_depth,
-        'max_device_memory': max_device_memory,
-        'save_graphs': save_graphs,
-        'save_graphs_path': save_graphs_path,
-        'device_id': device_id,
-        'jit_config': {'jit_level': jit_config.jit_level},
-        'memory_optimize_level': memory_optimize_level,
-        'ascend_config': {'precision_mode': ascend_config.precision_mode},
+        "mode": mode,
+        "device_target": device_target,
+        "max_call_depth": max_call_depth,
+        "max_device_memory": max_device_memory,
+        "save_graphs": save_graphs,
+        "save_graphs_path": save_graphs_path,
+        "device_id": device_id,
+        "jit_config": {"jit_level": jit_config.jit_level},
+        "memory_optimize_level": memory_optimize_level,
+        "ascend_config": {"precision_mode": ascend_config.precision_mode},
     }
 
 
 @dataclass
 class RLConfig:
     """rl config"""
-    model_name: str = 'qwen2.5'
+
+    model_name: str = "qwen2.5"
     deterministic: str = "OFF"
-    align_type: str = 'rlhf_stages'
+    align_type: str = "rlhf_stages"
     dataset_file: str = "/path/train.mindrecord"
     tokenizer_dir: str = "/path/"
     epochs: int = 10
@@ -230,23 +243,23 @@ class RLConfig:
 
     save_prompt_completions_data: bool = True
     save_prompt_completions_interval: int = 1
-    save_prompt_completions_dir: str = '/tmp/'
+    save_prompt_completions_dir: str = "/tmp/"
 
     reshard_mem_opt_level: int = 0
     save_ckpt_interval: int = 1
     save_max_ckpt_num: int = 5
-    save_ckpt_format: str = "safetensors" # format support safetensors/ckpt
+    save_ckpt_format: str = "safetensors"  # format support safetensors/ckpt
     enable_reshard_optimizer: bool = False
 
     tensorboard: bool = False
-    tensorboard_dir: str = '/tmp/'
+    tensorboard_dir: str = "/tmp/"
     tensorboard_queue_size: int = 10
 
-    save_checkpoint_dir: str = '/tmp/'
+    save_checkpoint_dir: str = "/tmp/"
     performance_stats: bool = False
     micro_batch_interleaved: int = 1
 
-    beta: float = 0.01 # KL coefficient
+    beta: float = 0.01  # KL coefficient
     num_generations: int = 8
     num_rollouts: int = 4
     chunk_size: int = 1
@@ -276,6 +289,7 @@ class GRPOConfig:
     """
     GRPO config class which defines the model size
     """
+
     actor_config = ActorConfig
     ref_config = RefConfig
     reward_config = RewardConfig
@@ -284,7 +298,7 @@ class GRPOConfig:
     context = Context
 
     def __init__(self, file_path):
-        with open(file_path, 'r', encoding='utf-8') as file:
+        with open(file_path, "r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
         for key in data:
             setattr(self, key, getattr(self, key)(**data[key]))
@@ -297,21 +311,21 @@ class GRPOConfig:
 
     def _update_sub_config(self, data):
         """update sub config"""
-        self._set_config(data, 'actor_config', 'parallel_config', ParallelConfig)
-        self._set_config(data, 'ref_config', 'parallel_config', ParallelConfig)
-        self._set_config(data, 'generate_config', 'parallel_config', ParallelConfig)
-        self._set_config(data, 'actor_config', 'recompute_config', RecomputeConfig)
-        self._set_config(data, 'ref_config', 'recompute_config', RecomputeConfig)
-        self._set_config(data, 'context', 'jit_config', JitConfig)
-        self._set_config(data, 'context', 'ascend_config', AscendConfig)
-        self._set_config(data, 'actor_config', 'optimizer', Optimizer)
-        self._set_config(data, 'actor_config', 'lr_schedule', LRSchedule)
-        self._set_config(data, 'generate_config', 'sampling_config', SamplingConfig)
-        if 'actor_config' in data and 'parallel_config' in data['actor_config']:
-            self.actor_config.parallel_config.param_dict = data['actor_config']['parallel_config']
-        if 'ref_config' in data and 'parallel_config' in data['ref_config']:
-            self.ref_config.parallel_config.param_dict = data['ref_config']['parallel_config']
-        if 'generate_config' in data and 'parallel_config' in data['generate_config']:
-            self.generate_config.parallel_config.param_dict = data['generate_config']['parallel_config']
-        if 'context' in data:
-            self.context.param_dict = data['context']
+        self._set_config(data, "actor_config", "parallel_config", ParallelConfig)
+        self._set_config(data, "ref_config", "parallel_config", ParallelConfig)
+        self._set_config(data, "generate_config", "parallel_config", ParallelConfig)
+        self._set_config(data, "actor_config", "recompute_config", RecomputeConfig)
+        self._set_config(data, "ref_config", "recompute_config", RecomputeConfig)
+        self._set_config(data, "context", "jit_config", JitConfig)
+        self._set_config(data, "context", "ascend_config", AscendConfig)
+        self._set_config(data, "actor_config", "optimizer", Optimizer)
+        self._set_config(data, "actor_config", "lr_schedule", LRSchedule)
+        self._set_config(data, "generate_config", "sampling_config", SamplingConfig)
+        if "actor_config" in data and "parallel_config" in data["actor_config"]:
+            self.actor_config.parallel_config.param_dict = data["actor_config"]["parallel_config"]
+        if "ref_config" in data and "parallel_config" in data["ref_config"]:
+            self.ref_config.parallel_config.param_dict = data["ref_config"]["parallel_config"]
+        if "generate_config" in data and "parallel_config" in data["generate_config"]:
+            self.generate_config.parallel_config.param_dict = data["generate_config"]["parallel_config"]
+        if "context" in data:
+            self.context.param_dict = data["context"]

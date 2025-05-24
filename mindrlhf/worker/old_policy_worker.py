@@ -19,19 +19,16 @@ import os
 from glob import glob
 import numpy as np
 
-# mindspore
 import mindspore as ms
 from mindspore.communication import get_rank
 from mindspore import context, ops
 
-# mindformers
 from mindformers import MindFormerConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers import LlamaConfig
 from mindformers import logger
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
-# mindrlhf
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import print_perf_stat
@@ -39,9 +36,9 @@ from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 class OldPolicyWorker(Worker):
-    '''
+    """
     This class generates responses.
-    '''
+    """
 
     def __init__(self, grpo_config: GRPOConfig, sft_path_train, args):
         super().__init__()
@@ -54,30 +51,25 @@ class OldPolicyWorker(Worker):
             self.args = args
             old_policy_config = MindFormerConfig(sft_path_train)
             old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
-            old_policy_config.parallel_config = MindFormerConfig(
-                **grpo_config.actor_config.parallel_config.param_dict
-            )
-            logger.info(f'old_policy parallel_config:{old_policy_config.parallel_config}')
+            old_policy_config.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
+            logger.info(f"old_policy parallel_config:{old_policy_config.parallel_config}")
             old_policy_config.recompute_config = grpo_config.actor_config.recompute_config.param_dict
-            logger.info(f'old_policy_config recompute_config:{old_policy_config.recompute_config}')
+            logger.info(f"old_policy_config recompute_config:{old_policy_config.recompute_config}")
             old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
             old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
 
             if args.custom_model_name in ["qwen", "llama"]:
-                old_policy_config.model.model_config.use_eod_attn_mask_compression = \
+                old_policy_config.model.model_config.use_eod_attn_mask_compression = (
                     grpo_config.actor_config.use_eod_attn_mask_compression
+                )
                 old_policy_model_config = LlamaConfig(**old_policy_config.model.model_config)
                 old_policy_model_config.model_name = "llama"
             elif args.custom_model_name == "deepseek":
                 old_policy_config.model.model_config.moe_config = old_policy_config.moe_config
-                old_policy_model_config = DeepseekV3Config(
-                    **old_policy_config.model.model_config
-                )
+                old_policy_model_config = DeepseekV3Config(**old_policy_config.model.model_config)
                 old_policy_model_config.model_name = "deepseek_training"
             else:
-                raise ValueError(
-                    f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}"
-                )
+                raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
             old_policy_model_config.checkpoint_name_or_path = grpo_config.actor_config.load
             self.old_policy_ckpt_path = old_policy_model_config.checkpoint_name_or_path
@@ -89,8 +81,7 @@ class OldPolicyWorker(Worker):
                 and old_policy_model_config.parallel_config.data_parallel > 1
             )
             context.set_auto_parallel_context(
-                pipeline_stages=self.old_policy_pp_stage,
-                enable_parallel_optimizer=self.enable_parallel_optimizer
+                pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
             )
             self.old_policy_model_config = old_policy_model_config
             self.old_policy_model = CausalLMHybrid(old_policy_model_config, grpo_config)
@@ -106,39 +97,33 @@ class OldPolicyWorker(Worker):
         return self.old_policy_model
 
     def compile(self):
-        """ compile and save strategy """
+        """compile and save strategy"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         self.old_policy_model.model.set_train(False)
         context.set_auto_parallel_context(
-            pipeline_stages=self.old_policy_pp_stage,
-            enable_parallel_optimizer=self.enable_parallel_optimizer
+            pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
         old_policy_bs = self.grpo_config.rl_config.batch_size
-        fake_data = ms.Tensor(
-            shape=(old_policy_bs, self.grpo_config.rl_config.seq_length),
-            dtype=ms.int32,
-        )
-        actual_seq_data = ms.Tensor(
-            shape=(old_policy_bs, self.grpo_config.rl_config.pack_num),
-            dtype=ms.int32,
-        )
+        fake_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32)
+        actual_seq_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32)
         start_time = time.time()
-        stage_name = 'old_policy'
+        stage_name = "old_policy"
         context.set_auto_parallel_context(
             strategy_ckpt_config={
-                "save_file":
-                    f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt"
+                "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt"
             },
-            pipeline_stages=self.old_policy_pp_stage
+            pipeline_stages=self.old_policy_pp_stage,
         )
-        self.old_policy_model.compile(fake_data, None, None, None, False, False,
-                                      fake_data, actual_seq_data, False, False)
-        stage_name = 'other'
+        self.old_policy_model.compile(
+            fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False
+        )
+        stage_name = "other"
         context.set_auto_parallel_context(
             strategy_ckpt_config={
-                "save_file":
-                    f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"})
+                "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+            }
+        )
         end_time = time.time()
         print_perf_stat(start_time, end_time, "old policy model compile")
 
@@ -154,52 +139,54 @@ class OldPolicyWorker(Worker):
         return actual_seq_lenth
 
     def compute_old_log_prob(self, prompt_completion_ids_tensor, samples, actual_sequence_length):
-        """ compute old log probs """
+        """compute old log probs"""
         np.set_printoptions(threshold=1024)
         context.set_auto_parallel_context(
-            pipeline_stages=self.old_policy_pp_stage,
-            enable_parallel_optimizer=self.enable_parallel_optimizer
+            pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
         actual_seq_length = self.offset_actual_seq_length(actual_sequence_length, prompt_completion_ids_tensor.shape[1])
-        logger.info(f"precision old policy model inputs are {prompt_completion_ids_tensor}, "
-                    f"{samples}, {actual_sequence_length}")
+        logger.info(
+            f"precision old policy model inputs are {prompt_completion_ids_tensor}, "
+            f"{samples}, {actual_sequence_length}"
+        )
 
-        old_per_token_logps = self.old_policy_model(prompt_completion_ids_tensor, None, None, None, False, False,
-                                                    samples, actual_seq_length, False, False)
+        old_per_token_logps = self.old_policy_model(
+            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_seq_length, False, False
+        )
 
         logger.info(f"old_logprobs precision is {old_per_token_logps}")
         return old_per_token_logps
 
     def offload(self):
-        """ offload old policy model """
+        """offload old policy model"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         if self.on_device is False:
             return
-        logger.info(f'before offload old policy model {ms.hal.memory_stats()}')
+        logger.info(f"before offload old policy model {ms.hal.memory_stats()}")
         start_time = time.time()
         for param in self.old_policy_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "offload old policy model")
-        logger.info(f'after offload old policy model {ms.hal.memory_stats()}')
+        logger.info(f"after offload old policy model {ms.hal.memory_stats()}")
         self.on_device = False
 
     def load(self):
-        """ load old policy model """
+        """load old policy model"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         if self.on_device:
             return
-        logger.info(f'before load old policy model {ms.hal.memory_stats()}')
+        logger.info(f"before load old policy model {ms.hal.memory_stats()}")
         start_time = time.time()
         for param in self.old_policy_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
         end_time = time.time()
         print_perf_stat(start_time, end_time, "load old policy model")
-        logger.info(f'after load old policy model {ms.hal.memory_stats()}')
+        logger.info(f"after load old policy model {ms.hal.memory_stats()}")
         self.on_device = True
 
     def _load_checkpoint_safetensors(self):
@@ -208,21 +195,15 @@ class OldPolicyWorker(Worker):
         prefix = "model."
         name_map = None
         try:
-            load_checkpoint_files = glob(
-                os.path.join(self.old_policy_ckpt_path, f"*.safetensors")
-            )
+            load_checkpoint_files = glob(os.path.join(self.old_policy_ckpt_path, f"*.safetensors"))
             load_checkpoint_files.sort()
             name_map = network.obtain_name_map(load_checkpoint_files)
             name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
         except Exception as e:
-            raise TypeError(
-                f"Please complete abstract function obtain_name_map. Details: {e}"
-            ) from e
+            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
 
         # TODO: save strategy
-        strategy_path = os.path.join(
-            self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt"
-        )
+        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
         ms.load_distributed_checkpoint(
             network=self.old_policy_model,
             predict_strategy=strategy_path,
@@ -232,7 +213,7 @@ class OldPolicyWorker(Worker):
         )
 
     def load_checkpoint(self):
-        """ load checkpoint """
+        """load checkpoint"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         if self.old_policy_ckpt_path and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
@@ -244,7 +225,7 @@ class OldPolicyWorker(Worker):
         if self.old_policy_ckpt_path:
             self.on_device = True
             param_dict = load_ckpt_func(self.old_policy_ckpt_path)
-            new_param_dict = {'model.' + k: v for k, v in param_dict.items()}
+            new_param_dict = {"model." + k: v for k, v in param_dict.items()}
             logger.info(f"begin to load old policy model from: {self.old_policy_ckpt_path}")
             for _, param in self.old_policy_model.parameters_and_names():
                 logger.info(f"old policy model para names:   {param.name}")
@@ -257,19 +238,19 @@ class OldPolicyWorker(Worker):
         network = self.old_policy_model.model
         prefix = "model."
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
-        new_weight_dict = {
-            f"{prefix}{key}": value for key, value in weight_dict.items()
-        }
+        new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
 
     def check_not_on_device(self):
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
-        assert not self.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                    "old policy model must not on device before transform param")
+        assert not self.on_device, (
+            "when reshard_mem_opt_level is equal to 0, " "old policy model must not on device before transform param"
+        )
 
     def check_on_device(self):
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
-        assert self.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                "old policy model must on device before transform param")
+        assert self.on_device, (
+            "when reshard_mem_opt_level is equal to 0, " "old policy model must on device before transform param"
+        )
