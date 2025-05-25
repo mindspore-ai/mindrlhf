@@ -35,9 +35,17 @@ from mindformers import MindFormerConfig
 from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
-from mindrlhf.utils import (transfer_from_str_to_bool, set_perf_stats, print_perf_stat,
-                            convert_index_json_total, save_prompt_completions_data, MetricData, get_dp_rank,
-                            add_metrics_to_tensorboard)
+from mindrlhf.utils import (
+    transfer_from_str_to_bool,
+    set_perf_stats,
+    print_perf_stat,
+    convert_index_json_total,
+    save_prompt_completions_data,
+    MetricData,
+    get_dp_rank,
+    add_metrics_to_tensorboard,
+)
+
 # mindrlhf
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda, qwen_accuracy_reward
 from mindrlhf.worker.infer_worker import InferWorker
@@ -55,17 +63,12 @@ def pad_sequence_to_length(sequence, target_length, pad_value):
     """Pad sequence to target length with specified pad value."""
     current_length = len(sequence)
     if current_length < target_length:
-        return np.pad(
-            sequence,
-            (0, target_length - current_length),
-            mode="constant",
-            constant_values=pad_value,
-        )
+        return np.pad(sequence, (0, target_length - current_length), mode="constant", constant_values=pad_value)
     return sequence[:target_length]
 
 
 class GRPOTrainer:
-    """ GRPO Trainer """
+    """GRPO Trainer"""
 
     def __init__(self, args=None):
         """Initialize"""
@@ -75,36 +78,30 @@ class GRPOTrainer:
 
         # ================== Initial Tensorboard ==================
         if self.grpo_config.rl_config.tensorboard and self.grpo_config.rl_config.tensorboard_dir:
-            self.grpo_config.rl_config.tensorboard_dir = os.path.join(self.grpo_config.rl_config.tensorboard_dir,
-                                                                      f"rank_{get_rank()}")
+            self.grpo_config.rl_config.tensorboard_dir = os.path.join(
+                self.grpo_config.rl_config.tensorboard_dir, f"rank_{get_rank()}"
+            )
             _set_tensorboard_writer(self.grpo_config.rl_config)
         self.tensor_writer = get_tensorboard_writer()
-        setattr(self.args, 'tensor_writer', self.tensor_writer)
+        setattr(self.args, "tensor_writer", self.tensor_writer)
         self.make_exp_step = 0
         self.total_processed_tokens = 0
         self.total_time = 0
 
         logger.info("GRPOTrainer: start init workers")
-        self.infer = InferWorker(grpo_config=self.grpo_config,
-                                 sft_path_infer=self.sft_path_infer,
-                                 args=self.args)
+        self.infer = InferWorker(grpo_config=self.grpo_config, sft_path_infer=self.sft_path_infer, args=self.args)
         # grpo_config infer and train share
         self.infer_dp = self.infer.get_infer_dp()
 
-        self.ref = RefWorker(grpo_config=self.grpo_config,
-                             sft_path_ref=self.sft_path_ref,
-                             args=self.args)
+        self.ref = RefWorker(grpo_config=self.grpo_config, sft_path_ref=self.sft_path_ref, args=self.args)
         self.ref_dp = self.ref.get_ref_dp()
-        self.train = TrainWorker(grpo_config=self.grpo_config,
-                                 sft_path_train=self.sft_path_train,
-                                 args=self.args)
-        self.old_policy = OldPolicyWorker(grpo_config=self.grpo_config,
-                                          sft_path_train=self.sft_path_train,
-                                          args=self.args)
+        self.train = TrainWorker(grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args)
+        self.old_policy = OldPolicyWorker(
+            grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args
+        )
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
-            self.grpo_config.rl_config.packing_sample_length = \
-                self.train.sft_model_config_train.seq_length
+            self.grpo_config.rl_config.packing_sample_length = self.train.sft_model_config_train.seq_length
             logger.info(f"set packing_sample_length to {self.grpo_config.rl_config.packing_sample_length}")
         logger.info("GRPOTrainer: finish init workers")
 
@@ -117,9 +114,14 @@ class GRPOTrainer:
             self.rename_safetensors_weights()
 
         self._compile()
-        self.transform = TransformWorker(self.grpo_config, self.train.sft_model_config_train,
-                                         self.train.model(), self.infer.model(), self.ref.model(),
-                                         self.old_policy.model())
+        self.transform = TransformWorker(
+            self.grpo_config,
+            self.train.sft_model_config_train,
+            self.train.model(),
+            self.infer.model(),
+            self.ref.model(),
+            self.old_policy.model(),
+        )
         self.i_step = 0
         self.n_epoch = 0
         self._load_checkpoint()
@@ -127,12 +129,14 @@ class GRPOTrainer:
             self.transform.reshard_params(0)
         self._init_grpo_infer_dataset()
         if self.grpo_config.rl_config.save_ckpt_interval <= 0:
-            raise ValueError(f"save_ckpt_interval should be lager than 0, but got "
-                             f"{self.grpo_config.rl_config.save_ckpt_interval}")
+            raise ValueError(
+                f"save_ckpt_interval should be lager than 0, but got "
+                f"{self.grpo_config.rl_config.save_ckpt_interval}"
+            )
 
     @staticmethod
     def _set_args_to_config(args, grpo_config: GRPOConfig):
-        """ set args to config """
+        """set args to config"""
         if args.dataset_file is not None:
             grpo_config.rl_config.dataset_file = args.dataset_file
         if args.tokenizer_dir is not None:
@@ -144,14 +148,14 @@ class GRPOTrainer:
         if args.generate_checkpoint_path is not None:
             grpo_config.generate_config.load = args.generate_checkpoint_path
         if args.verifier_function is not None:
-            if ',' in args.verifier_function:
-                verifier_function = args.verifier_function.split(',')
+            if "," in args.verifier_function:
+                verifier_function = args.verifier_function.split(",")
             else:
                 verifier_function = [args.verifier_function]
             grpo_config.reward_config.verifier_function = verifier_function
         if args.verifier_weight is not None:
-            if ',' in args.verifier_weight:
-                verifier_weight = args.verifier_weight.split(',')
+            if "," in args.verifier_weight:
+                verifier_weight = args.verifier_weight.split(",")
                 verifier_weight = [float(_) for _ in verifier_weight]
             else:
                 verifier_weight = [float(args.verifier_weight)]
@@ -164,7 +168,7 @@ class GRPOTrainer:
         return grpo_config
 
     def _init_grpo_configs(self, args):
-        """ init grpo configs """
+        """init grpo configs"""
         logger.info(f"GRPOTrainer: _init_grpo_configs {args} in main task")
         # init grpo config
         grpo_config = GRPOConfig(args.config)
@@ -178,19 +182,24 @@ class GRPOTrainer:
             f"vllm mode: {grpo_config.generate_config.use_vllm}, "
             f"hf_config_path: {grpo_config.generate_config.hf_config_path}"
         )
-        if (grpo_config.rl_config.save_prompt_completions_data and
-                grpo_config.rl_config.save_prompt_completions_interval <= 0):
-            logger.warning(f"save_prompt_completions_interval should be positive, "
-                           f"but got {grpo_config.rl_config.save_prompt_completions_interval}. "
-                           f"Set save_prompt_completions_data to False.")
+        if (
+            grpo_config.rl_config.save_prompt_completions_data
+            and grpo_config.rl_config.save_prompt_completions_interval <= 0
+        ):
+            logger.warning(
+                f"save_prompt_completions_interval should be positive, "
+                f"but got {grpo_config.rl_config.save_prompt_completions_interval}. "
+                f"Set save_prompt_completions_data to False."
+            )
             grpo_config.rl_config.save_prompt_completions_data = False
 
         # for worker
         if args.custom_model_name == "qwen":
-            args.vocab_path = os.path.join(grpo_config.rl_config.tokenizer_dir, 'vocab.json')
-            args.merges_file_path = os.path.join(grpo_config.rl_config.tokenizer_dir, 'merges.txt')
+            args.vocab_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "vocab.json")
+            args.merges_file_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "merges.txt")
             self.tokenizer = Qwen2Tokenizer(
-                args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+                args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False
+            )
         elif args.custom_model_name == "deepseek":
             args.tokenizer_path = grpo_config.rl_config.tokenizer_dir
             self.tokenizer = LlamaTokenizerFast(
@@ -203,8 +212,7 @@ class GRPOTrainer:
             sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
             self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
         else:
-            raise ValueError(
-                f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
         self.grpo_config = grpo_config
         self.use_parallel = transfer_from_str_to_bool(self.grpo_config.rl_config.use_parallel)
         self.sft_path_infer = grpo_config.generate_config.model_config
@@ -214,7 +222,7 @@ class GRPOTrainer:
             ms.set_seed(self.grpo_config.rl_config.seed)
 
     def _init_reward_fn(self):
-        """ init reward function """
+        """init reward function"""
         logger.info("GRPOTrainer: _init_reward_fn")
         if self.grpo_config.reward_config.verifier_function:
             verifier_function_list = self.grpo_config.reward_config.verifier_function
@@ -254,9 +262,7 @@ class GRPOTrainer:
         Build dataset for generating.
         """
         self.mind_dataset_dir = self.grpo_config.rl_config.dataset_file
-        logger.info(
-            f"GRPOTrainer: _init_grpo_infer_dataset, dataset dir {self.mind_dataset_dir}"
-        )
+        logger.info(f"GRPOTrainer: _init_grpo_infer_dataset, dataset dir {self.mind_dataset_dir}")
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids"]
             ms.dataset.config.set_seed(2023)
@@ -279,7 +285,7 @@ class GRPOTrainer:
         compile model
         """
         enable_reshard_optimizer = self.grpo_config.rl_config.enable_reshard_optimizer
-        logger.info(f'enable_reshard_optimizer:{enable_reshard_optimizer}')
+        logger.info(f"enable_reshard_optimizer:{enable_reshard_optimizer}")
         if enable_reshard_optimizer:
             logger.info("Reshard Optimizer is enabled")
 
@@ -337,7 +343,7 @@ class GRPOTrainer:
         print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
 
     def _get_batch(self, num_rollouts):
-        """ get batch """
+        """get batch"""
         full_batch = None
         for _ in range(num_rollouts):
             try:
@@ -349,17 +355,14 @@ class GRPOTrainer:
             if full_batch is None:
                 full_batch = batch
             else:
-                full_batch = (
-                    mint.cat((full_batch[0], batch[0])),
-                    mint.cat((full_batch[1], batch[1]))
-                )
+                full_batch = (mint.cat((full_batch[0], batch[0])), mint.cat((full_batch[1], batch[1])))
         return full_batch
 
     def _split_for_data_parallel(self, batch_inputs, data_parallel_size):
         """
         split batch_inputs for data parallel
         """
-        split_size = (batch_inputs.shape[0] // data_parallel_size)
+        split_size = batch_inputs.shape[0] // data_parallel_size
         dp_rank_id = get_dp_rank(data_parallel_size)
 
         start = dp_rank_id * split_size
@@ -368,30 +371,28 @@ class GRPOTrainer:
         return batch_inputs_for_this_rank
 
     def _remove_right_padding(self, token_ids, padding_token=0):
-        """ remove_right_padding """
+        """remove_right_padding"""
         trimmed_sequences = []
         for seq in token_ids:
             # 将序列转换为列表以处理不同输入类型（如numpy数组）
             seq_list = list(seq)
             # 逆序查找第一个非填充标记的位置
-            last_non_pad = next((i for i in reversed(
-                range(len(seq_list))) if seq_list[i] != padding_token), None)
+            last_non_pad = next((i for i in reversed(range(len(seq_list))) if seq_list[i] != padding_token), None)
             # 截断右侧填充
             if last_non_pad is not None:
-                trimmed_sequences.append(seq_list[:last_non_pad + 1])
+                trimmed_sequences.append(seq_list[: last_non_pad + 1])
             else:
                 trimmed_sequences.append([])  # 全为填充时返回空列表
         return trimmed_sequences
 
     def _remove_left_padding(self, token_ids, padding_token=0):
-        """ remove_left_padding """
+        """remove_left_padding"""
         trimmed_sequences = []
         for seq in token_ids:
             # 将序列转换为列表以处理不同输入类型（如numpy数组）
             seq_list = list(seq)
             # 顺查找第一个非填充标记的位置
-            last_non_pad = next(
-                (i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
+            last_non_pad = next((i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
             # 截断左侧填充
             if last_non_pad is not None:
                 trimmed_sequences.append(seq_list[last_non_pad:])
@@ -399,16 +400,23 @@ class GRPOTrainer:
                 trimmed_sequences.append([])  # 全为填充时返回空列表
         return trimmed_sequences
 
-    def _construct_inputs_for_ref_model(self, right_padding_responses, responses_mask, left_padding_prompts,
-                                        prompts_mask, ref_model_batch_size=None, idx=None):
-        """ construct inputs for reference model """
+    def _construct_inputs_for_ref_model(
+        self,
+        right_padding_responses,
+        responses_mask,
+        left_padding_prompts,
+        prompts_mask,
+        ref_model_batch_size=None,
+        idx=None,
+    ):
+        """construct inputs for reference model"""
         if ref_model_batch_size:
             start_idx = idx * ref_model_batch_size
             end_idx = (idx + 1) * ref_model_batch_size
-            right_padding_responses = right_padding_responses[start_idx: end_idx]
-            responses_mask = responses_mask[start_idx: end_idx]
-            left_padding_prompts = left_padding_prompts[start_idx: end_idx]
-            prompts_mask = prompts_mask[start_idx: end_idx]
+            right_padding_responses = right_padding_responses[start_idx:end_idx]
+            responses_mask = responses_mask[start_idx:end_idx]
+            left_padding_prompts = left_padding_prompts[start_idx:end_idx]
+            prompts_mask = prompts_mask[start_idx:end_idx]
 
         is_eos = right_padding_responses == self.tokenizer.eos_token_id
         eos_idx = np.full(is_eos.shape[0], is_eos.shape[1], dtype=int)
@@ -419,8 +427,7 @@ class GRPOTrainer:
 
         prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses), axis=1)
         prompts_mask = np.concatenate((prompts_mask, np.zeros_like(responses_mask, dtype=np.int32)), axis=1)
-        responses_mask = np.concatenate(
-            (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
+        responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask), axis=1)
         attention_mask = prompts_mask + responses_mask
 
         # Generate outputs.
@@ -428,7 +435,7 @@ class GRPOTrainer:
         return prompt_completion_ids, attention_mask_tensor, responses_mask, prompts_mask
 
     def _construct_inputs_packing(self, all_packed, batch_size=None, idx=None):
-        """ construct inputs for packing """
+        """construct inputs for packing"""
         tmp_ids = []
         tmp_actual_seq_len = []
         if batch_size:
@@ -441,7 +448,7 @@ class GRPOTrainer:
         return tmp_ids, tmp_actual_seq_len
 
     def create_pack_group(self, data_dict_list, pack_num):
-        """ create pack group """
+        """create pack group"""
         sample_num = len(data_dict_list)
         pack_group, each_group = [], []
         current_group_length = 0
@@ -459,7 +466,7 @@ class GRPOTrainer:
         return pack_group
 
     def pack_grouped_data(self, pack_list, pack_num=1):
-        """ pack grouped data """
+        """pack grouped data"""
         real_sample_num = len(pack_list)
         dummy_sample_num = pack_num - real_sample_num
         pad_to_length = self.grpo_config.rl_config.seq_length - dummy_sample_num
@@ -480,15 +487,13 @@ class GRPOTrainer:
             response_end_index = data_dict["response_end_index"]
             sample_length = response_end_index - prompt_start_idx + 2
 
-            sample_prompt_completion_ids = sample_prompt_completion_ids[prompt_start_idx:response_end_index + 1]
+            sample_prompt_completion_ids = sample_prompt_completion_ids[prompt_start_idx : response_end_index + 1]
             sample_prompt_completion_ids = np.pad(
-                sample_prompt_completion_ids, (0, 1), mode="constant", constant_values=pad_token_id,
+                sample_prompt_completion_ids, (0, 1), mode="constant", constant_values=pad_token_id
             )
 
-            sample_response_mask = sample_response_mask[prompt_start_idx:response_end_index + 1]
-            sample_response_mask = np.pad(
-                sample_response_mask, (0, 1), mode="constant", constant_values=0,
-            )
+            sample_response_mask = sample_response_mask[prompt_start_idx : response_end_index + 1]
+            sample_response_mask = np.pad(sample_response_mask, (0, 1), mode="constant", constant_values=0)
 
             sample_actual_sequence_length = occupied_length + sample_length
             this_sample_index = np.array([i] * sample_length)
@@ -498,15 +503,9 @@ class GRPOTrainer:
                 sample_prompt_completion_ids = pad_sequence_to_length(
                     sample_prompt_completion_ids, pad_to_length - occupied_length, pad_token_id
                 )
-                sample_response_mask = pad_sequence_to_length(
-                    sample_response_mask, pad_to_length - occupied_length, 0
-                )
-                sample_advantage = pad_sequence_to_length(
-                    sample_advantage, pad_to_length - occupied_length, 0
-                )
-                this_sample_index = pad_sequence_to_length(
-                    this_sample_index, pad_to_length - occupied_length, i
-                )
+                sample_response_mask = pad_sequence_to_length(sample_response_mask, pad_to_length - occupied_length, 0)
+                sample_advantage = pad_sequence_to_length(sample_advantage, pad_to_length - occupied_length, 0)
+                this_sample_index = pad_sequence_to_length(this_sample_index, pad_to_length - occupied_length, i)
                 sample_actual_sequence_length = pad_to_length
 
             prompt_completion_ids.append(sample_prompt_completion_ids)
@@ -532,15 +531,14 @@ class GRPOTrainer:
             "advantages": np.concatenate(advantages, axis=0),
             "actual_sequence_length": np.array(actual_sequence_length),
             "sample_index": np.concatenate(sample_index, axis=0),
-            "sample_valid_length": np.array(sample_valid_length)
+            "sample_valid_length": np.array(sample_valid_length),
         }
 
         return result
 
     def _generate_old_logps(self, all_packed):
-        """ generate old log probs """
-        all_old_per_token_logps = np.zeros(
-            (len(all_packed), self.grpo_config.rl_config.seq_length), dtype=np.float32)
+        """generate old log probs"""
+        all_old_per_token_logps = np.zeros((len(all_packed), self.grpo_config.rl_config.seq_length), dtype=np.float32)
 
         self.old_policy.load()
         logger.info("old_policy load")
@@ -552,12 +550,13 @@ class GRPOTrainer:
         all_old_policy_start_time = time.time()
         for idx in range(step_num):
             prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
-                all_packed, batch_size=batch_size, idx=idx)
+                all_packed, batch_size=batch_size, idx=idx
+            )
 
             prompt_completion_ids = np.pad(
                 prompt_completion_ids,
                 ((0, 0), (0, 1)),
-                'constant',
+                "constant",
                 constant_values=self.grpo_config.generate_config.sampling_config.pad_token_id,
             )
             samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
@@ -566,21 +565,28 @@ class GRPOTrainer:
 
             # Step 2: run old policy model.
             start_time = time.time()
-            logger.info("old policy model step {} start at {}-------------------------------".format(
-                idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
+            logger.info(
+                "old policy model step {} start at {}-------------------------------".format(
+                    idx, time.strftime("%H:%M:%S", time.localtime(start_time))
+                )
+            )
 
             old_per_token_logps = self.old_policy.compute_old_log_prob(
-                input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length)
+                input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length
+            )
             old_per_token_logps = old_per_token_logps.asnumpy().astype(np.float32)
 
             end_time = time.time()
             print_perf_stat(start_time, end_time, f"old policy model step {idx}")
-            logger.info("old policy model step {} end at {}-------------------------------".format(
-                idx, time.strftime('%H:%M:%S', time.localtime(end_time))))
+            logger.info(
+                "old policy model step {} end at {}-------------------------------".format(
+                    idx, time.strftime("%H:%M:%S", time.localtime(end_time))
+                )
+            )
 
             start_index = idx * batch_size
             end_index = (idx + 1) * batch_size
-            all_old_per_token_logps[start_index: end_index, :] = old_per_token_logps
+            all_old_per_token_logps[start_index:end_index, :] = old_per_token_logps
 
         all_old_policy_end_time = time.time()
         print_perf_stat(all_old_policy_start_time, all_old_policy_end_time, f"old_policy model all steps {step_num}")
@@ -591,7 +597,7 @@ class GRPOTrainer:
         return all_old_per_token_logps
 
     def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages, pack_num=1):
-        """ pack grpo data """
+        """pack grpo data"""
         data_dict_list = []
         bs = prompt_completion_ids.shape[0]
         advantages = advantages.reshape(-1)
@@ -611,12 +617,14 @@ class GRPOTrainer:
             else:
                 logger.warning(f"responses_mask is all zero for index {i}!")
                 continue
-            data_dict = {"prompt_completion_ids": prompt_completion_ids[i],
-                         "prompt_mask": prompts_mask[i],
-                         "response_mask": responses_mask[i],
-                         "advantage": advantages[i],
-                         "prompt_start_idx": prompt_start_idx,
-                         "response_end_index": response_end_index}
+            data_dict = {
+                "prompt_completion_ids": prompt_completion_ids[i],
+                "prompt_mask": prompts_mask[i],
+                "response_mask": responses_mask[i],
+                "advantage": advantages[i],
+                "prompt_start_idx": prompt_start_idx,
+                "response_end_index": response_end_index,
+            }
             data_dict_list.append(data_dict)
         pack_group = self.create_pack_group(data_dict_list, pack_num)
         result = []
@@ -637,11 +645,14 @@ class GRPOTrainer:
         return advantages, mean_grouped_rewards
 
     def _make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
-        """ make experience """
+        """make experience"""
         ep_begin_time = time.time()
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
-        logger.info("Make experience begin at {} \n------------------------------- "
-                    .format(time.strftime('%H:%M:%S', time.localtime(ep_begin_time))))
+        logger.info(
+            "Make experience begin at {} \n------------------------------- ".format(
+                time.strftime("%H:%M:%S", time.localtime(ep_begin_time))
+            )
+        )
         logger.info(f"Generate {num_generations} times")
         if self.infer.use_vllm == VllmMode.ORIGIN:
             self.infer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
@@ -675,16 +686,20 @@ class GRPOTrainer:
         self.infer.load()
         # Step 1: generate responses and masks.
         start_time = time.time()
-        logger.info("generation start at {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(start_time))))
+        logger.info(
+            "generation start at {}-------------------------------".format(
+                time.strftime("%H:%M:%S", time.localtime(start_time))
+            )
+        )
 
         max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
         if self.infer.use_vllm == VllmMode.ORIGIN:
             results = []
             input_bs = n_questions // self.infer_dp
             for idx in range(num_rollouts * num_generations):
-                result = self.infer.generate(input_ids_numpy[idx * input_bs: (idx + 1) * input_bs, :],
-                                             max_tokens=max_tokens)
+                result = self.infer.generate(
+                    input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], max_tokens=max_tokens
+                )
                 for res_idx in range(len(result)):
                     if len(results) == len(result):
                         results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
@@ -697,34 +712,38 @@ class GRPOTrainer:
         end_time = time.time()
         print_perf_stat(start_time, end_time, "infer generate")
 
-        logger.info("generation end at {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(start_time))))
+        logger.info(
+            "generation end at {}-------------------------------".format(
+                time.strftime("%H:%M:%S", time.localtime(start_time))
+            )
+        )
 
         self.infer.offload()
         logger.info("model_infer offload")
 
         logger.info(f"generate sequence results is {results} type {type(results)}")
 
-        right_padding_responses, responses_mask_gather, \
-            left_padding_prompts, prompts_mask_gather = self.infer.post_process_infer_outputs(results)
-        all_prompts_mask = np.concatenate((prompts_mask_gather,
-                                           np.zeros_like(responses_mask_gather, dtype=np.int32)), axis=1)
+        right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather = (
+            self.infer.post_process_infer_outputs(results)
+        )
+        all_prompts_mask = np.concatenate(
+            (prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)), axis=1
+        )
         all_responses_mask = np.concatenate(
-            (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather),
-            axis=1)
-        all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses),
-                                                   axis=1)
+            (np.zeros_like(left_padding_prompts, dtype=np.int32), responses_mask_gather), axis=1
+        )
+        all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses), axis=1)
         # Step 3: calculate reward.
         start_time = time.time()
-        logger.info("calculate reward start at {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(start_time))))
-
         logger.info(
-            f"left_padding_prompts is {type(left_padding_prompts)}")
-        no_padding_prompts = self._remove_left_padding(left_padding_prompts,
-                                                       padding_token=pad_token_id)
-        no_padding_responses = self._remove_right_padding(
-            right_padding_responses, padding_token=pad_token_id)
+            "calculate reward start at {}-------------------------------".format(
+                time.strftime("%H:%M:%S", time.localtime(start_time))
+            )
+        )
+
+        logger.info(f"left_padding_prompts is {type(left_padding_prompts)}")
+        no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=pad_token_id)
+        no_padding_responses = self._remove_right_padding(right_padding_responses, padding_token=pad_token_id)
 
         prompts_length_list = np.array([len(item) for item in no_padding_prompts])
         responses_length_list = np.array([len(item) for item in no_padding_responses])
@@ -736,11 +755,13 @@ class GRPOTrainer:
         logger.info(
             f"token_count mean_prompt_len: {mean_prompts_length}, "
             f"max_prompt_len: {prompts_length_list.max()},"
-            f" min_prompt_len: {prompts_length_list.min()}")
+            f" min_prompt_len: {prompts_length_list.min()}"
+        )
         logger.info(
             f"token_count mean_response_len: {mean_responses_length}, "
             f"max_response_len: {responses_length_list.max()}, "
-            f"min_response_len: {responses_length_list.min()}")
+            f"min_response_len: {responses_length_list.min()}"
+        )
 
         clip_count = np.count_nonzero(responses_length_list == max_tokens)
         response_clip_ratio = clip_count / len(responses_length_list)
@@ -764,8 +785,9 @@ class GRPOTrainer:
         mean_len = completions_length.mean()
         logger.info(f"mean completions.length: \n {mean_len}")
 
-        rewards_per_func = np.zeros((n_questions * num_generations * num_rollouts, len(self.verifier_function)),
-                                    dtype=np.float32)
+        rewards_per_func = np.zeros(
+            (n_questions * num_generations * num_rollouts, len(self.verifier_function)), dtype=np.float32
+        )
         answer_parsed_lst = []
         logger.info(f"n_questions:{n_questions}")
         logger.info(f"num_generations:{num_generations}")
@@ -773,8 +795,9 @@ class GRPOTrainer:
         for i, reward_func in enumerate(self.verifier_function):
             # Repeat all input columns (but "prompt" and "completion") to match the number of generations
             if reward_func is accuracy_reward or reward_func is qwen_accuracy_reward:
-                output_reward_func, answer_parsed_lst = reward_func(prompts=prompts, completions=completions,
-                                                                    **reward_kwargs)
+                output_reward_func, answer_parsed_lst = reward_func(
+                    prompts=prompts, completions=completions, **reward_kwargs
+                )
             else:
                 output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
             rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
@@ -784,8 +807,11 @@ class GRPOTrainer:
 
         end_time = time.time()
         print_perf_stat(start_time, end_time, "calculate reward")
-        logger.info("calculate reward end at {}-------------------------------".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time))))
+        logger.info(
+            "calculate reward end at {}-------------------------------".format(
+                time.strftime("%H:%M:%S", time.localtime(end_time))
+            )
+        )
 
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
@@ -809,7 +835,7 @@ class GRPOTrainer:
         metrics[MetricData.ADVANTAGE_MEAN.value] = np.mean(advantages)
         metrics[MetricData.ADVANTAGE_MAX.value] = np.max(advantages)
         metrics[MetricData.ADVANTAGE_MIN.value] = np.min(advantages)
-        logger.info(f'Metrics of total step {self.make_exp_step}: {metrics}')
+        logger.info(f"Metrics of total step {self.make_exp_step}: {metrics}")
 
         self.ref.load()
         logger.info("ref_model load")
@@ -831,44 +857,57 @@ class GRPOTrainer:
         if self.grpo_config.rl_config.packing:
             pack_num = self.grpo_config.rl_config.pack_num
             all_packed = self.pack_grpo_data(
-                all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
+                all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num
+            )
             ref_model_batch_size = self.grpo_config.ref_config.ref_model_batch_size
             total_ref_batch_size = ref_model_batch_size * self.ref_dp
             logger.info(
                 f"total_ref_batch_size: ref_model_batch_size * ref_dp, {ref_model_batch_size} * "
-                f"{self.ref_dp} = {total_ref_batch_size}")
+                f"{self.ref_dp} = {total_ref_batch_size}"
+            )
             while len(all_packed) < total_ref_batch_size:
                 all_packed.append(all_packed[0])
 
             all_ref_per_token_logps = np.zeros(
-                (len(all_packed), self.grpo_config.rl_config.seq_length), dtype=np.float32)
+                (len(all_packed), self.grpo_config.rl_config.seq_length), dtype=np.float32
+            )
             ref_step_num = len(all_packed) // total_ref_batch_size
             logger.info(f"ref model total steps: {ref_step_num}")
             for idx in range(ref_step_num):
                 # responses_mask will be updated before ref model infer.
                 prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
-                    all_packed, batch_size=total_ref_batch_size, idx=idx)
+                    all_packed, batch_size=total_ref_batch_size, idx=idx
+                )
 
-                prompt_completion_ids = np.pad(prompt_completion_ids, ((0, 0), (0, 1)), 'constant',
-                                               constant_values=pad_token_id)
+                prompt_completion_ids = np.pad(
+                    prompt_completion_ids, ((0, 0), (0, 1)), "constant", constant_values=pad_token_id
+                )
                 sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
                 input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
                 actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
 
                 # Step 2: run ref model.
                 start_time = time.time()
-                logger.info("reference model step {} start at {}-------------------------------".format(
-                    idx, time.strftime('%H:%M:%S', time.localtime(start_time))))
+                logger.info(
+                    "reference model step {} start at {}-------------------------------".format(
+                        idx, time.strftime("%H:%M:%S", time.localtime(start_time))
+                    )
+                )
 
                 ref_per_token_logps = self.ref.compute_ref_log_prob(
-                    input_prompt_ids, None, samples=sampels_tensor, actual_sequence_length=actual_sequence_length)
+                    input_prompt_ids, None, samples=sampels_tensor, actual_sequence_length=actual_sequence_length
+                )
                 ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
 
                 end_time = time.time()
-                logger.info("reference model step {} end at {}, elapsed time {}-------------------------------".format(
-                    idx, time.strftime('%H:%M:%S', time.localtime(end_time)), end_time - start_time))
-                all_ref_per_token_logps[
-                    idx * total_ref_batch_size: (idx + 1) * total_ref_batch_size, :] = ref_per_token_logps
+                logger.info(
+                    "reference model step {} end at {}, elapsed time {}-------------------------------".format(
+                        idx, time.strftime("%H:%M:%S", time.localtime(end_time)), end_time - start_time
+                    )
+                )
+                all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = (
+                    ref_per_token_logps
+                )
 
             self.ref.offload()
             logger.info("ref_model offload")
@@ -877,29 +916,35 @@ class GRPOTrainer:
             if self.grpo_config.rl_config.num_iterations > 1:
                 all_old_per_token_logps = self._generate_old_logps(all_packed)
             else:
-                all_old_per_token_logps = np.zeros((len(all_packed),
-                                                    self.grpo_config.rl_config.seq_length), dtype=np.float32)
+                all_old_per_token_logps = np.zeros(
+                    (len(all_packed), self.grpo_config.rl_config.seq_length), dtype=np.float32
+                )
 
-            if (self.grpo_config.rl_config.save_prompt_completions_data and
-                    self.make_exp_step % self.grpo_config.rl_config.save_prompt_completions_interval == 0):
+            if (
+                self.grpo_config.rl_config.save_prompt_completions_data
+                and self.make_exp_step % self.grpo_config.rl_config.save_prompt_completions_interval == 0
+            ):
                 save_kwargs = {
                     MetricData.QUESTION.value: prompts,
                     MetricData.ANSWER.value: completions,
                     MetricData.PARSED_ANSWER.value: answer_parsed_lst,
                     MetricData.SOLUTION.value: solution,
                     MetricData.REWARD_PER_QUESTION.value: rewards,
-                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: list(responses_length_list)
+                    MetricData.COMPLETION_LENGTH_PER_QUESTION.value: list(responses_length_list),
                 }
-                save_prompt_completions_data(self.grpo_config.rl_config.save_prompt_completions_dir, self.make_exp_step,
-                                             **save_kwargs)
-            logger.info(f'total step {self.make_exp_step} metrics: {metrics}')
+                save_prompt_completions_data(
+                    self.grpo_config.rl_config.save_prompt_completions_dir, self.make_exp_step, **save_kwargs
+                )
+            logger.info(f"total step {self.make_exp_step} metrics: {metrics}")
 
             for i in range(len(all_packed)):
-                prompt_completion_ids_temp = np.pad(all_packed[i]["prompt_completion_ids"], ((0, 1),), 'constant',
-                                                    constant_values=pad_token_id).astype(np.int32)
+                prompt_completion_ids_temp = np.pad(
+                    all_packed[i]["prompt_completion_ids"], ((0, 1),), "constant", constant_values=pad_token_id
+                ).astype(np.int32)
 
-                responses_mask_temp = np.pad(all_packed[i]["responses_mask"], ((0, 1),), 'constant',
-                                             constant_values=0).astype(np.int32)
+                responses_mask_temp = np.pad(
+                    all_packed[i]["responses_mask"], ((0, 1),), "constant", constant_values=0
+                ).astype(np.int32)
                 responses_mask_temp = responses_mask_temp[1:]
 
                 ref_per_token_logps = all_ref_per_token_logps[i].astype(np.float32)
@@ -939,21 +984,24 @@ class GRPOTrainer:
 
         end_time = time.time()
         print_perf_stat(ep_begin_time, end_time, "Make experience")
-        logger.info("Make experience, end at {} ------------------------------- ".format(
-            time.strftime('%H:%M:%S', time.localtime(end_time))))
+        logger.info(
+            "Make experience, end at {} ------------------------------- ".format(
+                time.strftime("%H:%M:%S", time.localtime(end_time))
+            )
+        )
         save_data_file = self.grpo_config.rl_config.save_data_file
         if save_data_file:
             if get_rank() % 8 == 0:
                 self._save_grpoelement(save_data_file)
         self.make_exp_step += 1
-        logger.info('generate over')
+        logger.info("generate over")
 
     def _print_data_str(self, data, name):
         decoded_str = self.tokenizer.decode(data)
         logger.info(f"{name} str is {decoded_str}")
 
     def _save_grpoelement(self, save_path):
-        """ save grpo element """
+        """save grpo element"""
         if save_path:
             logger.info(f"start save grpo {save_path}")
             schema = {
@@ -983,7 +1031,8 @@ class GRPOTrainer:
         """
         logger.info(
             f"Start training epoch num:{self.grpo_config.rl_config.epochs}, step num:{self.step_num}, "
-            f"generation num:{self.grpo_config.rl_config.num_generations}")
+            f"generation num:{self.grpo_config.rl_config.num_generations}"
+        )
         np.set_printoptions(threshold=1024)
         # 第一次执行前, load ckpt后参数在host上, 在网络第一次执行时会将参数自动加载到device上, 不需要手动load/offload
         while self.n_epoch < self.grpo_config.rl_config.epochs:
@@ -995,12 +1044,17 @@ class GRPOTrainer:
                     self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step)
 
                 step_begin_time = time.time()
-                logger.info("step begin at {} \n------------------------------- "
-                            .format(time.strftime('%H:%M:%S', time.localtime(step_begin_time))))
+                logger.info(
+                    "step begin at {} \n------------------------------- ".format(
+                        time.strftime("%H:%M:%S", time.localtime(step_begin_time))
+                    )
+                )
 
                 logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
-                self._make_experience(num_rollouts=self.grpo_config.rl_config.num_rollouts,
-                                      num_generations=self.grpo_config.rl_config.num_generations)
+                self._make_experience(
+                    num_rollouts=self.grpo_config.rl_config.num_rollouts,
+                    num_generations=self.grpo_config.rl_config.num_generations,
+                )
                 self.train.load_optimizer()
                 self.train.load_model()
                 self.train.train()
@@ -1009,54 +1063,72 @@ class GRPOTrainer:
                 # load for reshard
                 if self.reshard_mem_opt_level == 1:
                     self.train.offload_model()
-                    assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                            "train model must not on device before transform param")
-                    assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                      "infer model must not on device before transform param")
+                    assert not self.train.model_on_device, (
+                        "when reshard_mem_opt_level is equal to 1, "
+                        "train model must not on device before transform param"
+                    )
+                    assert not self.infer.on_device, (
+                        "when reshard_mem_opt_level is equal to 1, "
+                        "infer model must not on device before transform param"
+                    )
                     self.old_policy.check_not_on_device()
                 else:
                     self.infer.load()
                     self.old_policy.load()
-                    assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                        "train model must on device before transform param")
-                    assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                  "infer model must on device before transform param")
+                    assert self.train.model_on_device, (
+                        "when reshard_mem_opt_level is equal to 0, " "train model must on device before transform param"
+                    )
+                    assert self.infer.on_device, (
+                        "when reshard_mem_opt_level is equal to 0, " "infer model must on device before transform param"
+                    )
 
-                if self.transform.sync_ref_model and \
-                    ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
+                if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
                     if self.reshard_mem_opt_level == 0:
                         self.ref.load()
-                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
-                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device),
-                                                 "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
+                    input_on_device_flag_dict = {
+                        "policy2infer": (self.train.model_on_device, self.infer.on_device),
+                        "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                        "policy2old": (self.train.model_on_device, self.old_policy.on_device),
+                    }
                     self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
                     if self.reshard_mem_opt_level == 0:
                         self.ref.offload()
                 else:
-                    input_on_device_flag_dict = {"policy2infer": (self.train.model_on_device, self.infer.on_device),
-                                                 "policy2ref": (self.train.model_on_device, self.ref.on_device),
-                                                 "policy2old": (self.train.model_on_device, self.old_policy.on_device)}
+                    input_on_device_flag_dict = {
+                        "policy2infer": (self.train.model_on_device, self.infer.on_device),
+                        "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                        "policy2old": (self.train.model_on_device, self.old_policy.on_device),
+                    }
                     self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
                 if self.reshard_mem_opt_level == 0:
-                    assert self.train.model_on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                        "train model must on device after transform param")
-                    assert self.infer.on_device, ("when reshard_mem_opt_level is equal to 0, "
-                                                  "infer model must on device after transform param")
+                    assert self.train.model_on_device, (
+                        "when reshard_mem_opt_level is equal to 0, " "train model must on device after transform param"
+                    )
+                    assert self.infer.on_device, (
+                        "when reshard_mem_opt_level is equal to 0, " "infer model must on device after transform param"
+                    )
                     self.train.offload_model()
                     self.old_policy.check_on_device()
                     self.old_policy.offload()
                 else:
-                    assert not self.train.model_on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                            "train model must not on device after transform param")
-                    assert not self.infer.on_device, ("when reshard_mem_opt_level is equal to 1, "
-                                                      "infer model must not on device after transform param")
+                    assert not self.train.model_on_device, (
+                        "when reshard_mem_opt_level is equal to 1, "
+                        "train model must not on device after transform param"
+                    )
+                    assert not self.infer.on_device, (
+                        "when reshard_mem_opt_level is equal to 1, "
+                        "infer model must not on device after transform param"
+                    )
                     self.old_policy.check_not_on_device()
 
                 step_end_time = time.time()
                 print_perf_stat(step_begin_time, step_end_time, f"epoch {self.n_epoch} step {self.i_step}")
-                logger.info("step end at  {}\n------------------------------- ".format(
-                    time.strftime('%H:%M:%S', time.localtime(step_end_time))))
+                logger.info(
+                    "step end at  {}\n------------------------------- ".format(
+                        time.strftime("%H:%M:%S", time.localtime(step_end_time))
+                    )
+                )
                 self.i_step += 1
             self.i_step = 0
             self.n_epoch += 1
@@ -1067,7 +1139,7 @@ class GRPOTrainer:
         logger.info("run grpo train end")
 
     def rename_safetensors_weights(self):
-        """ rename safetensors and write output to param_name_map.json"""
+        """rename safetensors and write output to param_name_map.json"""
         # 默认3个模型要加载的safetensors文件相同，用同一个config对象处理
         config = MindFormerConfig(self.grpo_config.actor_config.model_config)
         config.load_checkpoint = self.grpo_config.actor_config.load
@@ -1082,8 +1154,7 @@ class GRPOTrainer:
             if self.grpo_config.rl_config.num_iterations > 1:
                 convert_func_lst.append(self.old_policy.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
-            convert_index_json_total(config.load_checkpoint,
-                                     config.load_checkpoint, convert_func_lst, False)
+            convert_index_json_total(config.load_checkpoint, config.load_checkpoint, convert_func_lst, False)
         else:
             # wait for rank 0 to finish
             time.sleep(10)

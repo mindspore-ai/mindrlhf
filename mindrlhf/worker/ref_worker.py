@@ -11,34 +11,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Reference Worker"""
+"""Reference Worker."""
 
-# python
 import time
 import os
 from glob import glob
 import numpy as np
 
-
-# mindspore
 import mindspore as ms
 from mindspore import context, ops
 from mindspore.communication.management import get_rank, create_group
 
-# mindformers
 from mindformers import MindFormerConfig
 from mindformers import logger
 from mindformers import LlamaConfig
 from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
 from research.deepseek3.deepseek3_config import DeepseekV3Config
-# mindrlhf
+
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import print_perf_stat, _get_pipeline_group
 from mindrlhf.configs.grpo_configs import GRPOConfig
-from mindrlhf.utils.utils import (load_param_to_net, record_last_ckpt_to_json,
-                                  get_checkpoint_name, ensure_total_ckpt_is_less_than_limit)
+from mindrlhf.utils.utils import (
+    load_param_to_net,
+    record_last_ckpt_to_json,
+    get_checkpoint_name,
+    ensure_total_ckpt_is_less_than_limit,
+)
+
 
 class RefWorker(Worker):
     """
@@ -52,11 +53,9 @@ class RefWorker(Worker):
         self.use_parallel = grpo_config.rl_config.use_parallel
         ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = self.use_parallel
-        ref_config.parallel_config = MindFormerConfig(
-            **grpo_config.ref_config.parallel_config.param_dict
-        )
-        logger.info(f'ref parallel_config:{ref_config.parallel_config}')
-        logger.info(f'grpo_config.ref_config.recompute_config:{grpo_config.ref_config.recompute_config.param_dict}')
+        ref_config.parallel_config = MindFormerConfig(**grpo_config.ref_config.parallel_config.param_dict)
+        logger.info(f"ref parallel_config:{ref_config.parallel_config}")
+        logger.info(f"grpo_config.ref_config.recompute_config:{grpo_config.ref_config.recompute_config.param_dict}")
         ref_config.recompute_config = grpo_config.ref_config.recompute_config.param_dict
         ref_config.model.model_config.offset = grpo_config.ref_config.offset
         ref_config.model.model_config.parallel_config = ref_config.parallel_config
@@ -66,8 +65,9 @@ class RefWorker(Worker):
         self.ref_config.moe_config.num_experts = self.ref_config.moe_config.expert_num
         ref_config.model.model_config.use_past = False
         if args.custom_model_name in ["qwen", "llama"]:
-            ref_config.model.model_config.use_eod_attn_mask_compression = \
+            ref_config.model.model_config.use_eod_attn_mask_compression = (
                 grpo_config.ref_config.use_eod_attn_mask_compression
+            )
             ref_model_config = LlamaConfig(**ref_config.model.model_config)
             ref_model_config.model_name = "llama"
         elif args.custom_model_name == "deepseek":
@@ -75,17 +75,11 @@ class RefWorker(Worker):
             ref_model_config = DeepseekV3Config(**ref_config.model.model_config)
             ref_model_config.model_name = "deepseek_training"
         else:
-            raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}"
-            )
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
         # set pipeline stage
-        context.set_auto_parallel_context(
-            parallel_mode="semi_auto_parallel", full_batch=True
-        )
-        context.set_auto_parallel_context(
-            pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False
-        )
+        context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
         logger.info(f"ref_model_config:{ref_model_config}")
         # set allreduce
         rank_list, pipeline_group_name = _get_pipeline_group()
@@ -105,7 +99,7 @@ class RefWorker(Worker):
         self.on_device = True
         self.grpo_config = grpo_config
         if grpo_config.actor_config.save and get_rank() == 0:
-            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, 'ref')
+            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, "ref")
             if not os.path.exists(ref_save_dir):
                 os.makedirs(ref_save_dir)
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage or 1
@@ -125,34 +119,20 @@ class RefWorker(Worker):
     def compile(self):
         """compile and save strategy"""
         self.ref_model.model.set_train(False)
-        context.set_auto_parallel_context(
-            pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False
-        )
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
         total_ref_model_batch_size = self.grpo_config.ref_config.ref_model_batch_size * self.ref_dp
-        fake_data = ms.Tensor(
-            shape=(total_ref_model_batch_size, self.grpo_config.rl_config.seq_length),
-            dtype=ms.int32,
-        )
+        fake_data = ms.Tensor(shape=(total_ref_model_batch_size, self.grpo_config.rl_config.seq_length), dtype=ms.int32)
         actual_seq_data = ms.Tensor(
-            shape=(total_ref_model_batch_size, self.grpo_config.rl_config.pack_num),
-            dtype=ms.int32,
+            shape=(total_ref_model_batch_size, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )
         stage_name = "infer"
         strategy_path = self.grpo_config.rl_config.save_strategy_dir
         context.set_auto_parallel_context(
-            strategy_ckpt_config={
-                "save_file": f"{strategy_path}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"
-            }
+            strategy_ckpt_config={"save_file": f"{strategy_path}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt"}
         )
         # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
         # use positional arguments instead of keyword arguments
-        self.ref_model.compile(
-            fake_data,
-            fake_data,
-            samples=fake_data,
-            actual_seq_length=actual_seq_data,
-            is_ref=False,
-        )
+        self.ref_model.compile(fake_data, fake_data, samples=fake_data, actual_seq_length=actual_seq_data, is_ref=False)
         stage_name = "other"
         context.set_auto_parallel_context(
             strategy_ckpt_config={
@@ -161,26 +141,16 @@ class RefWorker(Worker):
         )
 
     def compute_ref_log_prob(
-            self,
-            prompt_completion_ids_tensor,
-            attention_mask_tensor,
-            samples,
-            actual_sequence_length,
-        ):
+        self, prompt_completion_ids_tensor, attention_mask_tensor, samples, actual_sequence_length
+    ):
         """
         compute ref log prob
         """
         np.set_printoptions(threshold=1024)
-        context.set_auto_parallel_context(
-            pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False
-        )
-        logger.info(
-            f"precision refmodel inputs are {prompt_completion_ids_tensor}, {samples}"
-        )
+        context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
+        logger.info(f"precision refmodel inputs are {prompt_completion_ids_tensor}, {samples}")
 
-        context.set_auto_parallel_context(
-            parallel_mode="semi_auto_parallel", full_batch=True
-        )
+        context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         ref_per_token_logps = self.ref_model(
             prompt_completion_ids_tensor,
             attention_mask_tensor,
@@ -220,28 +190,33 @@ class RefWorker(Worker):
         self.on_device = True
 
     def save_checkpoints(self, epochs=0, steps=0, formats="ckpt"):
-        """ save checkpoint """
+        """save checkpoint"""
         if epochs == 0 and steps == 0:
             return
         if self.grpo_config.actor_config.save:
             if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
                 formats = "safetensors"
             logger.info("Save checkpoints in {}".format(self.grpo_config.actor_config.save))
-            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, 'ref')
+            ref_save_dir = os.path.join(self.grpo_config.actor_config.save, "ref")
             rank_path = os.path.join(ref_save_dir, f"rank_{get_rank()}")
-            ckpt_file = get_checkpoint_name(ref_save_dir, prefix='ref', epoch_num=epochs,
-                                            step_num=steps, formats=formats)
+            ckpt_file = get_checkpoint_name(
+                ref_save_dir, prefix="ref", epoch_num=epochs, step_num=steps, formats=formats
+            )
             self.load()
-            ensure_total_ckpt_is_less_than_limit(ckpt_path=rank_path,
-                                                 limit=self.grpo_config.rl_config.save_max_ckpt_num,
-                                                 formats=formats)
+            ensure_total_ckpt_is_less_than_limit(
+                ckpt_path=rank_path, limit=self.grpo_config.rl_config.save_max_ckpt_num, formats=formats
+            )
             ms.save_checkpoint(self.ref_model, ckpt_file, integrated_save=False, format=formats)
             self.offload()
-            record_last_ckpt_to_json(epoch=epochs, step=steps, ckpt_file=os.path.basename(ckpt_file),
-                                     meta_json=os.path.join(rank_path, 'meta.json'))
+            record_last_ckpt_to_json(
+                epoch=epochs,
+                step=steps,
+                ckpt_file=os.path.basename(ckpt_file),
+                meta_json=os.path.join(rank_path, "meta.json"),
+            )
 
     def reload_ckpt(self, formats="ckpt"):
-        """ reload checkpoint for resume training """
+        """reload checkpoint for resume training"""
         if self.ref_ckpt_path:
             if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
                 formats = "safetensors"
@@ -260,17 +235,13 @@ class RefWorker(Worker):
 
     def load_checkpoint(self):
         """load_checkpoint"""
-        logger.info(f'ref_ckpt_path:{self.ref_ckpt_path}')
+        logger.info(f"ref_ckpt_path:{self.ref_ckpt_path}")
         if self.ref_ckpt_path and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
             self.on_device = True
             self._load_checkpoint_safetensors()
             return
-        load_ckpt_func = (
-            load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
-        )
-        logger.info(
-            f"use_parallel is {self.use_parallel} {load_ckpt_func}"
-        )
+        load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
+        logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")
         if self.ref_ckpt_path:
             self.on_device = True
             param_dict = load_ckpt_func(self.ref_ckpt_path)
@@ -279,9 +250,7 @@ class RefWorker(Worker):
             logger.info(f"begin to load ref model from: {self.ref_ckpt_path}")
             for _, param in self.ref_model.parameters_and_names():
                 logger.info(f"ref model para names:   {param.name}")
-            param_not_load, ckpt_not_load = ms.load_param_into_net(
-                self.ref_model, new_param_dict
-            )
+            param_not_load, ckpt_not_load = ms.load_param_into_net(self.ref_model, new_param_dict)
             logger.info(f"param not load: {param_not_load}")
             logger.info(f"ckpt not load: {ckpt_not_load}")
 
@@ -290,9 +259,7 @@ class RefWorker(Worker):
         network = self.ref_model.model
         prefix = "model."
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
-        new_weight_dict = {
-            f"{prefix}{key}": value for key, value in weight_dict.items()
-        }
+        new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
 
     def _load_checkpoint_safetensors(self):
@@ -301,21 +268,15 @@ class RefWorker(Worker):
         prefix = "model."
         name_map = None
         try:
-            load_checkpoint_files = glob(
-                os.path.join(self.ref_ckpt_path, f"*.safetensors")
-            )
+            load_checkpoint_files = glob(os.path.join(self.ref_ckpt_path, f"*.safetensors"))
             load_checkpoint_files.sort()
             name_map = network.obtain_name_map(load_checkpoint_files)
             name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
         except Exception as e:
-            raise TypeError(
-                f"Please complete abstract function obtain_name_map. Details: {e}"
-            ) from e
+            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
 
         # TODO: save strategy
-        strategy_path = os.path.join(
-            self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt"
-        )
+        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
         ms.load_distributed_checkpoint(
             network=self.ref_model,
             predict_strategy=strategy_path,

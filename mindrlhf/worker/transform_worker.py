@@ -13,23 +13,26 @@
 # limitations under the License.
 """ Transform Worker """
 
-# python
 import os
 import time
+
 # mindspore
 import mindspore as ms
 from mindspore.communication import get_rank
+
 # mindformers
 from mindformers import logger
+
 # mindrlhf
 from mindrlhf.worker.worker import Worker
 from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils import TransformParametersD2D, TransformParametersD2DForDSv3, print_perf_stat
 from mindrlhf.configs.grpo_configs import GRPOConfig
 
+
 def match_func(s1, s2):
-    s1 = s1[s1.find('.')+1:]
-    s2 = s2[s2.find('.')+1:]
+    s1 = s1[s1.find(".") + 1 :]
+    s2 = s2[s2.find(".") + 1 :]
     return s1 == s2
 
 
@@ -37,12 +40,12 @@ def match_func_dkv3(s1, s2):
     """
     match_func_dkv3
     """
-    s1 = s1[s1.find('.') + 1:]
-    s2 = s2[s2.find('.') + 1:]
+    s1 = s1[s1.find(".") + 1 :]
+    s2 = s2[s2.find(".") + 1 :]
 
     def match_layout_num(s1, s2):
-        split_s1 = s1.split('.')
-        split_s2 = s2.split('.')
+        split_s1 = s1.split(".")
+        split_s2 = s2.split(".")
         s1_layer_num = -1
         s2_layer_num = -1
         for i, value in enumerate(split_s1):
@@ -74,21 +77,20 @@ def match_func_dkv3(s1, s2):
     return s1 == s2
 
 
-
 def match_func_policy2ref(s1, s2):
-    s1 = s1[s1.find('.')+1:]
-    s1 = s1[s1.find('.')+1:]
+    s1 = s1[s1.find(".") + 1 :]
+    s1 = s1[s1.find(".") + 1 :]
     return s1 == s2
 
 
 def match_func_vllm(s1, s2):
-    s1 = s1[s1.find('.')+1: ]
+    s1 = s1[s1.find(".") + 1 :]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
-    tmp1 = s1[:s1.find('.')]
-    tmp2 = s1[s1.find('.model')+6:]
+    tmp1 = s1[: s1.find(".")]
+    tmp2 = s1[s1.find(".model") + 6 :]
     s1 = tmp1 + tmp2
-    s2 = s2[s2.find('.')+1: ]
+    s2 = s2[s2.find(".") + 1 :]
     return s1 == s2
 
 
@@ -96,16 +98,17 @@ def match_func_dkv3_vllm(s1, s2):
     """
     match_func_dkv3_vllm
     """
-    s1 = s1[s1.find('.') + 1:]
+    s1 = s1[s1.find(".") + 1 :]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
-    tmp1 = s1[:s1.find('.')]
-    tmp2 = s1[s1.find('.model') + 6:]
+    tmp1 = s1[: s1.find(".")]
+    tmp2 = s1[s1.find(".model") + 6 :]
     s1 = tmp1 + tmp2
-    s2 = s2[s2.find('.') + 1:]
+    s2 = s2[s2.find(".") + 1 :]
+
     def match_layout_num(s1, s2):
-        split_s1 = s1.split('.')
-        split_s2 = s2.split('.')
+        split_s1 = s1.split(".")
+        split_s2 = s2.split(".")
         s1_layer_num = -1
         s2_layer_num = -1
         for i, value in enumerate(split_s1):
@@ -136,10 +139,19 @@ def match_func_dkv3_vllm(s1, s2):
         return match_layout_num(s1, s2)
     return s1 == s2
 
+
 class TransformWorker(Worker):
-    """ TransformWorker """
-    def __init__(self, grpo_config: GRPOConfig, sft_model_config_train, sft_train_model, sft_infer_model,
-                 ref_model, old_policy_model):
+    """TransformWorker"""
+
+    def __init__(
+        self,
+        grpo_config: GRPOConfig,
+        sft_model_config_train,
+        sft_train_model,
+        sft_infer_model,
+        ref_model,
+        old_policy_model,
+    ):
         super(TransformWorker, self).__init__()
         logger.info("Start prepare for parameter resharding in sft training.")
         self.grpo_config = grpo_config
@@ -159,8 +171,9 @@ class TransformWorker(Worker):
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra)
             ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
             if grpo_config.rl_config.num_iterations > 1:
-                ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "old_policy_strategy"),
-                                            old_merged_stra)
+                ms.merge_pipeline_strategys(
+                    os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
+                )
         else:
             print("Waiting for main worker to merge strategies.")
             time.sleep(10)
@@ -168,35 +181,43 @@ class TransformWorker(Worker):
         model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""
         transform_args = {}
         if model_type == "deepseekv3":
-            transform_args = {"n_head": sft_model_config_train.num_heads,
-                              "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
-                              "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim}
+            transform_args = {
+                "n_head": sft_model_config_train.num_heads,
+                "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
+                "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim,
+            }
         if grpo_config.generate_config.use_vllm == VllmMode.ORIGIN:
             if model_type == "deepseekv3":
-                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(sft_train_model, sft_infer_model,
-                                                                                transform_args, src_merged_stra,
-                                                                                dst_merged_stra, match_func_dkv3)
+                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
+                    sft_train_model, sft_infer_model, transform_args, src_merged_stra, dst_merged_stra, match_func_dkv3
+                )
             else:
-                self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                         src_merged_stra, dst_merged_stra, match_func)
+                self.reshard_param_policy2infer = TransformParametersD2D(
+                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func
+                )
         else:
             if model_type == "deepseekv3":
-                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(sft_train_model, sft_infer_model,
-                                                                                transform_args, src_merged_stra,
-                                                                                dst_merged_stra, match_func_dkv3_vllm)
+                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
+                    sft_train_model,
+                    sft_infer_model,
+                    transform_args,
+                    src_merged_stra,
+                    dst_merged_stra,
+                    match_func_dkv3_vllm,
+                )
             else:
-                self.reshard_param_policy2infer = TransformParametersD2D(sft_train_model, sft_infer_model,
-                                                                         src_merged_stra, dst_merged_stra,
-                                                                         match_func_vllm)
+                self.reshard_param_policy2infer = TransformParametersD2D(
+                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func_vllm
+                )
         ms.communication.comm_func.barrier()
 
-        self.reshard_param_policy2ref = TransformParametersD2D(sft_train_model, ref_model,
-                                                               src_merged_stra, ref_merged_stra,
-                                                               match_func=match_func_policy2ref)
+        self.reshard_param_policy2ref = TransformParametersD2D(
+            sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref
+        )
         if grpo_config.rl_config.num_iterations > 1:
-            self.old_policy_param_policy2old = TransformParametersD2D(sft_train_model, old_policy_model,
-                                                                      src_merged_stra, old_merged_stra,
-                                                                      match_func=match_func_policy2ref)
+            self.old_policy_param_policy2old = TransformParametersD2D(
+                sft_train_model, old_policy_model, src_merged_stra, old_merged_stra, match_func=match_func_policy2ref
+            )
 
         ms.communication.comm_func.barrier()
         end_time = time.time()
@@ -207,8 +228,11 @@ class TransformWorker(Worker):
         reshard parameter from src to dst
         """
         if input_on_device_flag_dict is None:
-            input_on_device_flag_dict = {"policy2infer": (True, True), "policy2ref": (True, True),
-                                         "policy2old": (True, True)}
+            input_on_device_flag_dict = {
+                "policy2infer": (True, True),
+                "policy2ref": (True, True),
+                "policy2old": (True, True),
+            }
         policy2infer_flag = input_on_device_flag_dict.get("policy2infer")
         policy2ref_flag = input_on_device_flag_dict.get("policy2ref")
         policy2old_flag = input_on_device_flag_dict.get("policy2old")
