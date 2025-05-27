@@ -237,6 +237,8 @@ class GRPOTrainer:
 
         verifier_function = []
         for reward_func_str in verifier_function_list:
+            if "qwen" in self.grpo_config.rl_config.model_name and reward_func_str == "accuracy_reward":
+                reward_func_str = "qwen_accuracy_reward"
             if reward_func_str == "accuracy_reward":
                 verifier_function.append(accuracy_reward)
             elif reward_func_str == "format_reward":
