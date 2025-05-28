@@ -527,6 +527,17 @@ def get_unique_filename(save_file_path):
         counter += 1
 
 
+def _is_empty(arr):
+    """Whether the array is empty or not."""
+    if arr is None:
+        return True
+    if isinstance(arr, list) and not arr:
+        return True
+    if isinstance(arr, np.ndarray) and arr.size == 0:
+        return True
+    return len(arr) == 0
+
+
 def save_prompt_completions_data(save_file_dir, global_step, **kwargs):
     """Save prompt completions data."""
     if get_rank() == 0:
@@ -541,7 +552,7 @@ def save_prompt_completions_data(save_file_dir, global_step, **kwargs):
         for i in range(data_length):
             new_row = {}
             for key, values in kwargs.items():
-                if not values:
+                if _is_empty(values):
                     new_row[key] = None
                 else:
                     value = values[i]
