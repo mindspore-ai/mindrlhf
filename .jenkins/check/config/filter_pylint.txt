@@ -17,3 +17,8 @@
 "mindrlhf/mindrlhf/utils/utils.py"                                                                              "bad-continuation"
 "mindrlhf/mindrlhf/worker/ref_worker.py"                                                                        "bad-continuation"
 "mindrlhf/mindrlhf/worker/transform_worker.py"                                                                  "bad-continuation"
+"mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "no-value-for-parameter"
+"mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "bad-continuation"
+"mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "unused-argument"
+"mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "protected-access"
+"mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "wrong-import-position"

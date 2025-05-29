@@ -101,8 +101,13 @@ class GRPOTrainer:
         )
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
-            self.grpo_config.rl_config.packing_sample_length = self.train.sft_model_config_train.seq_length
-            logger.info(f"set packing_sample_length to {self.grpo_config.rl_config.packing_sample_length}")
+            assert self.grpo_config.rl_config.pack_num >= 1, "pack_num must >= 1!"
+            logger.info(f"Set packing_sample_length to train worker seq_length: "
+                        f"{self.train.sft_model_config_train.seq_length}.")
+        else:
+            self.grpo_config.rl_config.packing = True
+            self.grpo_config.rl_config.pack_num = 1
+            logger.warning(f"Set packing False, reset packing True and pack_num = 1.")
         logger.info("GRPOTrainer: finish init workers")
 
         self.reshard_optimizer = None
