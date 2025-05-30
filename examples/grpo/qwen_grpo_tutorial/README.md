@@ -84,13 +84,15 @@ python examples/grpo/qwen_grpo_tutorial/rlhf_data.py \
 --vocab_path /{path}/vocab.json \
 --merges_file_path /{path}/merges.txt \
 --file_path /{path}/train.jsonl/ \
---output_path /{path}/gsm8k_train.mindrecord
+--output_path /{path}/gsm8k_train.mindrecord \
+--dataset_type gsm8k
 
 # 参数说明
 vocab_path:       qwen2.5 7b模型对应的tokenizer文件vocab.json路径
 merges_file_path: qwen2.5 7b模型对应的tokenizer文件merges.txt路径
 file_path:        GSM8K Train数据集train.jsonl文件路径
 output_path:      输出.mindrecord文件路径
+dataset_type:     数据集类型
 ```
 
 其中`vocab.json`和`merges.txt`都可以从Huggingface社区或魔搭社区对应模型页面获取。
