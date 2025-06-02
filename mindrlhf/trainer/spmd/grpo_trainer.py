@@ -261,34 +261,20 @@ class GRPOTrainer:
 
     def _remove_right_padding(self, token_ids, padding_token=0):
         """ remove_right_padding """
-        trimmed_sequences = []
-        for seq in token_ids:
-            # 将序列转换为列表以处理不同输入类型（如numpy数组）
-            seq_list = list(seq)
-            # 逆序查找第一个非填充标记的位置
-            last_non_pad = next((i for i in reversed(
-                range(len(seq_list))) if seq_list[i] != padding_token), None)
-            # 截断右侧填充
-            if last_non_pad is not None:
-                trimmed_sequences.append(seq_list[:last_non_pad + 1])
-            else:
-                trimmed_sequences.append([])  # 全为填充时返回空列表
+        begin_time = time.time()
+        counts = np.sum(token_ids != padding_token, axis=1)
+        trimmed_sequences = [token_ids[i, :cnt] for i, cnt in enumerate(counts)]
+        end_time = time.time()
+        logger.info(f"remove right padding time: {end_time - begin_time}")
         return trimmed_sequences
 
     def _remove_left_padding(self, token_ids, padding_token=0):
         """ remove_left_padding """
-        trimmed_sequences = []
-        for seq in token_ids:
-            # 将序列转换为列表以处理不同输入类型（如numpy数组）
-            seq_list = list(seq)
-            # 顺查找第一个非填充标记的位置
-            last_non_pad = next(
-                (i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
-            # 截断左侧填充
-            if last_non_pad is not None:
-                trimmed_sequences.append(seq_list[last_non_pad:])
-            else:
-                trimmed_sequences.append([])  # 全为填充时返回空列表
+        begin_time = time.time()
+        counts = np.sum(token_ids != padding_token, axis=1)
+        trimmed_sequences = [token_ids[i, -cnt:] for i, cnt in enumerate(counts)]
+        end_time = time.time()
+        logger.info(f"remove left padding time: {end_time - begin_time}")
         return trimmed_sequences
 
     def _construct_inputs_for_ref_model(self, right_padding_responses, responses_mask, left_padding_prompts,
