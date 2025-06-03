@@ -189,9 +189,9 @@ class RefWorker(Worker):
         logger.info(f"after load ref model {ms.hal.memory_stats()}")
         self.on_device = True
 
-    def save_checkpoints(self, epochs=0, steps=0, formats="ckpt"):
+    def save_checkpoints(self, epochs=0, steps=0, start_epoch=0, start_step=0, formats="ckpt"):
         """save checkpoint"""
-        if epochs == 0 and steps == 0:
+        if epochs == start_epoch and steps == start_step:
             return
         if self.grpo_config.actor_config.save:
             if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
@@ -203,11 +203,11 @@ class RefWorker(Worker):
                 ref_save_dir, prefix="ref", epoch_num=epochs, step_num=steps, formats=formats
             )
             self.load()
+            ms.save_checkpoint(self.ref_model, ckpt_file, integrated_save=False, format=formats)
+            self.offload()
             ensure_total_ckpt_is_less_than_limit(
                 ckpt_path=rank_path, limit=self.grpo_config.rl_config.save_max_ckpt_num, formats=formats
             )
-            ms.save_checkpoint(self.ref_model, ckpt_file, integrated_save=False, format=formats)
-            self.offload()
             record_last_ckpt_to_json(
                 epoch=epochs,
                 step=steps,

@@ -127,8 +127,9 @@ class TrainWorker(Worker):
 
         self.tensor_writer = self.args.tensor_writer
         self.global_training_step = 0
-        if self.grpo_config.rl_config.save_max_ckpt_num <= 1:
-            raise ValueError(f"save_max_ckpt_num should be lager than 0, but got {self.grpo_config.save_max_ckpt_num}")
+        if self.grpo_config.rl_config.save_max_ckpt_num < 1:
+            raise ValueError(f"save_max_ckpt_num should be lager than 0, "
+                             f"but got {self.grpo_config.rl_config.save_max_ckpt_num}")
 
     def model(self):
         return self.grpo_model_train
@@ -517,9 +518,9 @@ class TrainWorker(Worker):
     def push_to_store(self, data):
         self.store = data
 
-    def save_checkpoints(self, epochs=0, steps=0, formats="ckpt"):
+    def save_checkpoints(self, epochs=0, steps=0, start_epoch=0, start_step=0, formats="ckpt"):
         """save checkpoint"""
-        if epochs == 0 and steps == 0:
+        if epochs == start_epoch and steps == start_step:
             return
         if self.grpo_config.actor_config.save:
             if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
@@ -533,9 +534,6 @@ class TrainWorker(Worker):
             self.load_model()
             append_dict = {"epoch_num": epochs, "step_num": steps}
             # ensure ckpt number is less than `keep_checkpoint_max` after saving
-            ensure_total_ckpt_is_less_than_limit(
-                ckpt_path=rank_path, limit=self.grpo_config.rl_config.save_max_ckpt_num, formats=formats
-            )
             ms.save_checkpoint(
                 self.grpo_model_train.grpo_model_train.policy_model,
                 ckpt_file,
@@ -544,6 +542,9 @@ class TrainWorker(Worker):
                 format=formats,
             )
             self.offload_model()
+            ensure_total_ckpt_is_less_than_limit(
+                ckpt_path=rank_path, limit=self.grpo_config.rl_config.save_max_ckpt_num, formats=formats
+            )
 
             optimizer_save_dir = os.path.join(self.grpo_config.actor_config.save, "optimizer")
             rank_path_opt = os.path.join(optimizer_save_dir, f"rank_{get_rank()}")
@@ -551,11 +552,11 @@ class TrainWorker(Worker):
                 optimizer_save_dir, prefix="optimizer", epoch_num=epochs, step_num=steps, formats=formats
             )
             self.load_optimizer()
+            ms.save_checkpoint(self.grpo_with_grad.optimizer, ckpt_file_opt, integrated_save=False, format=formats)
+            self.offload_optimizer()
             ensure_total_ckpt_is_less_than_limit(
                 ckpt_path=rank_path_opt, limit=self.grpo_config.rl_config.save_max_ckpt_num, formats=formats
             )
-            ms.save_checkpoint(self.grpo_with_grad.optimizer, ckpt_file_opt, integrated_save=False, format=formats)
-            self.offload_optimizer()
             record_last_ckpt_to_json(
                 epoch=epochs,
                 step=steps,
