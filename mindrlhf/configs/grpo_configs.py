@@ -172,6 +172,8 @@ class RewardConfig:
 
     verifier_function: list = None
     verifier_weight: list = None
+    val_verifier_function: list = None
+    val_verifier_weight: list = None
 
 
 @dataclass
@@ -291,6 +293,25 @@ class RLConfig:
 
 
 @dataclass
+class EvalConfig:
+    """eval config"""
+
+    val_dataset_file: str = "/path/val.mindrecord"
+    save_eval_result_data: bool = True
+    save_eval_result_dir: str = "./val_results"
+    eval_freq: int = -1
+    val_repetition_penalty: float = 1.0
+    val_temperature: float = 0.6
+    val_top_p: float = 0.95
+    val_top_k: float = 40
+    val_seq_length: float = 10240
+    val_max_decode_length: float = 8192
+    val_min_decode_length: float = 2
+    val_n: int = 2
+    val_before_train: bool = False
+
+
+@dataclass
 class GRPOConfig:
     """
     GRPO config class which defines the model size
@@ -301,6 +322,7 @@ class GRPOConfig:
     reward_config = RewardConfig
     generate_config = GenerateConfig
     rl_config = RLConfig
+    eval_config = EvalConfig
     context = Context
 
     def __init__(self, file_path):

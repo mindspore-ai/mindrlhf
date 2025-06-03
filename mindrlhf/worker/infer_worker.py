@@ -231,6 +231,20 @@ class InferWorker(Worker):
             min_tokens=self.grpo_config.generate_config.sampling_config.min_tokens,
             detokenize=self.grpo_config.generate_config.sampling_config.detokenize,
         )
+
+        self.val_sampling_params = None
+        if self.grpo_config.eval_config.eval_freq > 0:
+            self.val_sampling_params = SamplingParams(
+                repetition_penalty=self.grpo_config.eval_config.val_repetition_penalty,
+                temperature=self.grpo_config.eval_config.val_temperature,
+                top_p=self.grpo_config.eval_config.val_top_p,
+                top_k=self.grpo_config.eval_config.val_top_k,
+                stop_token_ids=self.grpo_config.generate_config.sampling_config.eos_token_id,
+                max_tokens=self.grpo_config.eval_config.val_max_decode_length,
+                min_tokens=self.grpo_config.eval_config.val_min_decode_length,
+                detokenize=True,
+            )
+
         logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
         _pynative_executor.set_async_for_graph(False)
         return policy_model
@@ -279,11 +293,16 @@ class InferWorker(Worker):
 
         return output_batch
 
-    def post_process_infer_outputs(self, results):
+    def post_process_infer_outputs(self, results, is_val=False):
         """post_process_infer_outputs"""
         start_time = time.time()
         right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
-        max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
+        max_tokens = (
+            self.grpo_config.generate_config.sampling_config.max_tokens
+            if not is_val
+            else self.grpo_config.eval_config.val_max_decode_length
+        )
+
         # allgather data
         right_padding_responses_batch = self._allgather_data(
             right_padding_responses,
@@ -293,15 +312,22 @@ class InferWorker(Worker):
         responses_mask_batch = self._allgather_data(
             responses_mask, self.sft_model_config_infer.parallel_config.data_parallel, padding_length=max_tokens
         )
+        padding_length = (
+            self.grpo_config.rl_config.seq_length
+            if not is_val
+            else self.grpo_config.eval_config.val_seq_length
+        )
         left_padding_prompts_batch = self._allgather_data(
             left_padding_prompts,
             self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
+            padding_length=padding_length
+            - max_tokens,
         )
         prompts_mask_batch = self._allgather_data(
             prompts_mask,
             self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
+            padding_length=padding_length
+            - max_tokens,
         )
         right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
         responses_mask = np.array(responses_mask_batch).astype(np.int32)
@@ -314,7 +340,7 @@ class InferWorker(Worker):
 
     # For SPMD, developer could call 'post_process_infer_outputs' to process data.
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
-    def generate(self, input_ids_numpy, max_tokens=0):
+    def generate(self, input_ids_numpy, max_tokens=0, is_val=False):
         """Policy model generates responses for a batch of prompts."""
         ms.set_context(jit_config={"infer_boost": "on"})
         context.set_auto_parallel_context(
@@ -329,8 +355,16 @@ class InferWorker(Worker):
 
         generate_begin_time = time.time()
         if max_tokens == 0:
-            max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
-        min_tokens = self.grpo_config.generate_config.sampling_config.min_tokens
+            max_tokens = (
+                self.grpo_config.generate_config.sampling_config.max_tokens
+                if not is_val
+                else self.grpo_config.eval_config.val_max_decode_length
+            )
+        min_tokens = (
+            self.grpo_config.generate_config.sampling_config.min_tokens
+            if not is_val
+            else self.grpo_config.eval_config.val_min_decode_length
+        )
         logger.info(f"max_tokens {max_tokens}")
         logger.info(f"min_tokens {min_tokens}")
         if self.use_vllm == VllmMode.DEBUG:
@@ -361,7 +395,10 @@ class InferWorker(Worker):
             _pynative_executor.set_async_for_graph(True)
             token_ids = self.inference_engine.pre_process_inputs(vllm_prompt, valid_length_each_example)
             outputs = self.inference_engine.generate(
-                prompts=None, sampling_params=self.sampling_params, prompt_token_ids=token_ids, use_tqdm=False
+                prompts=None,
+                sampling_params=self.sampling_params if not is_val else self.val_sampling_params,
+                prompt_token_ids=token_ids,
+                use_tqdm=False,
             )
             _pynative_executor.set_async_for_graph(False)
             logger.info("end vllm")
@@ -371,7 +408,11 @@ class InferWorker(Worker):
         input_ids_list = input_ids_numpy.tolist()
         num_sample = len(input_ids_list)
         max_prompt_length = self.grpo_config.generate_config.max_prompt_length
-        max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
+        max_tokens = (
+            self.grpo_config.generate_config.sampling_config.max_tokens
+            if not is_val
+            else self.grpo_config.eval_config.val_max_decode_length
+        )
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
         # 初始化存储prompt的数组，序列长度最大为max_prompt_length
         left_padding_prompts = np.ones((num_sample, max_prompt_length)) * pad_token_id
