@@ -39,8 +39,10 @@ from mindrlhf.utils import (
 )
 
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda, qwen_accuracy_reward
+from mindrlhf.reward.kk_reward_fn import kk_reward
 from mindrlhf.worker.worker import GRPOData
 from mindrlhf.configs.grpo_configs import VllmMode
+
 
 class GRPOExperienceMaker:
     """GRPO ExperienceMaker"""
@@ -490,6 +492,8 @@ class GRPOExperienceMaker:
                 verifier_function.append(reward_func_from_jiaoda)
             elif reward_func_str == "qwen_accuracy_reward":
                 verifier_function.append(qwen_accuracy_reward)
+            elif reward_func_str == "kk_reward":
+                verifier_function.append(kk_reward)
             else:
                 raise ValueError(f"Unsupported reward function {reward_func_str}")
         self.verifier_function = verifier_function
