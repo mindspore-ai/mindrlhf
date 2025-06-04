@@ -124,6 +124,8 @@ class GRPOTrainer:
         )
         self.i_step = 0
         self.n_epoch = 0
+        self.start_step = 0
+        self.start_epoch = 0
         self._load_checkpoint()
         if not self.grpo_config.generate_config.load:
             self.transform.reshard_params(0)
@@ -330,9 +332,11 @@ class GRPOTrainer:
             if epoch_num > 0:
                 logger.info(f"epoch in resume training is: {epoch_num}.")
                 self.n_epoch = epoch_num
+                self.start_epoch = epoch_num
             if data_skip_steps > 0:
                 logger.info(f"Skip step in resume training is: {data_skip_steps}.")
                 self.i_step = data_skip_steps
+                self.start_step = data_skip_steps
             return
         start_time = time.time()
         self.infer.load_checkpoint()
@@ -1034,14 +1038,13 @@ class GRPOTrainer:
             f"generation num:{self.grpo_config.rl_config.num_generations}"
         )
         np.set_printoptions(threshold=1024)
-        # 第一次执行前, load ckpt后参数在host上, 在网络第一次执行时会将参数自动加载到device上, 不需要手动load/offload
         while self.n_epoch < self.grpo_config.rl_config.epochs:
             while self.i_step < self.step_num:
-                if self.i_step != 0 and self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
-                    self.train.save_checkpoints(epochs=self.n_epoch, steps=self.i_step)
-
-                if self.i_step != 0 and self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
-                    self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step)
+                if self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
+                    self.train.save_checkpoints(epochs=self.n_epoch, steps=self.i_step,
+                                                start_epoch=self.start_epoch, start_step=self.start_step)
+                    self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step,
+                                              start_epoch=self.start_epoch, start_step=self.start_step)
 
                 step_begin_time = time.time()
                 logger.info(
