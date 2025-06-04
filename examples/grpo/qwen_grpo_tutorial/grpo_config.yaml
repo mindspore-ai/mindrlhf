@@ -17,7 +17,6 @@ rl_config:
   save_data_file: "/tmp/grpo.mindrecord"
 
   packing: True
-  packing_sample_length: 2048
   pack_num: 1
 
   save_prompt_completions_data: True
