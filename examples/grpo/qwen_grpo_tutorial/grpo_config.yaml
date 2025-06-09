@@ -173,6 +173,9 @@ generate_config:
     pad_token_id: 151643
     detokenize: False
 
+    temperatures: null
+    temperatures_step_interval: 10
+
 
 # context
 context:

@@ -220,6 +220,17 @@ class GRPOTrainer:
             )
             grpo_config.rl_config.save_prompt_completions_data = False
 
+        temperatures = grpo_config.generate_config.sampling_config.temperatures
+        if temperatures is not None:
+            if isinstance(temperatures, list):
+                # pylint: disable=E1133
+                if not all(x > 0 for x in temperatures):
+                    raise ValueError(
+                        f"Each element in temperatures must be greater than 0, but get {temperatures}"
+                    )
+            else:
+                raise ValueError(f"Temperatures must be a list")
+
         # for worker
         if args.custom_model_name == "qwen":
             args.vocab_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "vocab.json")
@@ -301,6 +312,17 @@ class GRPOTrainer:
             return True
         return False
 
+    @staticmethod
+    def get_temperature(temperatures: tuple, temperatures_step_interval: int, cur_step: int) -> float:
+        """get dynamic temperature by current step"""
+        if temperatures_step_interval <= 0:
+            raise ValueError("temperature_step_interval must be a positive integer")
+        if not temperatures:
+            raise ValueError("temperature tuple must not be empty")
+
+        index = cur_step // temperatures_step_interval
+        return temperatures[index] if index < len(temperatures) else temperatures[-1]
+
     def run_grpo_train(self):
         """
         Main entry of MindRLHF GRPO training.
@@ -319,6 +341,17 @@ class GRPOTrainer:
                                               start_epoch=self.start_epoch, start_step=self.start_step)
                 step_begin_time = time.time()
                 logger.info("step begin at {}".format(time.strftime("%H:%M:%S", time.localtime(step_begin_time))))
+
+                if self.grpo_config.generate_config.sampling_config.temperatures:
+                    temperature = self.get_temperature(
+                        self.grpo_config.generate_config.sampling_config.temperatures,
+                        self.grpo_config.generate_config.sampling_config.temperatures_step_interval,
+                        self.i_step,
+                    )
+                    logger.info(f"dynamic temperature: {temperature} | step: {self.i_step}")
+                    self.infer.grpo_model_infer.grpo_model.policy_model.model.config.temperature = temperature
+                    self.infer.sampling_params.temperature = temperature
+
                 logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
 
                 if self._time_to_validate():
