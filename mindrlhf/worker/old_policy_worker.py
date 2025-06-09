@@ -76,9 +76,10 @@ class OldPolicyWorker(Worker):
             old_policy_model_config.checkpoint_name_or_path = None
 
             self.old_policy_pp_stage = old_policy_model_config.parallel_config.pipeline_stage or 1
+            self.old_policy_dp = old_policy_model_config.parallel_config.data_parallel
             self.enable_parallel_optimizer = (
-                old_policy_config.parallel.enable_parallel_optimizer
-                and old_policy_model_config.parallel_config.data_parallel > 1
+                grpo_config.actor_config.enable_parallel_optimizer
+                and self.old_policy_dp > 1
             )
             context.set_auto_parallel_context(
                 pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
@@ -90,6 +91,9 @@ class OldPolicyWorker(Worker):
                 param.name = name
             self.on_device = True
             self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
+
+    def get_old_policy_dp(self):
+        return self.old_policy_dp
 
     def model(self):
         if self.grpo_config.rl_config.num_iterations <= 1:
@@ -104,7 +108,7 @@ class OldPolicyWorker(Worker):
         context.set_auto_parallel_context(
             pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
-        old_policy_bs = self.grpo_config.rl_config.batch_size
+        old_policy_bs = self.grpo_config.rl_config.batch_size * self.old_policy_dp
         fake_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32)
         actual_seq_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32)
         start_time = time.time()
