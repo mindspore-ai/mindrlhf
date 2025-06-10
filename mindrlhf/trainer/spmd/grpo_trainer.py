@@ -326,7 +326,6 @@ class GRPOTrainer:
                 raise ValueError("epoch/step info not read")
             self.ref.reload_ckpt()
             self.transform.reshard_params(0)
-            self.train.offload_model()
             epoch_num = epoch_step_info["epoch_num"]
             data_skip_steps = epoch_step_info["step_num"]
             if epoch_num > 0:
