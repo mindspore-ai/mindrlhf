@@ -180,20 +180,23 @@ class TransformWorker(Worker):
         ms.mint.distributed.barrier()
         model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""
         transform_args = {}
+        reshard_mode = grpo_config.rl_config.reshard_mode
         if model_type == "deepseekv3":
             transform_args = {
                 "n_head": sft_model_config_train.num_heads,
                 "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
                 "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim,
+                "tok_embedding_shape": (129280, 7168)
             }
         if grpo_config.generate_config.use_vllm == VllmMode.ORIGIN:
             if model_type == "deepseekv3":
                 self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
-                    sft_train_model, sft_infer_model, transform_args, src_merged_stra, dst_merged_stra, match_func_dkv3
+                    sft_train_model, sft_infer_model, transform_args, src_merged_stra, dst_merged_stra, match_func_dkv3,
+                    reshard_mode
                 )
             else:
                 self.reshard_param_policy2infer = TransformParametersD2D(
-                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func
+                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func, reshard_mode
                 )
         else:
             if model_type == "deepseekv3":
@@ -204,19 +207,22 @@ class TransformWorker(Worker):
                     src_merged_stra,
                     dst_merged_stra,
                     match_func_dkv3_vllm,
+                    reshard_mode
                 )
             else:
                 self.reshard_param_policy2infer = TransformParametersD2D(
-                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func_vllm
+                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func_vllm, reshard_mode
                 )
         ms.communication.comm_func.barrier()
 
         self.reshard_param_policy2ref = TransformParametersD2D(
-            sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref
+            sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref,
+            reshard_mode=reshard_mode
         )
         if grpo_config.rl_config.num_iterations > 1:
             self.old_policy_param_policy2old = TransformParametersD2D(
-                sft_train_model, old_policy_model, src_merged_stra, old_merged_stra, match_func=match_func_policy2ref
+                sft_train_model, old_policy_model, src_merged_stra, old_merged_stra, match_func=match_func_policy2ref,
+                reshard_mode=reshard_mode
             )
 
         ms.communication.comm_func.barrier()
