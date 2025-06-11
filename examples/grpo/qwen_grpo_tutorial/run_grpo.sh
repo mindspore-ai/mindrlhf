@@ -4,7 +4,6 @@ export MS_ALLOC_CONF="memory_tracker:False,enable_vmm:True"
 export GLOG_v=2
 export MS_DEV_DUMP_IR_PASSES="hwopt_d_after_stream_assign,valid,graph_build"
 export MS_DEV_RUNTIME_CONF="memory_statistics:False"
-export MS_ENABLE_LCCL=on  # turn off on A3
 export HCCL_IF_BASEE_PORT=60009
 
 root_path="$(realpath "$(dirname "$0")")"

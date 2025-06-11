@@ -75,6 +75,14 @@ class InferWorker(Worker):
             logger.info(f"launch actor roll out sft_config_infer.use_parallel {sft_config_infer.use_parallel}")
             sft_config_infer.context = grpo_config.context.param_dict
             logger.info(f"sft_config_infer.context:{sft_config_infer.context}")
+            deterministic = grpo_config.rl_config.deterministic.lower() == "on"
+            logger.info(f"set deterministic: {deterministic}")
+            if deterministic:
+                ms.set_deterministic(True)
+                os.environ["HCCL_DETERMINISTIC"] = "true"
+                os.environ["TE_PARALLEL_COMPILER"] = "1"
+                os.environ["CUSTOM_MATMUL_SHUFFLE"] = "off"
+                os.environ["LCCL_DETERMINISTIC"] = "1"
             build_context(sft_config_infer)
         build_parallel_config(sft_config_infer)
         context.set_context(enable_compile_cache=enable_compile_cache, compile_cache_path="./generate_cache")
@@ -298,6 +306,7 @@ class InferWorker(Worker):
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
     def generate(self, input_ids_numpy, max_tokens=0):
         """Policy model generates responses for a batch of prompts."""
+        ms.set_context(jit_config={"infer_boost": "on"})
         context.set_auto_parallel_context(
             pipeline_stages=self.infer_pp_stage, parallel_mode="stand_alone", full_batch=False
         )
@@ -375,6 +384,7 @@ class InferWorker(Worker):
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != pad_token_id).astype(np.int32)
 
+        ms.set_context(jit_config={"infer_boost": "off"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         return (
             right_padding_responses.astype(np.int32),
@@ -385,6 +395,7 @@ class InferWorker(Worker):
 
     def generate_strategy(self, reshard_optimizer_):
         """generate strategy"""
+        ms.set_context(jit_config={"infer_boost": "on"})
         context.set_auto_parallel_context(
             pipeline_stages=self.infer_pp_stage, parallel_mode="stand_alone", full_batch=False
         )
@@ -405,6 +416,7 @@ class InferWorker(Worker):
                 "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
             }
         )
+        ms.set_context(jit_config={"infer_boost": "off"})
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
