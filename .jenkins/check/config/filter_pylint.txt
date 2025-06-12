@@ -14,6 +14,7 @@
 "mindrlhf/mindrlhf/third_party/vllm/worker.py"                                                                  "unused-import"
 "mindrlhf/mindrlhf/third_party/vllm/worker.py"                                                                  "invalid-name"
 "mindrlhf/mindrlhf/trainer/spmd/grpo_trainer.py"                                                                "bad-continuation"
+"mindrlhf/mindrlhf/trainer/spmd/grpo_experience_maker.py"                                                       "bad-continuation"
 "mindrlhf/mindrlhf/utils/utils.py"                                                                              "bad-continuation"
 "mindrlhf/mindrlhf/worker/ref_worker.py"                                                                        "bad-continuation"
 "mindrlhf/mindrlhf/worker/transform_worker.py"                                                                  "bad-continuation"

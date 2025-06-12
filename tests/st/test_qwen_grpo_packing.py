@@ -30,6 +30,7 @@ print(f"sys.path is {sys.path}")
 
 
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
+from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 from mindrlhf.worker.train_worker import TrainWorker
 
 
@@ -122,10 +123,10 @@ class TestGRPOTrainer:
     @mock.patch.object(GRPOTrainer, "rename_safetensors_weights")
     @mock.patch.object(GRPOTrainer, "_load_checkpoint")
     @mock.patch.object(GRPOTrainer, "_compile")
-    @mock.patch.object(GRPOTrainer, "_init_grpo_infer_dataset")
-    @mock.patch.object(GRPOTrainer, "_get_batch")
     @mock.patch.object(TrainWorker, "_init_grpo_network_and_optimizer")
-    @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.get_dp_rank")
+    @mock.patch.object(GRPOExperienceMaker, "_get_batch")
+    @mock.patch.object(GRPOExperienceMaker, "_init_grpo_experience_dataset")
+    @mock.patch("mindrlhf.trainer.spmd.grpo_experience_maker.get_dp_rank")
     @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.TransformWorker")
     @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.InferWorker")
     @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.RefWorker")
@@ -179,7 +180,7 @@ class TestGRPOTrainer:
         mock_get_batch.return_value = data[0]
         mock_infer_worker.return_value.post_process_infer_outputs.return_value = data[1:-1]
         mock_ref_worker.return_value.compute_ref_log_prob.return_value = data[-1]
-        grpo_trainer._make_experience(self.num_rollouts, self.num_generations)
+        grpo_trainer.experience_maker.make_experience(self.num_rollouts, self.num_generations)
         store = grpo_trainer.train.store
         assert len(store) == self.expect_pack_group
         base_prompt_ids = np.concatenate((prompts, responses), axis=0)
