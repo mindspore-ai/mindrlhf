@@ -25,7 +25,7 @@ import mindspore.common.dtype as mstype
 from mindspore.dataset import MindDataset
 from mindspore.common.api import _pynative_executor
 from mindspore import Tensor, mint
-from mindspore.communication import get_rank
+from mindspore.communication import get_rank, get_group_size
 from mindspore.mindrecord import FileWriter
 
 # mindformers
@@ -157,6 +157,7 @@ class GRPOTrainer:
                 f"save_ckpt_interval should be lager than 0, but got "
                 f"{self.grpo_config.rl_config.save_ckpt_interval}"
             )
+        self.world_group_size = get_group_size()
 
     @staticmethod
     def _set_args_to_config(args, grpo_config: GRPOConfig):
@@ -1048,11 +1049,7 @@ class GRPOTrainer:
                                               start_epoch=self.start_epoch, start_step=self.start_step)
 
                 step_begin_time = time.time()
-                logger.info(
-                    "step begin at {} \n------------------------------- ".format(
-                        time.strftime("%H:%M:%S", time.localtime(step_begin_time))
-                    )
-                )
+                logger.info("step begin at {}".format(time.strftime("%H:%M:%S", time.localtime(step_begin_time))))
 
                 logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
                 self._make_experience(
@@ -1128,11 +1125,13 @@ class GRPOTrainer:
 
                 step_end_time = time.time()
                 print_perf_stat(step_begin_time, step_end_time, f"epoch {self.n_epoch} step {self.i_step}")
-                logger.info(
-                    "step end at  {}\n------------------------------- ".format(
-                        time.strftime("%H:%M:%S", time.localtime(step_end_time))
-                    )
-                )
+                logger.info("step end at  {}".format(time.strftime("%H:%M:%S", time.localtime(step_end_time))))
+                step_time = step_end_time - step_begin_time
+                self.total_time += step_time
+                logger.info("step processed tokens {}, tokens/s/p {}".format(self.step_total_tokens,
+                        self.step_total_tokens / step_time / self.world_group_size))
+                logger.info("total processed tokens {}, total tokens/s/p {}".format(self.total_processed_tokens,
+                        self.total_processed_tokens / self.total_time / self.world_group_size))
                 self.i_step += 1
             self.i_step = 0
             self.n_epoch += 1
