@@ -548,7 +548,7 @@ class GRPOTrainer:
         self.old_policy.load()
         logger.info("old_policy load")
 
-        batch_size = self.grpo_config.rl_config.batch_size
+        batch_size = self.grpo_config.rl_config.batch_size * self.old_policy.get_old_policy_dp()
         logger.info(f"old_policy_bs batch_size: {batch_size}")
         step_num = len(all_packed) // batch_size
         logger.info(f"old policy model total steps: {step_num}")
