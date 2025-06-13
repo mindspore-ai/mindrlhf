@@ -26,7 +26,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.utils import TransformParametersD2D
 from mindrlhf.configs.grpo_configs import VllmMode
-from mindrlhf.worker.worker import Worker, format_time_delta
+from mindrlhf.worker.worker import Worker
 
 
 def match_func(s1, s2):
@@ -101,10 +101,13 @@ class TransformWorker(Worker):
             raise ValueError("Key in input_on_device_flag_dict must be policy2infer or policy2ref")
         start_time = time.time()
         self.reshard_param_policy2infer.transform(policy2infer_flag)
-        if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
-            self.reshard_param_policy2ref.transform(policy2ref_flag)
         end_time = time.time()
-        logger.info(f"Total time for transferring policy to ref{format_time_delta(end_time - start_time)}")
+        logger.info(f"Total time for transferring policy to infer {end_time - start_time}")
+        if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
+            start_time = time.time()
+            self.reshard_param_policy2ref.transform(policy2ref_flag)
+            end_time = time.time()
+            logger.info(f"Total time for transferring policy to ref {end_time - start_time}")
         if self.tensor_writer is not None:
             self.tensor_writer.add_scalar("transform-time", end_time - start_time, self.global_transform_step)
         self.global_transform_step += 1

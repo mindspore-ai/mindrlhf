@@ -28,7 +28,7 @@ import mindspore.common.dtype as mstype
 from mindspore import Tensor, mint
 from mindspore import communication as D
 from mindspore.common.api import _pynative_executor
-from mindspore.communication import get_rank
+from mindspore.communication import get_rank, get_group_size
 from mindspore.dataset import MindDataset
 from mindspore.mindrecord import FileWriter
 
@@ -110,7 +110,7 @@ class GRPOTrainer:
         ms.communication.comm_func.barrier()
 
         # rename parameters in safetensors
-        if args.load_ckpt_format == "safetensors":
+        if args.load_ckpt_format == "safetensors" and args.load_sft_checkpoint_infer:
             self.rename_safetensors_weights(args)
 
         self._compile()
@@ -118,6 +118,7 @@ class GRPOTrainer:
         self.transform = TransformWorker(self.grpo_config, self.train.model(),
                                          self.infer.model(), self.ref.model(), args=self.args)
         self._load_checkpoint()
+        self.world_group_size = get_group_size()
 
     def _init_grpo_configs(self, args):
         """ _init_grpo_configs """
@@ -496,13 +497,6 @@ class GRPOTrainer:
         logger.info(f"solution: {solution}")
 
         n_questions = batch[0].shape[0] // num_rollouts
-        all_prompt_completion_ids = np.zeros(
-            (num_generations * num_rollouts * n_questions, self.grpo_config.seq_length), dtype=np.int32)
-        all_prompts_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
-                                    dtype=np.int32)
-        all_responses_mask = np.zeros((num_generations * num_rollouts * n_questions, self.grpo_config.seq_length),
-                                      dtype=np.int32)
-
         self.infer.load()
         # Step 1: generate responses and masks.
         start_time = time.time()
@@ -533,9 +527,14 @@ class GRPOTrainer:
             self.tensor_writer.add_scalar("actor-inference-time", elapsed_time, global_step=self.make_exp_step)
         self.infer.offload()
         logger.info("model_infer offload")
-
+        start_time = time.time()
         right_padding_responses, responses_mask_gather, left_padding_prompts, prompts_mask_gather \
             = self.infer.post_process_infer_outputs(results) # allgather data
+        allgather_time = time.time() - start_time
+        logger.info("allgather-data end at {}, elapsed time {}-------------------------------".format(
+            time.strftime('%H:%M:%S', time.localtime(time.time())), allgather_time))
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("allgather-data-time", allgather_time, global_step=self.make_exp_step)
         all_prompts_mask = np.concatenate((prompts_mask_gather, np.zeros_like(responses_mask_gather, dtype=np.int32)),
                                           axis=1)
         all_responses_mask = np.concatenate((np.zeros_like(left_padding_prompts, dtype=np.int32),
@@ -568,6 +567,9 @@ class GRPOTrainer:
             f"token_count mean_response_len: {mean_responses_length}, "
             f"max_response_len: {responses_length_array.max()}, "
             f"min_response_len: {responses_length_array.min()}")
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("mean-completion-length", mean_responses_length,
+                                          global_step=self.make_exp_step)
         prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=False)
         completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=False)
 
@@ -604,6 +606,7 @@ class GRPOTrainer:
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
 
+        cal_advantages_start_time = time.time()
         advantages = np.zeros((total_size,))
         tmp_all_rewards = all_rewards.copy()
         samples_per_step = total_size // num_generations
@@ -616,7 +619,9 @@ class GRPOTrainer:
 
         logger.info(f"advantages: {advantages}")
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
-
+        if self.tensor_writer:
+            self.tensor_writer.add_scalar("advantages-calculation-time", time.time() - cal_advantages_start_time,
+                                          global_step=self.make_exp_step)
         self.ref.load()
         logger.info("ref_model load")
         ref_start_time = time.time()
@@ -640,6 +645,9 @@ class GRPOTrainer:
             all_packed = self.pack_grpo_data(
                 all_prompt_completion_ids, all_prompts_mask, all_responses_mask, advantages, pack_num)
             logger.info(f"self.grpo_config.ref_model_batch_size: {self.grpo_config.ref_model_batch_size}")
+            logger.info(f"after pack len {len(all_packed)}")
+            if self.tensor_writer:
+                self.tensor_writer.add_scalar("packed-data-length", len(all_packed), global_step=self.make_exp_step)
             total_ref_batch_size = self.grpo_config.ref_model_batch_size * self.ref_dp
 
             while len(all_packed) < total_ref_batch_size:
@@ -720,12 +728,6 @@ class GRPOTrainer:
                 )
                 grpo_rl_elements.append(grpodata)
 
-        logger.info(f"grpo_rl_elements.length: {len(grpo_rl_elements)}")
-        all_mean_len = np.mean(all_elements_compeltion_len)
-        logger.info(f"all_elements_completion_len mean: {all_mean_len}")
-        if self.tensor_writer:
-            self.tensor_writer.add_scalar("mean-completion-length", all_mean_len, global_step=self.make_exp_step)
-
         self.train.push_to_store(grpo_rl_elements)
         logger.info(f"all_mean_grouped_rewards: {all_mean_grouped_rewards}")
         avg_scores = np.mean(np.array(all_mean_grouped_rewards))
@@ -735,7 +737,7 @@ class GRPOTrainer:
 
         end_time = time.time()
         elapsed_time = end_time - ep_begin_time
-        logger.info("Make experience, end at {}, elapsed time {} ------------------------------- ".format(
+        logger.info("make-experience-step, end at {}, elapsed time {} ------------------------------- ".format(
             time.strftime('%H:%M:%S', time.localtime(end_time)), elapsed_time))
         if self.tensor_writer:
             self.tensor_writer.add_scalar("make-experience-time", elapsed_time, global_step=self.make_exp_step)
@@ -825,18 +827,18 @@ class GRPOTrainer:
                 if self.reshard_mem_opt_level == 0:
                     self.train.offload_model()
 
-                step_end_time = time.time()
-                step_time = step_end_time - step_begin_time
+                step_time = time.time() - step_begin_time
+                self.total_time += step_time
+                step_throughout = self.step_total_tokens / step_time / self.world_group_size
+                total_throughout = self.total_processed_tokens / self.total_time / self.world_group_size
+                logger.info(f"step elapsed time {step_time}")
+                logger.info("step processed tokens {}, tokens/s/p {}".format(self.step_total_tokens, step_throughout))
+                logger.info("total processed tokens {}, total tokens/s/p {}".format(
+                    self.total_processed_tokens, total_throughout))
                 if self.tensor_writer:
                     self.tensor_writer.add_scalar("step-time", step_time, global_step=total_step)
-                self.total_time += step_time
-                logger.info("step end at  {}, elapsed time {} \n------------------------------- ".format(
-                    time.strftime('%H:%M:%S', time.localtime(step_end_time)), step_time))
-                logger.info("step processed tokens {}, tokens/s {} \n------------------------------- ".format(
-                    self.step_total_tokens, self.step_total_tokens / step_time))
-                logger.info("total processed tokens {}, total tokens/s {} \n------------------------------- ".format(
-                    self.total_processed_tokens, self.total_processed_tokens / self.total_time))
-
+                    self.tensor_writer.add_scalar("step-throughout", step_throughout, global_step=total_step)
+                    self.tensor_writer.add_scalar("total-throughout", total_throughout, global_step=total_step)
         # save checkpoint
         self.train.load_model()
         self.train.save_checkpoint(
