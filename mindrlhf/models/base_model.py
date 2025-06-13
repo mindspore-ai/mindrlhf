@@ -19,7 +19,6 @@ import importlib
 import mindspore.nn as nn
 from mindformers import LlamaForCausalLM
 from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
-from mindformers.models.gpt2 import GPT2LMHeadModel
 from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
 
 
@@ -40,7 +39,6 @@ class BaseModel(nn.Cell):
     def __init__(self):
         nn.Cell.__init__(self)
         self._model_list = [
-            "gpt2",
             "llama",
             "glm4",
             "deepseek_training",
@@ -61,11 +59,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "gpt2":
-            self.model = GPT2LMHeadModel(model_config)
-            self.backbone = self.model.backbone
-            self.lm_head = self.model.head
-        elif self.model_type == "llama":
+        if self.model_type == "llama":
             if model_config.use_past:
                 self.model = ParallelQwenForCausalLM(model_config)
             else:
@@ -102,10 +96,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "gpt2":
-            self.model = GPT2LMHeadModel(model_config)
-            self.backbone = self.model.backbone
-        elif self.model_type == "llama":
+        if self.model_type == "llama":
             if model_config.use_past:
                 self.model = ParallelQwenForCausalLM(model_config)
             else:
@@ -140,10 +131,7 @@ class BaseModel(nn.Cell):
             raise NotImplementedError(
                 "only support {}".format(" ".join(self._model_list))
             )
-        if self.model_type == "gpt2":
-            self.model = GPT2LMHeadModel(model_config)
-            self.backbone = self.model.backbone
-        elif self.model_type == "llama":
+        if self.model_type == "llama":
             if model_config.use_past:
                 self.model = ParallelQwenForCausalLM(model_config)
             else:
