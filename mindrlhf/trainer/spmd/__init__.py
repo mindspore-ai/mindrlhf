@@ -14,5 +14,5 @@
 # ============================================================================
 """SPMD trainers."""
 from .grpo_trainer import GRPOTrainer
-
-__all__ = ['GRPOTrainer']
+from .grpo_experience_maker import GRPOExperienceMaker
+__all__ = ['GRPOTrainer', 'GRPOExperienceMaker']
