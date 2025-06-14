@@ -15,7 +15,6 @@
 
 import os
 import time
-from glob import glob
 import numpy as np
 
 import mindspore as ms
@@ -40,7 +39,7 @@ from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.configs.grpo_configs import VllmMode
-from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank
+from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils.strategy_utils import save_strategy_file
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
@@ -463,9 +462,22 @@ class InferWorker(Worker):
         """load_checkpoint"""
         load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
         logger.info(f"sft_ckpt_path_infer:{self.sft_ckpt_path_infer}")
-        if self.sft_ckpt_path_infer and load_ckpt_format == "safetensors":
+
+        if not self.sft_ckpt_path_infer or not os.path.exists(self.sft_ckpt_path_infer):
+            logger.warning(f"sft_ckpt_path_infer does not exist, not loading ckpt.")
+            return
+
+        if self.sft_ckpt_path_infer and load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
-            self._load_checkpoint_safetensors()
+            strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
+            if self.use_vllm != VllmMode.ORIGIN:
+                network = self.grpo_model_infer.grpo_model.policy_model
+                prefix = "grpo_model.policy_model."
+            else:
+                network = self.grpo_model_infer.grpo_model.policy_model.model
+                prefix = "grpo_model.policy_model.model."
+            load_safetensors(self.sft_ckpt_path_infer, self.args.load_ckpt_format, network,
+                             self.grpo_model_infer.grpo_model.policy_model, prefix, strategy_path)
             return
         load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")
@@ -625,29 +637,3 @@ class InferWorker(Worker):
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
         new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
-
-    def _load_checkpoint_safetensors(self):
-        """load safetensors checkpoint"""
-        if self.use_vllm != VllmMode.ORIGIN:
-            network = self.grpo_model_infer.grpo_model.policy_model
-            prefix = "grpo_model.policy_model."
-        else:
-            network = self.grpo_model_infer.grpo_model.policy_model.model
-            prefix = "grpo_model.policy_model.model."
-        try:
-            load_checkpoint_files = glob(os.path.join(self.sft_ckpt_path_infer, f"*.safetensors"))
-            load_checkpoint_files.sort()
-            name_map = network.obtain_name_map(load_checkpoint_files)
-            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
-        except Exception as e:
-            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
-
-        # TODO: save strategy
-        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
-        ms.load_distributed_checkpoint(
-            network=self.grpo_model_infer.grpo_model.policy_model,
-            predict_strategy=strategy_path,
-            unified_safetensors_dir=self.sft_ckpt_path_infer,
-            format="safetensors",
-            name_map=name_map,
-        )
