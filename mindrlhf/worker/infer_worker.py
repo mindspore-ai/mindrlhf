@@ -358,8 +358,7 @@ class InferWorker(Worker):
                 continue
             # pylint: disable=W0212
             param._offload()
-        end_time = time.time()
-        logger.info(f'offload infer elapsed time {end_time - start_time}')
+        logger.info(f'offload infer elapsed time {time.time() - start_time}')
         logger.info(f'after offload infer {ms.hal.memory_stats()}')
         self.on_device = False
 
@@ -378,14 +377,13 @@ class InferWorker(Worker):
                 continue
             # pylint: disable=W0212
             param._load()
-        end_time = time.time()
-        logger.info(f'load infer elapsed time {end_time - start_time}')
+        logger.info(f'load infer elapsed time {time.time() - start_time}')
         logger.info(f'after load infer {ms.hal.memory_stats()}')
         self.on_device = True
 
     def load_checkpoint(self):
         """ load infer checkpoint """
-        if self.args.load_ckpt_format == "safetensors":
+        if self.args.load_ckpt_format == "safetensors" and self.sft_ckpt_path_infer:
             self.on_device = True
             self._load_checkpoint_safetensors()
             return

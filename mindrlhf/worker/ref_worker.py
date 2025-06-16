@@ -13,6 +13,7 @@
 # limitations under the License.
 """Ref worker"""
 import os
+import time
 from glob import glob
 import numpy as np
 # python
@@ -135,28 +136,34 @@ class RefWorker(Worker):
         return rank_list, rank_list_str
 
     def offload(self):
+        """ offload param to cpu"""
         if self.on_device is False:
             return
         logger.info(f'before offload ref model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.ref_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
+        logger.info(f'offload ref model elapsed time {time.time() - start_time}')
         logger.info(f'after offload ref model {ms.hal.memory_stats()}')
         self.on_device = False
 
     def load(self):
+        """ load param to npu"""
         if self.on_device:
             return
         logger.info(f'before load ref model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.ref_model.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
+        logger.info(f'load ref model elapsed time {time.time() - start_time}')
         logger.info(f'after load ref model {ms.hal.memory_stats()}')
         self.on_device = True
 
     def load_checkpoint(self):
         """ load_checkpoint """
-        if self.args.load_ckpt_format == "safetensors":
+        if self.args.load_ckpt_format == "safetensors" and self.ref_ckpt_path:
             self.on_device = True
             self._load_checkpoint_safetensors()
         else:

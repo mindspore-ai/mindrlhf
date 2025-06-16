@@ -51,7 +51,7 @@ class TrainWorker(Worker):
 
     def __init__(self, grpo_config, sft_path_train, args):
         super().__init__()
-        logger.info("init StfTrainWorker")
+        logger.info("init TrainWorker")
         self.args = args
         self.grpo_config = grpo_config
         sft_config_train = MindFormerConfig(sft_path_train)
@@ -140,7 +140,7 @@ class TrainWorker(Worker):
 
     def load_checkpoint(self):
         """ load checkpoint """
-        if self.args.load_ckpt_format == "safetensors":
+        if self.args.load_ckpt_format == "safetensors" and self.sft_ckpt_path_train:
             self.model_on_device = True
             self.optimizer_on_device = True
             self._load_checkpoint_safetensors()
@@ -325,7 +325,8 @@ class TrainWorker(Worker):
         if self.optimizer_on_device is False:
             logger.info(f'no need for offload_optimizer because optimizer_on_device is False ')
             return
-        logger.info(f'before offload stf train optimizer {ms.hal.memory_stats()}')
+        logger.info(f'before offload train optimizer {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.optimizer.moments1:
             # pylint: disable=W0212
             param._offload()
@@ -336,7 +337,8 @@ class TrainWorker(Worker):
             for param in self.grpo_with_grad.accu_grads:
                 # pylint: disable=W0212
                 param._offload()
-        logger.info(f'after offload stf train optimizer {ms.hal.memory_stats()}')
+        logger.info(f'offload train optimizer elapsed time {time.time() - start_time}')
+        logger.info(f'after offload train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = False
 
     def load_optimizer(self):
@@ -344,7 +346,8 @@ class TrainWorker(Worker):
         if self.optimizer_on_device:
             logger.info(f'no need for load_optimizer because optimizer_on_device is True ')
             return
-        logger.info(f'before load stf train optimizer {ms.hal.memory_stats()}')
+        logger.info(f'before load train optimizer {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.optimizer.moments1:
             # pylint: disable=W0212
             param._load()
@@ -355,27 +358,34 @@ class TrainWorker(Worker):
             for param in self.grpo_with_grad.accu_grads:
                 # pylint: disable=W0212
                 param._load()
-        logger.info(f'after load stf train optimizer {ms.hal.memory_stats()}')
+        logger.info(f'offload train optimizer elapsed time {time.time() - start_time}')
+        logger.info(f'after load train optimizer {ms.hal.memory_stats()}')
         self.optimizer_on_device = True
 
     def load_model(self):
+        """ load model param to npu"""
         if self.model_on_device:
             return
-        logger.info(f'before load stf train model {ms.hal.memory_stats()}')
+        logger.info(f'before load train model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._load()
-        logger.info(f'after load stf train model {ms.hal.memory_stats()}')
+        logger.info(f'load train model elapsed time {time.time() - start_time}')
+        logger.info(f'after load train model {ms.hal.memory_stats()}')
         self.model_on_device = True
 
     def offload_model(self):
+        """ offload model param to cpu """
         if self.model_on_device is False:
             return
-        logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
+        logger.info(f'after offload train model {ms.hal.memory_stats()}')
+        start_time = time.time()
         for param in self.grpo_with_grad.network.get_parameters(expand=True):
             # pylint: disable=W0212
             param._offload()
-        logger.info(f'after offload stf train model {ms.hal.memory_stats()}')
+        logger.info(f'offload train model elapsed time {time.time() - start_time}')
+        logger.info(f'after offload train model {ms.hal.memory_stats()}')
         self.model_on_device = False
 
     def push_to_store(self, data):
