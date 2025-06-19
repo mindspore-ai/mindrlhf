@@ -137,12 +137,12 @@ generate_config:
   use_vllm: 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode; init model with vllm, but generate with mindformers
   hf_config_path: "./config.json"   # vllm config path
   block_size: 16
-  max_model_len: 25536
-  max_num_batched_tokens: 25536
+  max_model_len: 32768
+  max_num_batched_tokens: 32768
   max_num_seqs: 1024
   max_prompt_length: 2048
   num_scheduler_steps: 32
-  gpu_memory_utilization: 0.8
+  gpu_memory_utilization: 0.5
 
   sampling_config:
     max_tokens: 512  # max_decode_length

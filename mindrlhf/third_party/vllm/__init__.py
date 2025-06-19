@@ -12,3 +12,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from importlib.metadata import version
+from vllm_mindspore.model_executor.models.mf_models.qwen2 import Qwen2ForCausalLM
+from packaging import version as vs
+
+from .qwen2 import sample
+Qwen2ForCausalLM.sample = sample
+
+package_version = version("vllm")
+
+if package_version.startswith("0.8.3"):
+    from vllm import LLM
+else:
+    raise ValueError(f"Not support vllm version: {package_version}")
+
+import vllm
+from .ascend import check_and_update_config
+
+vllm.config.current_platform.check_and_update_config = check_and_update_config
+vllm.platforms.current_platform.check_and_update_config = check_and_update_config
+vllm.utils.current_platform.check_and_update_config = check_and_update_config

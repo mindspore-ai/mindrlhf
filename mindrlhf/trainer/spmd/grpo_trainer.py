@@ -20,6 +20,7 @@ import numpy as np
 
 # mindspore
 import mindspore as ms
+from mindspore import Tensor
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
 
@@ -52,10 +53,11 @@ from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 class GRPOTrainer:
     """GRPO Trainer"""
 
-    def __init__(self, args=None):
+    def __init__(self, no_patch_tensor_shape, args=None):
         """Initialize"""
         self.args = args
         self._init_grpo_configs(args)
+        self.no_patch_tensor_shape = no_patch_tensor_shape
 
         # ================== Initial Tensorboard ==================
         if self.grpo_config.rl_config.tensorboard and self.grpo_config.rl_config.tensorboard_dir:
@@ -154,6 +156,8 @@ class GRPOTrainer:
             self.infer.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.ref.ref_model.model.set_train(False)
 
+        self.infer.refresh_policy_model_phase()
+
     @staticmethod
     def _set_args_to_config(args, grpo_config: GRPOConfig):
         """set args to config"""
@@ -247,9 +251,12 @@ class GRPOTrainer:
         """
         start_time = time.time()
         self.infer.generate_strategy(self.reshard_optimizer)
+        origin_shape = Tensor.shape
+        Tensor.shape = self.no_patch_tensor_shape
         self.ref.compile()
         self.old_policy.compile()
         self.train.compile()
+        Tensor.shape = origin_shape
         end_time = time.time()
         print_perf_stat(start_time, end_time, "GRPOTrainer compile")
 
@@ -380,10 +387,10 @@ class GRPOTrainer:
                 step_time = step_end_time - step_begin_time
                 self.total_time += step_time
                 logger.info("step processed tokens {}, tokens/s/p {}".format(self.experience_maker.step_total_tokens,
-                        self.experience_maker.step_total_tokens / step_time / self.world_group_size))
+                                                                             self.experience_maker.step_total_tokens / step_time / self.world_group_size))
                 logger.info("total processed tokens {}, total tokens/s/p {}".format(
-                        self.experience_maker.total_processed_tokens,
-                        self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size))
+                    self.experience_maker.total_processed_tokens,
+                    self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size))
                 self.i_step += 1
             self.i_step = 0
             self.n_epoch += 1

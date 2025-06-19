@@ -14,12 +14,14 @@
 """ main """
 
 import argparse
+from mindspore import Tensor
+no_patch_tensor_shape = Tensor.shape
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
 
 def main(input_args):
     """main process"""
-    trainer = GRPOTrainer(input_args)
+    trainer = GRPOTrainer(no_patch_tensor_shape=no_patch_tensor_shape, args=input_args)
     trainer.run_grpo_train()
 
 
