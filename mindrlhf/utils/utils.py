@@ -21,9 +21,7 @@ import time
 import hashlib
 import copy
 import stat
-from glob import glob
 import yaml
-from safetensors import safe_open
 import numpy as np
 import mindspore.nn as nn
 from mindspore.ops import operations as P
@@ -73,7 +71,6 @@ __all__ = [
     "ensure_total_ckpt_is_less_than_limit",
     "load_param_to_net",
     "record_last_ckpt_to_json",
-    "load_safetensors",
 ]
 
 
@@ -652,36 +649,3 @@ def record_last_ckpt_to_json(epoch: int, step: int, ckpt_file: str, meta_json: s
     mode = stat.S_IWUSR | stat.S_IRUSR
     with os.fdopen(os.open(meta_json, flags, mode), "w", encoding="utf-8") as fp:
         json.dump(meta_data, fp)
-
-def load_safetensors(
-        safetensors_path, load_ckpt_format, network, grpo_model, prefix, strategy_path
-):
-    """
-    load safetensors
-    """
-    try:
-        load_checkpoint_files = glob(os.path.join(safetensors_path, f"*.safetensors"))
-        load_checkpoint_files.sort()
-        if load_ckpt_format == "hf_safetensors":
-            name_map = network.obtain_name_map(load_checkpoint_files)
-            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
-        else:
-            name_map = dict()
-            param_name_map_dict = dict()
-            for checkpoint_file in load_checkpoint_files:
-                with safe_open(checkpoint_file, framework="np") as f:
-                    for k in f.keys():
-                        name_map.update({f"{prefix}{k}": k})
-                        param_name_map_dict[f"{prefix}{k}"] = os.path.basename(checkpoint_file)
-            with open(os.path.join(safetensors_path, 'param_name_map.json'), "w", encoding="utf-8") as f:
-                json.dump(param_name_map_dict, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
-
-    ms.load_distributed_checkpoint(
-        network=grpo_model,
-        predict_strategy=strategy_path,
-        unified_safetensors_dir=safetensors_path,
-        format="safetensors",
-        name_map=name_map,
-    )
