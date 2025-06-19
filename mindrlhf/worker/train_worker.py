@@ -42,7 +42,6 @@ from mindrlhf.utils.utils import (
     record_last_ckpt_to_json,
     get_checkpoint_name,
     ensure_total_ckpt_is_less_than_limit,
-    load_safetensors
 )
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
