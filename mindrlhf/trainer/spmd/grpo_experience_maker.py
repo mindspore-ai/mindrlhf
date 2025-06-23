@@ -38,7 +38,7 @@ from mindrlhf.utils import (
     add_metrics_to_tensorboard,
 )
 
-from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, reward_func_from_jiaoda, qwen_accuracy_reward
+from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, qwen_accuracy_reward
 from mindrlhf.reward.kk_reward_fn import kk_reward
 from mindrlhf.worker.worker import GRPOData
 from mindrlhf.configs.grpo_configs import VllmMode
@@ -488,8 +488,6 @@ class GRPOExperienceMaker:
                 verifier_function.append(accuracy_reward)
             elif reward_func_str == "format_reward":
                 verifier_function.append(format_reward)
-            elif reward_func_str == "reward_func_from_jiaoda":
-                verifier_function.append(reward_func_from_jiaoda)
             elif reward_func_str == "qwen_accuracy_reward":
                 verifier_function.append(qwen_accuracy_reward)
             elif reward_func_str == "kk_reward":

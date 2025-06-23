@@ -15,12 +15,6 @@
 """Reward functions for GRPO training."""
 import re
 
-from .verifier.rule_verifier import func_from_jiaoda
-
-# pylint: disable=W0613
-def reward_func_from_jiaoda(completions, solution, **kwargs):
-    return func_from_jiaoda(completions, solution)
-
 
 # pylint: disable=W0613
 def accuracy_reward(completions, solution, **kwargs):
