@@ -1,5 +1,5 @@
 msadapter:
-  'https://repo.mindspore.cn/mindspore/msadapter/version/202505/20250521/master_20250521120008_52963bec102e16b5f50a2f8515f471a14cfb5fe6_newest/'
+  'https://repo.mindspore.cn/mindspore/msadapter/version/202505/20250526/master_20250526120007_b76cb7804d1c9555e32a57439c1d412ff86293d1_newest/'
 vllm-mindspore:
   'https://repo.mindspore.cn/mindspore/vllm-mindspore/version/202506/20250606/master_20250606160020_5943579d3a76de5147d07a86f7f8ccd14ea75b51_newest/'
 vllm:
