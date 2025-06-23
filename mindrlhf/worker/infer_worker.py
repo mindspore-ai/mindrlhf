@@ -168,15 +168,6 @@ class InferWorker(Worker):
         from mindrlhf.third_party.vllm import package_version, LLM
         from vllm import SamplingParams
 
-        if self.sft_model_config_infer.model_name == "deepseek_infer":
-            hf_config = self.build_deepseek_hf_config()
-        elif self.sft_model_config_infer.model_name == "llama":
-            hf_config = self.build_qwen_hf_config()
-        else:
-            raise ValueError(
-                f"model_name should in ['qwen', 'llama','deepseek'], but get {self.sft_model_config_infer.model_name}"
-            )
-
         self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
         # 初始化vllm
         logger.info(
@@ -189,7 +180,7 @@ class InferWorker(Worker):
             f"seed: {self.dp_rank_id}"
         )
         vllm_start_time = time.time()
-        if package_version.startswith("0.8.3"):
+        if package_version.startswith("0.8"):
             from mindrlhf.third_party.vllm.vllm_v_general import initialize_parallel_state
             initialize_parallel_state(
                 tensor_model_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel)
@@ -507,133 +498,6 @@ class InferWorker(Worker):
             logger.info(f"param not load: {param_not_load}")
             logger.info(f"ckpt not load: {ckpt_not_load}")
 
-    def build_qwen_hf_config(self):
-        """build_qwen_hf_config"""
-        import json
-        from transformers import AutoConfig
-
-        # build qwen hf config 硬编码
-
-        hf_config_path = self.grpo_config.generate_config.hf_config_path
-        logger.info(f"hf_config_path: {hf_config_path}")
-        qwen_hf_config = dict()
-        qwen_hf_config["architectures"] = ["Qwen2ForCausalLM"]
-        qwen_hf_config["attention_dropout"] = 0.0
-        qwen_hf_config["bos_token_id"] = 151643  # 硬编码
-        qwen_hf_config["eos_token_id"] = 151643  # 硬编码
-        qwen_hf_config["hidden_act"] = "silu"
-        qwen_hf_config["hidden_size"] = self.sft_model_config_infer.hidden_size
-        qwen_hf_config["initializer_range"] = 0.02  # 硬编码，不知道对应哪一项
-        qwen_hf_config["intermediate_size"] = self.sft_model_config_infer.intermediate_size
-        qwen_hf_config["max_position_embeddings"] = self.sft_model_config_infer.max_position_embeddings
-        qwen_hf_config["max_window_layers"] = self.sft_model_config_infer.num_layers
-        qwen_hf_config["model_type"] = "qwen2"
-        qwen_hf_config["num_attention_heads"] = self.sft_model_config_infer.num_heads
-        qwen_hf_config["num_hidden_layers"] = self.sft_model_config_infer.num_layers
-        qwen_hf_config["num_key_value_heads"] = self.sft_model_config_infer.n_kv_heads
-        qwen_hf_config["rms_norm_eps"] = 1e-06
-        qwen_hf_config["rope_theta"] = 1000000.0
-        qwen_hf_config["sliding_window"] = self.sft_model_config_infer.max_position_embeddings  # 不明白数值是131072
-        qwen_hf_config["tie_word_embeddings"] = False
-        qwen_hf_config["torch_dtype"] = DTYPE_STR[self.sft_model_config_infer.compute_dtype]
-        qwen_hf_config["transformers_version"] = "4.46.1"
-        qwen_hf_config["use_cache"] = True
-        qwen_hf_config["use_sliding_window"] = False
-        qwen_hf_config["vocab_size"] = self.sft_model_config_infer.vocab_size
-
-        json_str = json.dumps(qwen_hf_config, indent=4)
-        if get_rank() == 0:
-            with open(hf_config_path, "w", encoding="utf-8") as f:
-                f.write(json_str)
-        ms.mint.distributed.barrier()
-
-        hf_config = AutoConfig.from_pretrained(os.path.dirname(hf_config_path))
-        print("hf config for vllm: ", hf_config, flush=True)
-
-        return hf_config
-
-    def build_deepseek_hf_config(self):
-        """build_deepseek_hf_config"""
-        import json
-        from transformers import AutoConfig
-
-        hf_config_path = self.grpo_config.rl_config.hf_config_path
-        logger.info(f"hf_config_path: {hf_config_path}")
-        deepseek_hf_config = dict()
-        deepseek_hf_config["rope_theta"] = 1000000.0
-        deepseek_hf_config["architectures"] = ["DeepseekV3ForCausalLM"]
-        deepseek_hf_config["attention_bias"] = False
-        deepseek_hf_config["attention_dropout"] = 0.0
-        deepseek_hf_config["auto_map"] = {
-            "AutoConfig": "configuration_deepseek.DeepseekV3Config",
-            "AutoModel": "modeling_deepseek.DeepseekV3Model",
-            "AutoModelForCausalLM": "modeling_deepseek.DeepseekV3ForCausalLM",
-        }
-        deepseek_hf_config["n_group"] = self.sft_model_config_infer.moe_config.n_group
-        deepseek_hf_config["moe_layer_freq"] = 1
-        deepseek_hf_config["kv_lora_rank"] = self.sft_model_config_infer.kv_lora_rank
-        deepseek_hf_config["n_routed_experts"] = self.sft_model_config_infer.moe_config.expert_num
-        deepseek_hf_config["n_shared_experts"] = self.sft_model_config_infer.moe_config.shared_expert_num
-        deepseek_hf_config["norm_topk_prob"] = True
-        deepseek_hf_config["ep_size"] = 1
-        deepseek_hf_config["num_experts_per_tok"] = 8
-        deepseek_hf_config["first_k_dense_replace"] = 3
-        deepseek_hf_config["aux_loss_alpha"] = 0.001
-        deepseek_hf_config["bos_token_id"] = 0  # 硬编码
-        deepseek_hf_config["eos_token_id"] = [1]  # 硬编码
-        deepseek_hf_config["hidden_act"] = "silu"
-        deepseek_hf_config["num_nextn_predict_layers"] = 1
-        deepseek_hf_config["pretraining_tp"] = 1
-        deepseek_hf_config["q_lora_rank"] = self.sft_model_config_infer.q_lora_rank
-        deepseek_hf_config["qk_nope_head_dim"] = self.sft_model_config_infer.qk_nope_head_dim
-        deepseek_hf_config["qk_rope_head_dim"] = self.sft_model_config_infer.qk_rope_head_dim
-        deepseek_hf_config["routed_scaling_factor"] = self.sft_model_config_infer.moe_config.routed_scaling_factor
-        deepseek_hf_config["scoring_func"] = "sigmoid"
-        deepseek_hf_config["seq_aux"] = True
-        deepseek_hf_config["tie_word_embeddings"] = False
-        deepseek_hf_config["topk_group"] = self.sft_model_config_infer.moe_config.topk_group
-        deepseek_hf_config["topk_method"] = "noaux_tc"
-        deepseek_hf_config["torch_dtype"] = "bfloat16"
-        deepseek_hf_config["transformers_version"] = "4.33.1"
-
-        deepseek_hf_config["quantization_config"] = {
-            "activation_scheme": "dynamic",
-            "fmt": "e4m3",
-            "quant_method": "fp8",
-            "weight_block_size": [128, 128],
-        }
-        deepseek_hf_config["rope_scaling"] = {
-            "beta_fast": 32,
-            "beta_slow": 1,
-            "factor": 40,
-            "mscale": 1.0,
-            "mscale_all_dim": 1.0,
-            "original_max_position_embeddings": 4096,
-            "type": "yarn",
-        }
-        deepseek_hf_config["hidden_size"] = self.sft_model_config_infer.hidden_size
-        deepseek_hf_config["initializer_range"] = 0.02  # 硬编码，不知道对应哪一项
-        deepseek_hf_config["intermediate_size"] = self.sft_model_config_infer.intermediate_size
-        deepseek_hf_config["max_position_embeddings"] = self.sft_model_config_infer.max_position_embeddings
-        deepseek_hf_config["model_type"] = "deepseek_v3"
-        deepseek_hf_config["num_attention_heads"] = self.sft_model_config_infer.num_heads
-        deepseek_hf_config["num_hidden_layers"] = self.sft_model_config_infer.num_layers
-        deepseek_hf_config["num_key_value_heads"] = self.sft_model_config_infer.n_kv_heads
-        deepseek_hf_config["rms_norm_eps"] = 1e-06
-        deepseek_hf_config["use_cache"] = True
-        deepseek_hf_config["v_head_dim"] = self.sft_model_config_infer.v_head_dim
-        deepseek_hf_config["vocab_size"] = self.sft_model_config_infer.vocab_size
-        json_str = json.dumps(deepseek_hf_config, indent=4)
-        if get_rank() == 0:
-            with open(hf_config_path, "w", encoding="utf-8") as f:
-                f.write(json_str)
-        ms.mint.distributed.barrier()
-
-        hf_config = AutoConfig.from_pretrained(os.path.dirname(hf_config_path))
-        print("hf config for vllm: ", hf_config, flush=True)
-
-        return hf_config
-
     def convert_map_dict(self, source_dict, **kwargs):
         """convert_map_dict"""
         if self.use_vllm != VllmMode.ORIGIN:
@@ -664,6 +528,12 @@ class InferWorker(Worker):
 
         # TODO: save strategy
         strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
+        file_list = os.listdir(self.sft_ckpt_path_infer)
+        json_files = [file for file in file_list if file == "param_name_map.json"]
+        # for ci
+        if not json_files:
+            logger.warning(f"param_name_map.json not found in {self.sft_ckpt_path_infer}, skip load checkpoint")
+            return
         ms.load_distributed_checkpoint(
             network=self.grpo_model_infer.grpo_model.policy_model,
             predict_strategy=strategy_path,

@@ -27,9 +27,9 @@ echo "PYTHONPATH is $PYTHONPATH"
 
 # vllm config
 export MINDFORMERS_MODEL_CONFIG=./qwen2_5_vllm/predict_qwen2_5_7b_instruct_st.yaml
-export vLLM_MODEL_MEMORY_USE_GB=30
 export vLLM_MODEL_BACKEND=MindFormers
-export MF_NUM_BLOCKS=512
+export HCCL_EXEC_TIMEOUT=7200
+export MS_JIT_MODULES=vllm_mindspore,research
 
 jsonl_path="$WORKDIR/qwen2_5/mini_gsm8k.jsonl"
 vocab_path="$WORKDIR/qwen2_5/vocab.json"
@@ -52,6 +52,7 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --dataset_file $data_path \
 --save_checkpoint_dir $WORKDIR/ckpt/train \
 --tokenizer_dir "$WORKDIR/qwen2_5/" \
+--vllm_test \
 --actor_checkpoint_path "" \
 --ref_checkpoint_path "" \
---generate_checkpoint_path ""
+--generate_checkpoint_path "./qwen2_5_vllm/"

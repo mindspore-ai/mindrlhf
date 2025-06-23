@@ -116,8 +116,6 @@ def initialize_parallel_state(
     # the synchronization point. This causes the memory usage to grow
     # as the number of all_reduce calls increases. This env var disables
     # this behavior.
-    # Related issue:
-    # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
     from vllm.distributed.parallel_state import init_distributed_environment, initialize_model_parallel
 
     os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"

@@ -386,8 +386,9 @@ class GRPOTrainer:
                 logger.info("step end at  {}".format(time.strftime("%H:%M:%S", time.localtime(step_end_time))))
                 step_time = step_end_time - step_begin_time
                 self.total_time += step_time
-                logger.info("step processed tokens {}, tokens/s/p {}".format(self.experience_maker.step_total_tokens,
-                                                                             self.experience_maker.step_total_tokens / step_time / self.world_group_size))
+                logger.info("step processed tokens {}, tokens/s/p {}".format(
+                    self.experience_maker.step_total_tokens,
+                    self.experience_maker.step_total_tokens / step_time / self.world_group_size))
                 logger.info("total processed tokens {}, total tokens/s/p {}".format(
                     self.experience_maker.total_processed_tokens,
                     self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size))

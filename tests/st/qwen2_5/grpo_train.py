@@ -14,10 +14,19 @@
 """ GRPO Train Test Case """
 
 import argparse
+from mindspore import Tensor
+no_patch_tensor_shape = Tensor.shape
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
 def main(input_args):
-    trainer = GRPOTrainer(input_args)
+    if input_args.vllm_test:
+        from typing import Iterable, Set, Tuple
+        def qwen2_load_weights(self, weights: Iterable[Tuple[str, Tensor]]) -> Set[str]:
+            return None
+        from mindrlhf.third_party.vllm import Qwen2ForCausalLM
+        # skip load ckpt in ci
+        Qwen2ForCausalLM.load_weights = qwen2_load_weights
+    trainer = GRPOTrainer(no_patch_tensor_shape=no_patch_tensor_shape, args=input_args)
     trainer.run_grpo_train()
 
 if __name__ == '__main__':
@@ -38,5 +47,6 @@ if __name__ == '__main__':
     parser.add_argument("--verifier_weight", type=str, default=None, help="verifier weights")
     parser.add_argument("--tensorboard", type=str, default=None, help="enable tensorboard")
     parser.add_argument("--save_checkpoint_dir", type=str, default=None, help="save model path")
+    parser.add_argument("--vllm_test", action="store_true", default=False, help="vllm test")
     args = parser.parse_args()
     main(args)

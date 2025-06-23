@@ -22,7 +22,7 @@ Qwen2ForCausalLM.sample = sample
 
 package_version = version("vllm")
 
-if package_version.startswith("0.8.3"):
+if package_version.startswith("0.8"):
     from vllm import LLM
 else:
     raise ValueError(f"Not support vllm version: {package_version}")

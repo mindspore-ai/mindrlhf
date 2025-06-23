@@ -4,7 +4,7 @@ model:
   model_config:
     type: LlamaConfig
     batch_size: 1
-    seq_length: 8192
+    seq_length: 32768
     hidden_size: 3584
     num_layers: 2
     num_heads: 28
