@@ -5,4 +5,4 @@ vllm-mindspore:
 vllm:
   'https://repo.mindspore.cn/mirrors/vllm/version/202505/20250514/v0.8.4.dev0_newest/'
 mindspore:
-  'https://repo.mindspore.cn/mindspore/mindspore/version/202506/20250607/master_20250607160038_7fc76c2f1f1207e6f11e326fcc1d85c46dbe310f_newest/'
+  'https://repo.mindspore.cn/mindspore/mindspore/version/202505/20250520/master_20250520160013_d8fa86a2f2277f052eff616d3d5bd7cad169f894_newest/'
