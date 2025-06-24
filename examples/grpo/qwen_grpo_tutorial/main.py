@@ -14,12 +14,14 @@
 """ main """
 
 import argparse
+from mindspore import Tensor
+no_patch_tensor_shape = Tensor.shape
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
 
 def main(input_args):
     """main process"""
-    trainer = GRPOTrainer(input_args)
+    trainer = GRPOTrainer(no_patch_tensor_shape=no_patch_tensor_shape, args=input_args)
     trainer.run_grpo_train()
 
 
@@ -30,8 +32,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_file", type=str, default=None, help="dataset file for training")
     parser.add_argument("--resume_training", action="store_true", default=False, help="resume training")
     parser.add_argument("--tokenizer_dir", type=str, default=None, help="the directory contain hf tokenizer files")
-    parser.add_argument("--load_ckpt_format", type=str, default='ms_safetensors',
-                        help="ckpt, ms_safetensors or hf_safetensors")
     parser.add_argument("--actor_checkpoint_path", type=str, default=None, help="the actor model file path for loading")
     parser.add_argument(
         "--ref_checkpoint_path", type=str, default=None, help="the reference model file path for loading"

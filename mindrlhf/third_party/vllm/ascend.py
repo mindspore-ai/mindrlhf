@@ -63,8 +63,3 @@ def check_and_update_config(vllm_config: VllmConfig) -> None:
     cache_config = vllm_config.cache_config
     if cache_config and cache_config.block_size is None:
         cache_config.block_size = 16
-
-
-vllm.config.current_platform.check_and_update_config = check_and_update_config
-vllm.platforms.current_platform.check_and_update_config = check_and_update_config
-vllm.utils.current_platform.check_and_update_config = check_and_update_config

@@ -16,6 +16,8 @@
 import os
 import time
 import math
+from glob import glob
+
 import mindspore as ms
 from mindspore import nn
 from mindspore import Tensor
@@ -42,7 +44,6 @@ from mindrlhf.utils.utils import (
     record_last_ckpt_to_json,
     get_checkpoint_name,
     ensure_total_ckpt_is_less_than_limit,
-    load_safetensors
 )
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
@@ -264,17 +265,10 @@ class TrainWorker(Worker):
     def load_checkpoint(self):
         """load_checkpoint"""
         logger.info(f"sft_ckpt_path_train:{self.sft_ckpt_path_train}")
-        if not self.sft_ckpt_path_train or not os.path.exists(self.sft_ckpt_path_train):
-            logger.warning(f"sft_ckpt_path_train does not exist, not loading ckpt.")
-            return
-        if self.sft_ckpt_path_train and self.args.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
+        if self.sft_ckpt_path_train and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
             self.model_on_device = True
             self.optimizer_on_device = True
-            strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
-            network = self.grpo_model_train.grpo_model_train.policy_model.model
-            prefix = "grpo_model_train.policy_model.model."
-            load_safetensors(self.sft_ckpt_path_train, self.args.load_ckpt_format, network,
-                             self.grpo_model_train.grpo_model_train.policy_model, prefix, strategy_path)
+            self._load_checkpoint_safetensors()
             return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel}, {load_ckpt_func}")
@@ -585,3 +579,25 @@ class TrainWorker(Worker):
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
         new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
+
+    def _load_checkpoint_safetensors(self):
+        """load safetensors checkpoint"""
+        network = self.grpo_model_train.grpo_model_train.policy_model.model
+        prefix = "grpo_model_train.policy_model.model."
+        try:
+            load_checkpoint_files = glob(os.path.join(self.sft_ckpt_path_train, f"*.safetensors"))
+            load_checkpoint_files.sort()
+            name_map = network.obtain_name_map(load_checkpoint_files)
+            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
+        except Exception as e:
+            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
+
+        # TODO: save strategy
+        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
+        ms.load_distributed_checkpoint(
+            network=self.grpo_model_train.grpo_model_train.policy_model,
+            predict_strategy=strategy_path,
+            unified_safetensors_dir=self.sft_ckpt_path_train,
+            format="safetensors",
+            name_map=name_map,
+        )
