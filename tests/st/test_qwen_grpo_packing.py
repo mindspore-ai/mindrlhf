@@ -19,6 +19,8 @@ from unittest import mock
 
 import mindspore as ms
 import numpy as np
+from mindspore import Tensor
+no_patch_tensor_shape = Tensor.shape
 import pytest
 
 WORKDIR = os.path.dirname(os.path.abspath(__file__))
@@ -160,7 +162,7 @@ class TestGRPOTrainer:
         mock_get_dp_rank.return_value = 0
         mock_train_get_rank.return_value = 0
         mock_train_grpo_model.return_value = ms.nn.Cell()
-        grpo_trainer = GRPOTrainer(args)
+        grpo_trainer = GRPOTrainer(no_patch_tensor_shape=no_patch_tensor_shape, args=args)
         grpo_trainer.grpo_config.rl_config.save_prompt_completions_data = False
         grpo_trainer.grpo_config.rl_config.pack_num = self.pack_num
         grpo_trainer.grpo_config.rl_config.seq_length = self.seq_length
