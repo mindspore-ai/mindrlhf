@@ -65,7 +65,7 @@ rl_config:
 actor_config:
   load: "/path/"
   save: "/tmp/"
-  model_config: "./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml"  # need to be set
+  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml"  # need to be set
   enable_alltoall: False
   offset: 0
   use_eod_attn_mask_compression: True
@@ -100,7 +100,7 @@ actor_config:
 
 # reference model config
 ref_config:
-  model_config: "./model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml"  # need to be set
+  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml"  # need to be set
   load: "/path/"
   ref_model_batch_size: 2
   offset: 0
@@ -124,7 +124,7 @@ reward_config:
 
 # generate config
 generate_config:
-  model_config: "./model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml"  # need to be set
+  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml"  # need to be set
   load: "/path/"
   infer_model_batch_size: 2
 

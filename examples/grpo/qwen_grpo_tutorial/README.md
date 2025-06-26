@@ -102,7 +102,7 @@ dataset_type:     数据集类型
 
 ### 训练/推理模型配置
 
-训练模型的配置文件默认为`model_configs/qwen_grpo/finetune_qwen2_5_7b.yaml`，其中用户可以手动配置训练模型的并行策略：
+训练模型的配置文件默认为`model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml`，其中用户可以手动配置训练模型的并行策略：
 
 ```shell
 parallel_config:
@@ -121,7 +121,7 @@ micro_batch_num:              流水线并行中的micro batch number
 micro_batch_interleave_num:   当model_parallel>1时,可以设置为2以加速训练
 ```
 
-推理模型的配置文件默认为`model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml`，其中用户可以手动配置推理模型的并行策略：
+推理模型的配置文件默认为`model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml`，其中用户可以手动配置推理模型的并行策略：
 
 ```shell
 parallel_config:
@@ -272,7 +272,7 @@ https://gitee.com/mindspore/vllm-mindspore/wikis/Getting%20Started/Installation
 ```shell
 export vLLM_MODEL_BACKEND=MindFormers
 export vLLM_MODEL_MEMORY_USE_GB=40
-export MINDFORMERS_MODEL_CONFIG=/path/to/mindrlhf/model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml
+export MINDFORMERS_MODEL_CONFIG=/path/to/mindrlhf/model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml
 export HCCL_EXEC_TIMEOUT=7200
 export MS_JIT_MODULES=vllm_mindspore,research
 ```
