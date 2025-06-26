@@ -50,6 +50,7 @@ class OldPolicyWorker(Worker):
             logger.info("init OldPolicyWorker")
             self.args = args
             old_policy_config = MindFormerConfig(sft_path_train)
+            old_policy_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
             old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
             old_policy_config.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
             logger.info(f"old_policy parallel_config:{old_policy_config.parallel_config}")
@@ -57,7 +58,7 @@ class OldPolicyWorker(Worker):
             logger.info(f"old_policy_config recompute_config:{old_policy_config.recompute_config}")
             old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
             old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
-
+            old_policy_config.model.model_config.offset = grpo_config.actor_config.offset
             if args.custom_model_name in ["qwen", "llama"]:
                 old_policy_config.model.model_config.use_eod_attn_mask_compression = (
                     grpo_config.actor_config.use_eod_attn_mask_compression

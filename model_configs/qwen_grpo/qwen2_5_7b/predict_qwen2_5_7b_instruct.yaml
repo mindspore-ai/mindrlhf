@@ -4,7 +4,6 @@ model:
   model_config:
     type: LlamaConfig
     batch_size: 1
-    seq_length: 32768
     hidden_size: 3584
     num_layers: 28
     num_heads: 28
@@ -22,7 +21,7 @@ model:
     compute_dtype: "bfloat16"
     layernorm_compute_type: "float32"
     softmax_compute_type: "float16"
-    rotary_dtype: "bfloat16"
+    rotary_dtype: "float32"
     param_init_type: "float32"
     use_past: True
     use_flash_attention: True

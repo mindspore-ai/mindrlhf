@@ -55,6 +55,7 @@ class RecomputeConfig:
 
     recompute: bool = False
     select_recompute: bool = False
+    select_comm_recompute: bool = False
     parallel_optimizer_comm_recompute: bool = False
     mp_comm_recompute: bool = True
     recompute_slice_activation: bool = False
@@ -62,6 +63,7 @@ class RecomputeConfig:
     param_dict = {
         "recompute": recompute,
         "select_recompute": select_recompute,
+        "select_comm_recompute": select_comm_recompute,
         "parallel_optimizer_comm_recompute": parallel_optimizer_comm_recompute,
         "mp_comm_recompute": mp_comm_recompute,
         "recompute_slice_activation": recompute_slice_activation,
@@ -238,7 +240,6 @@ class RLConfig:
     save_data_file: str = "/tmp/"
 
     packing: bool = True
-    packing_sample_length: int = 2048
     pack_num: int = 1
 
     save_prompt_completions_data: bool = True
@@ -329,6 +330,8 @@ class GRPOConfig:
         self._set_config(data, "generate_config", "sampling_config", SamplingConfig)
         if "actor_config" in data and "parallel_config" in data["actor_config"]:
             self.actor_config.parallel_config.param_dict = data["actor_config"]["parallel_config"]
+        if "actor_config" in data and "recompute_config" in data["actor_config"]:
+            self.actor_config.recompute_config.param_dict = data["actor_config"]["recompute_config"]
         if "ref_config" in data and "parallel_config" in data["ref_config"]:
             self.ref_config.parallel_config.param_dict = data["ref_config"]["parallel_config"]
         if "generate_config" in data and "parallel_config" in data["generate_config"]:

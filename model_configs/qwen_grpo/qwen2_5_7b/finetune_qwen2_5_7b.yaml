@@ -4,7 +4,6 @@ model:
   model_config:
     type: LlamaConfig
     batch_size: 1 # add for increase predict
-    seq_length: 8192
     hidden_size: 3584
     num_layers: 28
     num_heads: 28
@@ -21,7 +20,7 @@ model:
     compute_dtype: "bfloat16"
     layernorm_compute_type: "float32"
     softmax_compute_type: "float16"
-    rotary_dtype: "float16"
+    rotary_dtype: "float32"
     param_init_type: "float32"
     use_past: False
     extend_method: "None" # support "None", "PI", "NTK"
