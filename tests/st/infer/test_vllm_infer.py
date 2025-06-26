@@ -21,7 +21,7 @@ import pytest
 infer_path = os.path.dirname(__file__)
 st_path = os.path.abspath(os.path.join(infer_path, "../"))
 mindrlhf_path = os.path.abspath(os.path.join(st_path, "../../"))
-model_config = os.path.join(mindrlhf_path, "model_configs/qwen_grpo/predict_qwen2_5_7b_instruct.yaml")
+model_config = os.path.join(mindrlhf_path, "model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml")
 grpo_config = os.path.join(mindrlhf_path, "examples/grpo/qwen_grpo_tutorial/grpo_config.yaml")
 qwen2_5_path = "/home/workspace/mindspore_dataset/weight/Qwen2.5-7B-Instruct"
 mindformers_path = os.path.join(st_path, "mindformers")
