@@ -34,7 +34,7 @@ from mindformers import logger
 from mindformers.models.build_tokenizer import build_tokenizer
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
-from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
+from mindrlhf.utils import transfer_from_str_to_bool, TimeConsumingCollector
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.configs.grpo_configs import VllmMode
@@ -182,8 +182,10 @@ class InferWorker(Worker):
         vllm_start_time = time.time()
         if package_version.startswith("0.8"):
             from mindrlhf.third_party.vllm.vllm_v_general import initialize_parallel_state
+
             initialize_parallel_state(
-                tensor_model_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel)
+                tensor_model_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel
+            )
             vllm_start_time = time.time()
             if self.load_ckpt_format not in  ["hf_safetensors", "ms_safetensors"]:
                 raise ValueError(f"For vllm {package_version}, "
@@ -191,21 +193,22 @@ class InferWorker(Worker):
             if self.grpo_config.generate_config.num_scheduler_steps > 1:
                 logger.warning(f"For VLLM V1, num_scheduler_steps > 1 is not supported, set it to 1.")
                 self.grpo_config.generate_config.num_scheduler_steps = 1
-            self.inference_engine = LLM(model=self.sft_ckpt_path_infer,  # path to hf model
-                                        tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
-                                        distributed_executor_backend="external_launcher",
-                                        dtype="bfloat16",
-                                        block_size=self.grpo_config.generate_config.block_size,
-                                        skip_tokenizer_init=False,
-                                        max_model_len=self.grpo_config.generate_config.max_model_len,
-                                        max_num_batched_tokens=self.grpo_config.generate_config.max_num_batched_tokens,
-                                        max_num_seqs=self.grpo_config.generate_config.max_num_seqs,
-                                        num_scheduler_steps=self.grpo_config.generate_config.num_scheduler_steps,
-                                        gpu_memory_utilization=self.grpo_config.generate_config.gpu_memory_utilization,
-                                        trust_remote_code=self.grpo_config.generate_config.trust_remote_code,
-                                        enable_prefix_caching=False,  # FIXME: not support prefix caching now.
-                                        seed=self.dp_rank_id,
-                                        )
+            self.inference_engine = LLM(
+                model=self.sft_ckpt_path_infer,  # path to hf model
+                tensor_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel,
+                distributed_executor_backend="external_launcher",
+                dtype="bfloat16",
+                block_size=self.grpo_config.generate_config.block_size,
+                skip_tokenizer_init=False,
+                max_model_len=self.grpo_config.generate_config.max_model_len,
+                max_num_batched_tokens=self.grpo_config.generate_config.max_num_batched_tokens,
+                max_num_seqs=self.grpo_config.generate_config.max_num_seqs,
+                num_scheduler_steps=self.grpo_config.generate_config.num_scheduler_steps,
+                gpu_memory_utilization=self.grpo_config.generate_config.gpu_memory_utilization,
+                trust_remote_code=self.grpo_config.generate_config.trust_remote_code,
+                enable_prefix_caching=False,  # FIXME: not support prefix caching now.
+                seed=self.dp_rank_id,
+            )
             logger.info(f"init LLM end, cost time: {time.time() - vllm_start_time}")
             model_runner = self.inference_engine.llm_engine.model_executor.driver_worker.worker.model_runner
             policy_model = model_runner.model.network
@@ -281,36 +284,33 @@ class InferWorker(Worker):
 
     def post_process_infer_outputs(self, results):
         """post_process_infer_outputs"""
-        start_time = time.time()
-        right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
-        max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
-        # allgather data
-        right_padding_responses_batch = self._allgather_data(
-            right_padding_responses,
-            self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=max_tokens,
-        )
-        responses_mask_batch = self._allgather_data(
-            responses_mask, self.sft_model_config_infer.parallel_config.data_parallel, padding_length=max_tokens
-        )
-        left_padding_prompts_batch = self._allgather_data(
-            left_padding_prompts,
-            self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
-        )
-        prompts_mask_batch = self._allgather_data(
-            prompts_mask,
-            self.sft_model_config_infer.parallel_config.data_parallel,
-            padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
-        )
-        right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
-        responses_mask = np.array(responses_mask_batch).astype(np.int32)
-        left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
-        prompts_mask = np.array(prompts_mask_batch).astype(np.int32)
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "post process infer outputs")
-
-        return right_padding_responses, responses_mask, left_padding_prompts, prompts_mask
+        with TimeConsumingCollector("post process infer outputs"):
+            right_padding_responses, responses_mask, left_padding_prompts, prompts_mask = results
+            max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
+            # allgather data
+            right_padding_responses_batch = self._allgather_data(
+                right_padding_responses,
+                self.sft_model_config_infer.parallel_config.data_parallel,
+                padding_length=max_tokens,
+            )
+            responses_mask_batch = self._allgather_data(
+                responses_mask, self.sft_model_config_infer.parallel_config.data_parallel, padding_length=max_tokens
+            )
+            left_padding_prompts_batch = self._allgather_data(
+                left_padding_prompts,
+                self.sft_model_config_infer.parallel_config.data_parallel,
+                padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
+            )
+            prompts_mask_batch = self._allgather_data(
+                prompts_mask,
+                self.sft_model_config_infer.parallel_config.data_parallel,
+                padding_length=self.grpo_config.rl_config.seq_length - max_tokens,
+            )
+            right_padding_responses = np.array(right_padding_responses_batch).astype(np.int32)
+            responses_mask = np.array(responses_mask_batch).astype(np.int32)
+            left_padding_prompts = np.array(left_padding_prompts_batch).astype(np.int32)
+            prompts_mask = np.array(prompts_mask_batch).astype(np.int32)
+            return right_padding_responses, responses_mask, left_padding_prompts, prompts_mask
 
     # For SPMD, developer could call 'post_process_infer_outputs' to process data.
     # For MPMD, data should be collected to driver process and dispatch to other ray actors.
@@ -378,14 +378,14 @@ class InferWorker(Worker):
         for i in range(num_sample):
             # 只包含response, 范围是从 "prompt结束位置" 到 "prompt结束位置+最大生成长度"
             if self.use_vllm == VllmMode.DEBUG or self.use_vllm == VllmMode.ORIGIN:
-                response = outputs[i][prompt_len[i]: prompt_len[i] + max_tokens]
+                response = outputs[i][prompt_len[i] : prompt_len[i] + max_tokens]
             else:
                 # vllm output中不包含prompt
                 response = outputs[i].outputs[0].token_ids
             right_padding_responses[i, : len(response)] = response
 
             # 整个batch的样本右对齐（左侧进行padding）
-            left_padding_prompts[i, max_prompt_length - prompt_len[i]:] = input_ids_list[i][: prompt_len[i]]
+            left_padding_prompts[i, max_prompt_length - prompt_len[i] :] = input_ids_list[i][: prompt_len[i]]
 
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != pad_token_id).astype(np.int32)
@@ -430,18 +430,16 @@ class InferWorker(Worker):
         if not self.on_device:
             return
         logger.info(f"before offload stf infer {ms.hal.memory_stats()}")
-        start_time = time.time()
-        skip_kv_cache = False
-        if self.use_vllm == VllmMode.VLLM:
-            self.inference_engine.free_cache_engine()
-            skip_kv_cache = True
-        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-            if skip_kv_cache and "paged_attention_mgr" in param.name:
-                continue
-            # pylint: disable=W0212
-            param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload stf infer")
+        with TimeConsumingCollector("offload stf infer"):
+            skip_kv_cache = False
+            if self.use_vllm == VllmMode.VLLM:
+                self.inference_engine.free_cache_engine()
+                skip_kv_cache = True
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                if skip_kv_cache and "paged_attention_mgr" in param.name:
+                    continue
+                # pylint: disable=W0212
+                param._offload()
         logger.info(f"after offload stf infer {ms.hal.memory_stats()}")
         self.on_device = False
 
@@ -450,18 +448,16 @@ class InferWorker(Worker):
         if self.on_device:
             return
         logger.info(f"before load stf infer {ms.hal.memory_stats()}")
-        start_time = time.time()
-        skip_kv_cache = False
-        if self.use_vllm == VllmMode.VLLM:
-            self._init_cache_engine()
-            skip_kv_cache = True
-        for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
-            if skip_kv_cache and "paged_attention_mgr" in param.name:
-                continue
-            # pylint: disable=W0212
-            param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load stf infer")
+        with TimeConsumingCollector("load stf infer"):
+            skip_kv_cache = False
+            if self.use_vllm == VllmMode.VLLM:
+                self._init_cache_engine()
+                skip_kv_cache = True
+            for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
+                if skip_kv_cache and "paged_attention_mgr" in param.name:
+                    continue
+                # pylint: disable=W0212
+                param._load()
         logger.info(f"after load stf infer {ms.hal.memory_stats()}")
         self.on_device = True
 

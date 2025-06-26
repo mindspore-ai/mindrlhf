@@ -22,14 +22,16 @@ import hashlib
 import copy
 import stat
 from glob import glob
+from typing import Dict
+
 import yaml
 from safetensors import safe_open
 import numpy as np
 import mindspore.nn as nn
+import mindspore as ms
 from mindspore.ops import operations as P
 from mindspore.ops import composite as C
 from mindspore.ops import functional as F
-import mindspore as ms
 from mindspore.common.tensor import Tensor
 from mindspore.nn.learning_rate_schedule import LearningRateSchedule, PolynomialDecayLR, WarmUpLR, CosineDecayLR
 from mindspore.parallel._auto_parallel_context import auto_parallel_context
@@ -64,7 +66,6 @@ __all__ = [
     "ckpt_transfer_for_generate",
     "yaml_to_dataclass",
     "set_perf_stats",
-    "print_perf_stat",
     "_get_pipeline_group",
     "convert_index_json_total",
     "save_prompt_completions_data",
@@ -74,8 +75,8 @@ __all__ = [
     "ensure_total_ckpt_is_less_than_limit",
     "load_param_to_net",
     "record_last_ckpt_to_json",
+    "TimeConsumingCollector",
 ]
-
 
 PERF_STATS = False
 
@@ -494,12 +495,6 @@ def set_perf_stats(grpo_config: GRPOConfig):
         PERF_STATS = True
 
 
-def print_perf_stat(start_time, end_time, perf_object_str):
-    global PERF_STATS
-    if PERF_STATS:
-        logger.info(f"Performance Statistics: {perf_object_str} costs {end_time - start_time}s")
-
-
 def convert_index_json_total(load_checkpoint, converted_dir, convert_map_dict_lst, is_qkv_concat):
     """convert mapping file if exists"""
     index_path = os.path.join(load_checkpoint, "model.safetensors.index.json")
@@ -705,3 +700,29 @@ def enable_pynative_async(func):
         return result
 
     return wrapper
+
+
+class TimeConsumingCollector:
+    """
+    Collect code line performance context mgr.
+
+    Args:
+        func_name (str): To be collected function or stage name.
+        timer (Dict[str, list]): Timer to collect multi-steps statistics.
+    """
+
+    def __init__(self, func_name, timer: Dict[str, list] = None):
+        self.func_name = func_name
+        self.start_timestamp = None
+        self.timer = timer
+        self.duration = 0
+
+    def __enter__(self):
+        self.start_timestamp = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        global PERF_STATS
+        self.duration = time.perf_counter() - self.start_timestamp
+        if PERF_STATS:
+            logger.info(f"Performance Statistics: {self.func_name}: duration={self.duration}")

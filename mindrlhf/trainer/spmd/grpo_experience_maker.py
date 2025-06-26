@@ -31,7 +31,7 @@ from mindformers import logger
 
 # mindrlhf
 from mindrlhf.utils import (
-    print_perf_stat,
+    TimeConsumingCollector,
     save_prompt_completions_data,
     MetricData,
     get_dp_rank,
@@ -121,13 +121,8 @@ class GRPOExperienceMaker:
 
     def make_experience(self, num_rollouts: int = 1, num_generations: int = 16):
         """make experience"""
-        ep_begin_time = time.time()
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
-        logger.info(
-            "Make experience begin at {} \n------------------------------- ".format(
-                time.strftime("%H:%M:%S", time.localtime(ep_begin_time))
-            )
-        )
+        logger.info("Make experience start")
         logger.info(f"Generate {num_generations} times")
 
         metrics = {}
@@ -155,38 +150,24 @@ class GRPOExperienceMaker:
 
         self.infer.load()
         # Step 1: generate responses and masks.
-        start_time = time.time()
-        logger.info(
-            "generation start at {}-------------------------------".format(
-                time.strftime("%H:%M:%S", time.localtime(start_time))
-            )
-        )
-
-        max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
-        if self.infer.use_vllm == VllmMode.ORIGIN:
-            results = []
-            input_bs = n_questions // self.infer_dp
-            for idx in range(num_rollouts * num_generations):
-                result = self.infer.generate(
-                    input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], max_tokens=max_tokens
-                )
-                for res_idx in range(len(result)):
-                    if len(results) == len(result):
-                        results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
-                    else:
-                        results.append(result[res_idx])
-        else:
-
-            results = self.infer.generate(input_ids_numpy, max_tokens)
-
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "infer generate")
-
-        logger.info(
-            "generation end at {}-------------------------------".format(
-                time.strftime("%H:%M:%S", time.localtime(start_time))
-            )
-        )
+        logger.info("generation start")
+        with TimeConsumingCollector("infer generate"):
+            max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
+            if self.infer.use_vllm == VllmMode.ORIGIN:
+                results = []
+                input_bs = n_questions // self.infer_dp
+                for idx in range(num_rollouts * num_generations):
+                    result = self.infer.generate(
+                        input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], max_tokens=max_tokens
+                    )
+                    for res_idx in range(len(result)):
+                        if len(results) == len(result):
+                            results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
+                        else:
+                            results.append(result[res_idx])
+            else:
+                results = self.infer.generate(input_ids_numpy, max_tokens)
+        logger.info("generation end")
 
         self.infer.offload()
         logger.info("model_infer offload")
@@ -204,84 +185,72 @@ class GRPOExperienceMaker:
         )
         all_prompt_completion_ids = np.concatenate((left_padding_prompts, right_padding_responses), axis=1)
         # Step 3: calculate reward.
-        start_time = time.time()
-        logger.info(
-            "calculate reward start at {}-------------------------------".format(
-                time.strftime("%H:%M:%S", time.localtime(start_time))
+        logger.info("calculate reward start")
+        with TimeConsumingCollector("calculate reward"):
+            logger.info(f"left_padding_prompts is {type(left_padding_prompts)}")
+            no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=pad_token_id)
+            no_padding_responses = self._remove_right_padding(right_padding_responses, padding_token=pad_token_id)
+
+            prompts_length_list = np.array([len(item) for item in no_padding_prompts])
+            responses_length_list = np.array([len(item) for item in no_padding_responses])
+            mean_prompts_length = prompts_length_list.mean()
+            mean_responses_length = responses_length_list.mean()
+            total_size = n_questions * num_generations * num_rollouts
+            self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
+            self.total_processed_tokens += self.step_total_tokens
+            logger.info(
+                f"token_count mean_prompt_len: {mean_prompts_length}, "
+                f"max_prompt_len: {prompts_length_list.max()},"
+                f" min_prompt_len: {prompts_length_list.min()}"
             )
-        )
-
-        logger.info(f"left_padding_prompts is {type(left_padding_prompts)}")
-        no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=pad_token_id)
-        no_padding_responses = self._remove_right_padding(right_padding_responses, padding_token=pad_token_id)
-
-        prompts_length_list = np.array([len(item) for item in no_padding_prompts])
-        responses_length_list = np.array([len(item) for item in no_padding_responses])
-        mean_prompts_length = prompts_length_list.mean()
-        mean_responses_length = responses_length_list.mean()
-        total_size = n_questions * num_generations * num_rollouts
-        self.step_total_tokens = (mean_prompts_length + mean_responses_length) * total_size
-        self.total_processed_tokens += self.step_total_tokens
-        logger.info(
-            f"token_count mean_prompt_len: {mean_prompts_length}, "
-            f"max_prompt_len: {prompts_length_list.max()},"
-            f" min_prompt_len: {prompts_length_list.min()}"
-        )
-        logger.info(
-            f"token_count mean_response_len: {mean_responses_length}, "
-            f"max_response_len: {responses_length_list.max()}, "
-            f"min_response_len: {responses_length_list.min()}"
-        )
-
-        clip_count = np.count_nonzero(responses_length_list == max_tokens)
-        response_clip_ratio = clip_count / len(responses_length_list)
-        metrics[MetricData.RESPONSE_LENGTH_MEAN.value] = mean_responses_length
-        metrics[MetricData.RESPONSE_LENGTH_MAX.value] = responses_length_list.max()
-        metrics[MetricData.RESPONSE_LENGTH_MIN.value] = responses_length_list.min()
-        metrics[MetricData.RESPONSE_LENGTH_CLIP_RATIO.value] = response_clip_ratio
-
-        metrics[MetricData.PROMPT_LENGTH_MEAN.value] = mean_prompts_length
-        metrics[MetricData.PROMPT_LENGTH_MAX.value] = prompts_length_list.max()
-        metrics[MetricData.PROMPT_LENGTH_MIN.value] = prompts_length_list.min()
-
-        prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
-        completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
-
-        logger.info(f"prompts: \n {prompts}")
-        logger.info(f"completions: \n {completions}")
-
-        all_elements_completion_len.extend([len(com) for com in completions])
-        completions_length = np.array([len(com) for com in completions])
-        mean_len = completions_length.mean()
-        logger.info(f"mean completions.length: \n {mean_len}")
-
-        rewards_per_func = np.zeros(
-            (n_questions * num_generations * num_rollouts, len(self.verifier_function)), dtype=np.float32
-        )
-        answer_parsed_lst = []
-        logger.info(f"n_questions:{n_questions}")
-        logger.info(f"num_generations:{num_generations}")
-        logger.info(f"num_rollouts:{num_rollouts}")
-        for i, reward_func in enumerate(self.verifier_function):
-            # Repeat all input columns (but "prompt" and "completion") to match the number of generations
-            if reward_func is accuracy_reward or reward_func is qwen_accuracy_reward:
-                output_reward_func, answer_parsed_lst = reward_func(
-                    prompts=prompts, completions=completions, **reward_kwargs
-                )
-            else:
-                output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
-            rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
-        rewards = (rewards_per_func * self.verifier_weight[np.newaxis, :]).sum(axis=1)
-        logger.info(f"precision rewards are {rewards}")
-        logger.info(f"precision parse answer are {answer_parsed_lst}")
-
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "calculate reward")
-        logger.info(
-            "calculate reward end at {}-------------------------------".format(
-                time.strftime("%H:%M:%S", time.localtime(end_time))
+            logger.info(
+                f"token_count mean_response_len: {mean_responses_length}, "
+                f"max_response_len: {responses_length_list.max()}, "
+                f"min_response_len: {responses_length_list.min()}"
             )
-        )
+
+            clip_count = np.count_nonzero(responses_length_list == max_tokens)
+            response_clip_ratio = clip_count / len(responses_length_list)
+            metrics[MetricData.RESPONSE_LENGTH_MEAN.value] = mean_responses_length
+            metrics[MetricData.RESPONSE_LENGTH_MAX.value] = responses_length_list.max()
+            metrics[MetricData.RESPONSE_LENGTH_MIN.value] = responses_length_list.min()
+            metrics[MetricData.RESPONSE_LENGTH_CLIP_RATIO.value] = response_clip_ratio
+
+            metrics[MetricData.PROMPT_LENGTH_MEAN.value] = mean_prompts_length
+            metrics[MetricData.PROMPT_LENGTH_MAX.value] = prompts_length_list.max()
+            metrics[MetricData.PROMPT_LENGTH_MIN.value] = prompts_length_list.min()
+
+            prompts = self.tokenizer.decode(no_padding_prompts, skip_special_tokens=True)
+            completions = self.tokenizer.decode(no_padding_responses, skip_special_tokens=True)
+
+            logger.info(f"prompts: \n {prompts}")
+            logger.info(f"completions: \n {completions}")
+
+            all_elements_completion_len.extend([len(com) for com in completions])
+            completions_length = np.array([len(com) for com in completions])
+            mean_len = completions_length.mean()
+            logger.info(f"mean completions.length: \n {mean_len}")
+
+            rewards_per_func = np.zeros(
+                (n_questions * num_generations * num_rollouts, len(self.verifier_function)), dtype=np.float32
+            )
+            answer_parsed_lst = []
+            logger.info(f"n_questions:{n_questions}")
+            logger.info(f"num_generations:{num_generations}")
+            logger.info(f"num_rollouts:{num_rollouts}")
+            for i, reward_func in enumerate(self.verifier_function):
+                # Repeat all input columns (but "prompt" and "completion") to match the number of generations
+                if reward_func is accuracy_reward or reward_func is qwen_accuracy_reward:
+                    output_reward_func, answer_parsed_lst = reward_func(
+                        prompts=prompts, completions=completions, **reward_kwargs
+                    )
+                else:
+                    output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
+                rewards_per_func[:, i] = np.array(output_reward_func, dtype=np.float32)
+            rewards = (rewards_per_func * self.verifier_weight[np.newaxis, :]).sum(axis=1)
+            logger.info(f"precision rewards are {rewards}")
+            logger.info(f"precision parse answer are {answer_parsed_lst}")
+        logger.info("calculate reward end")
 
         all_rewards = np.array(rewards, dtype=np.float32)
         logger.info(f"loaded_all_rewards: {all_rewards}")
@@ -451,14 +420,7 @@ class GRPOExperienceMaker:
         if self.tensor_writer:
             add_metrics_to_tensorboard(self.tensor_writer, metrics, self.make_exp_step)
             logger.info(f"Add metrics of step {self.make_exp_step} to tensorboard")
-
-        end_time = time.time()
-        print_perf_stat(ep_begin_time, end_time, "Make experience")
-        logger.info(
-            "Make experience, end at {} ------------------------------- ".format(
-                time.strftime("%H:%M:%S", time.localtime(end_time))
-            )
-        )
+        logger.info("Make experience end")
         save_data_file = self.grpo_config.rl_config.save_data_file
         if save_data_file:
             if get_rank() % 8 == 0:
@@ -667,53 +629,37 @@ class GRPOExperienceMaker:
         logger.info(f"old_policy_bs batch_size: {batch_size}")
         step_num = len(all_packed) // batch_size
         logger.info(f"old policy model total steps: {step_num}")
-        all_old_policy_start_time = time.time()
-        for idx in range(step_num):
-            prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
-                all_packed, batch_size=batch_size, idx=idx
-            )
-
-            prompt_completion_ids = np.pad(
-                prompt_completion_ids,
-                ((0, 0), (0, 1)),
-                "constant",
-                constant_values=self.grpo_config.generate_config.sampling_config.pad_token_id,
-            )
-            samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
-            input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
-            actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
-
-            # Step 2: run old policy model.
-            start_time = time.time()
-            logger.info(
-                "old policy model step {} start at {}-------------------------------".format(
-                    idx, time.strftime("%H:%M:%S", time.localtime(start_time))
+        with TimeConsumingCollector(f"old_policy model all steps {step_num}"):
+            for idx in range(step_num):
+                prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                    all_packed, batch_size=batch_size, idx=idx
                 )
-            )
 
-            old_per_token_logps = self.old_policy.compute_old_log_prob(
-                input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length
-            )
-            old_per_token_logps = old_per_token_logps.asnumpy().astype(np.float32)
-
-            end_time = time.time()
-            print_perf_stat(start_time, end_time, f"old policy model step {idx}")
-            logger.info(
-                "old policy model step {} end at {}-------------------------------".format(
-                    idx, time.strftime("%H:%M:%S", time.localtime(end_time))
+                prompt_completion_ids = np.pad(
+                    prompt_completion_ids,
+                    ((0, 0), (0, 1)),
+                    "constant",
+                    constant_values=self.grpo_config.generate_config.sampling_config.pad_token_id,
                 )
-            )
+                samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
+                input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
+                actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
 
-            start_index = idx * batch_size
-            end_index = (idx + 1) * batch_size
-            all_old_per_token_logps[start_index:end_index, :] = old_per_token_logps
+                # Step 2: run old policy model.
+                logger.info("old policy model step {} start".format(idx))
+                with TimeConsumingCollector(f"old policy model step {idx}"):
+                    old_per_token_logps = self.old_policy.compute_old_log_prob(
+                        input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length
+                    )
+                    old_per_token_logps = old_per_token_logps.asnumpy().astype(np.float32)
+                logger.info("old policy model step {} end".format(idx))
 
-        all_old_policy_end_time = time.time()
-        print_perf_stat(all_old_policy_start_time, all_old_policy_end_time, f"old_policy model all steps {step_num}")
+                start_index = idx * batch_size
+                end_index = (idx + 1) * batch_size
+                all_old_per_token_logps[start_index:end_index, :] = old_per_token_logps
 
         self.old_policy.offload()
         logger.info("old_policy offload")
-
         return all_old_per_token_logps
 
     def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages, pack_num=1):

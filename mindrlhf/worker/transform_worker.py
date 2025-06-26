@@ -26,7 +26,7 @@ from mindformers import logger
 # mindrlhf
 from mindrlhf.worker.worker import Worker
 from mindrlhf.configs.grpo_configs import VllmMode
-from mindrlhf.utils import TransformParametersD2D, TransformParametersD2DForDSv3, print_perf_stat
+from mindrlhf.utils import TransformParametersD2D, TransformParametersD2DForDSv3, TimeConsumingCollector
 from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
@@ -165,69 +165,87 @@ class TransformWorker(Worker):
         ref_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
         old_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
 
-        start_time = time.time()
-        if get_rank() == 0:
-            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "train_policy_strategy"), src_merged_stra)
-            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra)
-            ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
-            if grpo_config.rl_config.num_iterations > 1:
+        with TimeConsumingCollector("TransformWorker init"):
+            if get_rank() == 0:
                 ms.merge_pipeline_strategys(
-                    os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
+                    os.path.join(self.save_strategy_dir, "train_policy_strategy"), src_merged_stra
                 )
-        else:
-            print("Waiting for main worker to merge strategies.")
-            time.sleep(10)
-        ms.mint.distributed.barrier()
-        model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""
-        transform_args = {}
-        reshard_mode = grpo_config.rl_config.reshard_mode
-        if model_type == "deepseekv3":
-            transform_args = {
-                "n_head": sft_model_config_train.num_heads,
-                "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
-                "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim,
-                "tok_embedding_shape": (129280, 7168)
-            }
-        if grpo_config.generate_config.use_vllm == VllmMode.ORIGIN:
-            if model_type == "deepseekv3":
-                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
-                    sft_train_model, sft_infer_model, transform_args, src_merged_stra, dst_merged_stra, match_func_dkv3,
-                    reshard_mode
+                ms.merge_pipeline_strategys(
+                    os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra
                 )
+                ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
+                if grpo_config.rl_config.num_iterations > 1:
+                    ms.merge_pipeline_strategys(
+                        os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
+                    )
             else:
-                self.reshard_param_policy2infer = TransformParametersD2D(
-                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func, reshard_mode
-                )
-        else:
+                print("Waiting for main worker to merge strategies.")
+                time.sleep(10)
+            ms.mint.distributed.barrier()
+            model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""
+            transform_args = {}
+            reshard_mode = grpo_config.rl_config.reshard_mode
             if model_type == "deepseekv3":
-                self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
-                    sft_train_model,
-                    sft_infer_model,
-                    transform_args,
-                    src_merged_stra,
-                    dst_merged_stra,
-                    match_func_dkv3_vllm,
-                    reshard_mode
-                )
+                transform_args = {
+                    "n_head": sft_model_config_train.num_heads,
+                    "qk_nope_head_dim": sft_model_config_train.qk_nope_head_dim,
+                    "qk_rope_head_dim": sft_model_config_train.qk_rope_head_dim,
+                    "tok_embedding_shape": (129280, 7168),
+                }
+            if grpo_config.generate_config.use_vllm == VllmMode.ORIGIN:
+                if model_type == "deepseekv3":
+                    self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
+                        sft_train_model,
+                        sft_infer_model,
+                        transform_args,
+                        src_merged_stra,
+                        dst_merged_stra,
+                        match_func_dkv3,
+                        reshard_mode,
+                    )
+                else:
+                    self.reshard_param_policy2infer = TransformParametersD2D(
+                        sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func, reshard_mode
+                    )
             else:
-                self.reshard_param_policy2infer = TransformParametersD2D(
-                    sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func_vllm, reshard_mode
-                )
-        ms.communication.comm_func.barrier()
-
-        self.reshard_param_policy2ref = TransformParametersD2D(
-            sft_train_model, ref_model, src_merged_stra, ref_merged_stra, match_func=match_func_policy2ref,
-            reshard_mode=reshard_mode
-        )
-        if grpo_config.rl_config.num_iterations > 1:
-            self.old_policy_param_policy2old = TransformParametersD2D(
-                sft_train_model, old_policy_model, src_merged_stra, old_merged_stra, match_func=match_func_policy2ref,
-                reshard_mode=reshard_mode
+                if model_type == "deepseekv3":
+                    self.reshard_param_policy2infer = TransformParametersD2DForDSv3(
+                        sft_train_model,
+                        sft_infer_model,
+                        transform_args,
+                        src_merged_stra,
+                        dst_merged_stra,
+                        match_func_dkv3_vllm,
+                        reshard_mode,
+                    )
+                else:
+                    self.reshard_param_policy2infer = TransformParametersD2D(
+                        sft_train_model,
+                        sft_infer_model,
+                        src_merged_stra,
+                        dst_merged_stra,
+                        match_func_vllm,
+                        reshard_mode,
+                    )
+            ms.communication.comm_func.barrier()
+            self.reshard_param_policy2ref = TransformParametersD2D(
+                sft_train_model,
+                ref_model,
+                src_merged_stra,
+                ref_merged_stra,
+                match_func=match_func_policy2ref,
+                reshard_mode=reshard_mode,
             )
-
-        ms.communication.comm_func.barrier()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "TransformWorker init")
+            if grpo_config.rl_config.num_iterations > 1:
+                self.old_policy_param_policy2old = TransformParametersD2D(
+                    sft_train_model,
+                    old_policy_model,
+                    src_merged_stra,
+                    old_merged_stra,
+                    match_func=match_func_policy2ref,
+                    reshard_mode=reshard_mode,
+                )
+            ms.communication.comm_func.barrier()
 
     def reshard_params(self, step_num, input_on_device_flag_dict=None):
         """
@@ -244,11 +262,9 @@ class TransformWorker(Worker):
         policy2old_flag = input_on_device_flag_dict.get("policy2old")
         if policy2infer_flag is None or policy2ref_flag is None or policy2old_flag is None:
             raise ValueError("Key in input_on_device_flag_dict must be policy2infer, policy2ref or policy2old")
-        start_time = time.time()
-        self.reshard_param_policy2infer.transform(policy2infer_flag)
-        if self.grpo_config.rl_config.num_iterations > 1:
-            self.old_policy_param_policy2old.transform(policy2old_flag)
-        if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
-            self.reshard_param_policy2ref.transform(policy2ref_flag)
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "reshard params")
+        with TimeConsumingCollector("reshard params"):
+            self.reshard_param_policy2infer.transform(policy2infer_flag)
+            if self.grpo_config.rl_config.num_iterations > 1:
+                self.old_policy_param_policy2old.transform(policy2old_flag)
+            if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
+                self.reshard_param_policy2ref.transform(policy2ref_flag)
