@@ -231,7 +231,7 @@ class RLConfig:
     sink_size: int = 2
     seq_length: int = 4096
     use_parallel: bool = True
-    load_ckpt_format: str = "safetensors"
+    load_ckpt_format: str = "hf_safetensors"
     parallel_mode: str = "semi_auto_parallel"
     enable_compile_cache: bool = False
     save_strategy_dir: str = "./strategy/"

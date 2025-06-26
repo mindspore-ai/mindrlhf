@@ -15,7 +15,6 @@
 
 import time
 import os
-from glob import glob
 import numpy as np
 
 import mindspore as ms
@@ -38,6 +37,7 @@ from mindrlhf.utils.utils import (
     record_last_ckpt_to_json,
     get_checkpoint_name,
     ensure_total_ckpt_is_less_than_limit,
+    load_safetensors
 )
 
 
@@ -51,6 +51,7 @@ class RefWorker(Worker):
         logger.info("init RefWorker")
         self.args = args
         self.use_parallel = grpo_config.rl_config.use_parallel
+        self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
         ref_config = MindFormerConfig(sft_path_ref)
         ref_config.use_parallel = self.use_parallel
         ref_config.parallel_config = MindFormerConfig(**grpo_config.ref_config.parallel_config.param_dict)
@@ -236,9 +237,18 @@ class RefWorker(Worker):
     def load_checkpoint(self):
         """load_checkpoint"""
         logger.info(f"ref_ckpt_path:{self.ref_ckpt_path}")
-        if self.ref_ckpt_path and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
+        if not self.ref_ckpt_path:
+            return
+
+        if not os.path.exists(self.ref_ckpt_path):
+            raise ValueError(f"old policy model checkpoint path: {self.ref_ckpt_path} not exists")
+
+        if self.ref_ckpt_path and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
-            self._load_checkpoint_safetensors()
+            strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
+            prefix = "model."
+            load_safetensors(self.ref_ckpt_path, self.load_ckpt_format, self.ref_model.model,
+                             self.ref_model, prefix, strategy_path)
             return
         load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")
@@ -261,26 +271,3 @@ class RefWorker(Worker):
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
         new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
-
-    def _load_checkpoint_safetensors(self):
-        """load safetensors checkpoint"""
-        network = self.ref_model.model
-        prefix = "model."
-        name_map = None
-        try:
-            load_checkpoint_files = glob(os.path.join(self.ref_ckpt_path, f"*.safetensors"))
-            load_checkpoint_files.sort()
-            name_map = network.obtain_name_map(load_checkpoint_files)
-            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
-        except Exception as e:
-            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
-
-        # TODO: save strategy
-        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
-        ms.load_distributed_checkpoint(
-            network=self.ref_model,
-            predict_strategy=strategy_path,
-            unified_safetensors_dir=self.ref_ckpt_path,
-            format="safetensors",
-            name_map=name_map,
-        )

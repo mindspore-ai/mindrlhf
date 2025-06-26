@@ -16,7 +16,6 @@
 # python
 import time
 import os
-from glob import glob
 import numpy as np
 
 import mindspore as ms
@@ -33,7 +32,7 @@ from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import print_perf_stat
 from mindrlhf.configs.grpo_configs import GRPOConfig
-
+from mindrlhf.utils.utils import load_safetensors
 
 class OldPolicyWorker(Worker):
     """
@@ -43,6 +42,7 @@ class OldPolicyWorker(Worker):
     def __init__(self, grpo_config: GRPOConfig, sft_path_train, args):
         super().__init__()
         self.grpo_config = grpo_config
+        self.load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
         if grpo_config.rl_config.num_iterations <= 1:
             self.on_device = False
             logger.info(f"num_iterations {grpo_config.rl_config.num_iterations} <= 1, OldPolicyWorker is not enalbled")
@@ -193,36 +193,23 @@ class OldPolicyWorker(Worker):
         logger.info(f"after load old policy model {ms.hal.memory_stats()}")
         self.on_device = True
 
-    def _load_checkpoint_safetensors(self):
-        """load safetensors checkpoint"""
-        network = self.old_policy_model.model
-        prefix = "model."
-        name_map = None
-        try:
-            load_checkpoint_files = glob(os.path.join(self.old_policy_ckpt_path, f"*.safetensors"))
-            load_checkpoint_files.sort()
-            name_map = network.obtain_name_map(load_checkpoint_files)
-            name_map = {f"{prefix}{key}": value for key, value in name_map.items()}
-        except Exception as e:
-            raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
-
-        # TODO: save strategy
-        strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
-        ms.load_distributed_checkpoint(
-            network=self.old_policy_model,
-            predict_strategy=strategy_path,
-            unified_safetensors_dir=self.old_policy_ckpt_path,
-            format="safetensors",
-            name_map=name_map,
-        )
-
     def load_checkpoint(self):
         """load checkpoint"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
-        if self.old_policy_ckpt_path and self.grpo_config.rl_config.load_ckpt_format == "safetensors":
+        if not self.old_policy_ckpt_path:
+            return
+
+        if not os.path.exists(self.old_policy_ckpt_path):
+            raise ValueError(f"old policy model checkpoint path: {self.old_policy_ckpt_path} not exists")
+
+        if self.old_policy_ckpt_path and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
-            self._load_checkpoint_safetensors()
+            strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
+            network = self.old_policy_model.model
+            prefix = "model."
+            load_safetensors(self.old_policy_ckpt_path, self.load_ckpt_format, network,
+                             self.old_policy_model, prefix, strategy_path)
             return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel} {load_ckpt_func}")

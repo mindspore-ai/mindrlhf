@@ -110,7 +110,7 @@ class GRPOTrainer:
         if self.reshard_mem_opt_level not in [0, 1]:
             raise ValueError(f"reshard_mem_opt_level can only be 0 or 1, but got {self.reshard_mem_opt_level}")
         # rename parameters in safetensors
-        if self.grpo_config.rl_config.load_ckpt_format == "safetensors":
+        if self.grpo_config.rl_config.load_ckpt_format == "hf_safetensors":
             self.rename_safetensors_weights()
 
         self._compile()
