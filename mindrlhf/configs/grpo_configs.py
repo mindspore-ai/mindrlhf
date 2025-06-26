@@ -245,7 +245,13 @@ class RLConfig:
     save_prompt_completions_interval: int = 1
     save_prompt_completions_dir: str = "/tmp/"
 
+    # 0: do not optimize mem during resharding
+    # 1: offload all src and dst param during resharding
     reshard_mem_opt_level: int = 0
+    # 0: run reshard in PYNATIVE mode
+    # 1: run reshard in GRAPH mode
+    # 2: run reshard in HYBRID mode
+    reshard_mode: int = 0
     save_ckpt_interval: int = 1
     save_max_ckpt_num: int = 5
     save_ckpt_format: str = "safetensors"  # format support safetensors/ckpt
