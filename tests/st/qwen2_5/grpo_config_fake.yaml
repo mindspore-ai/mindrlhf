@@ -10,7 +10,7 @@ rl_config:
   sink_size: 10
   seq_length: 81920
   use_parallel: False
-  load_ckpt_format: "ckpt"
+  load_ckpt_format: "hf_safetensors"
   parallel_mode: "auto_parallel"
   enable_compile_cache: True
   save_strategy_dir: "./strategy/to/"  # need to be set
