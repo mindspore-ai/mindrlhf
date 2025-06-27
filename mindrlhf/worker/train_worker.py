@@ -268,8 +268,7 @@ class TrainWorker(Worker):
         logger.info(f"sft_ckpt_path_train:{self.sft_ckpt_path_train}")
         if not self.sft_ckpt_path_train:
             return
-        
-        if os.path.exists(self.sft_ckpt_path_train):
+        if not os.path.exists(self.sft_ckpt_path_train):
             raise ValueError(f"train model checkpoint path: {self.sft_ckpt_path_train} not exists")
 
         if self.sft_ckpt_path_train and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
