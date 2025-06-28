@@ -16,9 +16,9 @@ from typing import List, Optional, Union
 
 import torch
 import torch.distributed
-
 from torch.distributed import Backend
 
+from mindspore._c_expression import MSContext
 
 def init_model_parallel_group(
     group_ranks: List[List[int]],
@@ -120,11 +120,20 @@ def initialize_parallel_state(
 
     os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
+    if MSContext.get_instance().get_ascend_soc_version() == "ascend910b":
+        num_rank = 8
+    elif MSContext.get_instance().get_ascend_soc_version() == "ascend910_93":
+        num_rank = 16
+    else:
+        raise NotImplementedError(
+            "only support ascend910b and ascend910_93"
+        )
+
     # NOTE(sgm): Modify for verl, Env vars will be set by TORCHRUN.
     rank = int(os.getenv("RANK", "-1"))
     if os.getenv("LOCAL_RANK") is None:
-        os.environ["LOCAL_RANK"] = str(rank)
-    local_rank = int(os.getenv("LOCAL_RANK"))
+        os.environ["LOCAL_RANK"] = str(rank % num_rank)
+    local_rank = int(os.getenv("LOCAL_RANK")) % num_rank
 
     # Use the world_size set by TORCHRUN
     world_size = int(os.getenv("WORLD_SIZE", "-1"))
