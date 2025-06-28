@@ -120,10 +120,12 @@ class SrcNetPP(nn.Cell):
     def offload_model(self):
         for param in self.get_parameters():
             param._offload()
+        self.model_on_device = False
 
     def load_model(self):
         for param in self.get_parameters():
             param._load()
+        self.model_on_device = True
 
 
 class DstNetPP(nn.Cell):
@@ -146,10 +148,12 @@ class DstNetPP(nn.Cell):
     def offload_model(self):
         for param in self.get_parameters():
             param._offload()
+        self.model_on_device = False
 
     def load_model(self):
         for param in self.get_parameters():
             param._load()
+        self.model_on_device = True
 
 
 def match_func(src_name, dst_name):
@@ -202,8 +206,8 @@ def test_transform_d2d_no_pp_1():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_no_pp_2():
@@ -250,8 +254,8 @@ def test_transform_d2d_no_pp_2():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_no_pp_3():
@@ -300,8 +304,8 @@ def test_transform_d2d_no_pp_3():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_no_pp_4():
@@ -351,8 +355,8 @@ def test_transform_d2d_no_pp_4():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_no_pp_5():
@@ -404,6 +408,54 @@ def test_transform_d2d_no_pp_5():
         dst_out = dst_net(x)
         context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
+
+
+def test_transform_d2d_no_pp_6():
+    """
+    Feature: transform param no pp scenario (layout)
+    Description: dpmp transform
+    Expectation: Run success
+    """
+    context.set_context(mode=context.GRAPH_MODE)
+    context.set_auto_parallel_context(device_num=8, parallel_mode="semi_auto_parallel", full_batch=True,
+                                      strategy_ckpt_config={"save_file":
+                                                                f"./no_pp_6_src/src_strategy_{get_rank()}.ckpt"})
+    np.random.seed(10)
+    x = Tensor(np.random.rand(8, 8), ms.float32)
+    src_matmul_in_strategy = ((2, 4), (4, 1))
+    src_add_in_strategy = ((8, 1), (8, 1))
+    src_net = SrcNet(src_matmul_in_strategy, src_add_in_strategy, 5)
+    src_out = src_net(x)
+    context.reset_auto_parallel_context()
+    context.set_auto_parallel_context(device_num=8, parallel_mode="semi_auto_parallel", full_batch=True,
+                                      strategy_ckpt_config={"save_file":
+                                                                f"./no_pp_6_dst/dst_strategy_{get_rank()}.ckpt"})
+    dst_matmul_in_strategy = ((2, 4), (4, 1))
+    dst_add_in_strategy = ((8, 1), (8, 1))
+    dst_net = DstNet(dst_matmul_in_strategy, dst_add_in_strategy, 6)
+    dst_net(x)
+    src_merged_stra = "./no_pp_6_src_merge/merged_strategy.ckpt"
+    dst_merge_stra = "./no_pp_6_dst_merge/merged_strategy.ckpt"
+    if get_rank() == 0:
+        ms.merge_pipeline_strategys("./no_pp_6_src/", src_merged_stra)
+        ms.merge_pipeline_strategys("./no_pp_6_dst/", dst_merge_stra)
+    mint.distributed.barrier()
+
+    transform_param_d2d = TransformParametersD2D(src_net, dst_net, src_merged_stra, dst_merge_stra, match_func)
+    for test_offload in [True, False]:
+        if test_offload:
+            src_net.offload_model()
+            dst_net.offload_model()
+        input_on_device_flag = (src_net.model_on_device, dst_net.model_on_device)
+        transform_param_d2d.transform(input_on_device_flag)
+        if test_offload:
+            src_net.load_model()
+            dst_net.load_model()
+        dst_out = dst_net(x)
+        context.reset_auto_parallel_context()
+        assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_pp_1():
@@ -457,9 +509,9 @@ def test_transform_d2d_pp_1():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         if get_rank() in [4, 5, 6, 7]:
             assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_pp_2():
@@ -510,9 +562,9 @@ def test_transform_d2d_pp_2():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         if get_rank() in [4, 5, 6, 7]:
             assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_pp_3():
@@ -541,6 +593,7 @@ def test_transform_d2d_pp_3():
                                       strategy_ckpt_config={"save_file":
                                                                 f"./pp_3_dst/dst_strategy_{get_rank()}.ckpt"},
                                       enable_parallel_optimizer=True,
+                                      parallel_optimizer_config={"parallel_optimizer_threshold": 0},
                                       pipeline_stages=2)
     layout = Layout((2, 2), ("dp", "mp"))
     dst_matmul_in_strategy = (layout("dp", "mp"), layout("mp", "None"))
@@ -569,9 +622,9 @@ def test_transform_d2d_pp_3():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         if get_rank() in [4, 5, 6, 7]:
             assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_pp_4():
@@ -600,6 +653,7 @@ def test_transform_d2d_pp_4():
                                       strategy_ckpt_config={"save_file":
                                                                 f"./pp_4_dst/dst_strategy_{get_rank()}.ckpt"},
                                       enable_parallel_optimizer=True,
+                                      parallel_optimizer_config={"parallel_optimizer_threshold": 0},
                                       pipeline_stages=2)
     layout = Layout((2, 2), ("dp", "mp"))
     dst_matmul_in_strategy = (layout("dp", "mp"), layout("mp", "None"))
@@ -628,9 +682,9 @@ def test_transform_d2d_pp_4():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         if get_rank() in [6, 7]:
             assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_with_reshard_optimizer_tp():
@@ -706,8 +760,8 @@ def test_transform_d2d_with_reshard_optimizer_tp():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()
 
 
 def test_transform_d2d_with_reshard_optimizer_tp_zero():
@@ -796,5 +850,5 @@ def test_transform_d2d_with_reshard_optimizer_tp_zero():
             src_net.load_model()
             dst_net.load_model()
         dst_out = dst_net(x)
-        context.reset_auto_parallel_context()
         assert np.allclose(src_out.asnumpy(), dst_out.asnumpy(), rtol=1e-4, atol=1e-4)
+    context.reset_auto_parallel_context()

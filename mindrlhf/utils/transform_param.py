@@ -13,17 +13,29 @@
 # limitations under the License.
 # ============================================================================
 """Resharding Weight"""
+import gc
 import numpy as np
 
 import mindspore.log as logger
-from mindspore import ops, Tensor, Parameter
+from mindspore import ops, Tensor, Parameter, mint, context
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.common.api import _pynative_executor
-from mindspore.communication import get_rank, get_group_size
+from mindspore.communication import get_rank, get_group_size, create_group
 from mindspore.parallel.shard import Layout, _DistributedTensorInfo
+from mindspore.common.api import _pynative_executor
 from mindspore.parallel._parallel_serialization import _build_searched_strategy, _convert_to_list
 from mindspore.parallel.function.reshard_func import _redistribute
+from mindspore.parallel._cell_wrapper import _insert_virtual_pp_dim
+
+ENABLE_PYNATIVE_REDIST = True
+try:
+    from mindspore.parallel._tensor import _get_pipeline_operator_map, _get_resharding_operator_map
+except ImportError:
+    logger.warning("MindSpore version is not compatible, can only run redistribution in graph mode")
+    ENABLE_PYNATIVE_REDIST = False
+
+BROADCAST_GROUP_CACHE = []
+ALLGATHER_GROUP_CACHE = []
 
 
 def _get_used_dev_mat(dev_mat, tensormap):
@@ -115,7 +127,10 @@ def _get_tensor_map_for_opt_shard(dev_mat, tensor_map, full_opt_shard, counter, 
         opt_shard_dim = [tensor_map[0]] + opt_shard_dim
     opt_shard_name = tuple([alias_name[len(alias_name) - i - 1] if i != -1 else "None" for i in opt_shard_dim])
     og_name = [alias_name[len(alias_name) - i - 1] if i != -1 else "None" for i in tensor_map[1:]]
-    new_tensor_map = tuple([opt_shard_name] + og_name)
+    if len(opt_shard_name) > 1:
+        new_tensor_map = tuple([opt_shard_name] + og_name)
+    else:
+        new_tensor_map = tuple(list(opt_shard_name) + og_name)
     return new_tensor_map
 
 
@@ -166,8 +181,8 @@ class TransformParametersD2D:
         match_func (function): Check whether two input parameters are matched. It takes source param and dest param
             as input and return boolean. Default value is None, which means that the parameters name must equal.
             Default: None.
-        offload_src (bool): Whether offload the source parameter after transformation. Default: False.
-        load_dst (bool): Whether load the destination parameter before assignment. Default: False.
+        reshard_mode (dict): reshard_mode can be set 0, 1, 2, they mean run in pynative mode, run in graph mode and run
+            in hybrid mode respectively. default value is 0.
 
     Raises:
         TypeError: The output of `match_func` is not a boolean.
@@ -175,7 +190,8 @@ class TransformParametersD2D:
         ValueError: `src_strategy_path` or `dst_strategy_path` is None.
     """
 
-    def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None):
+    def __init__(self, src_network, dst_network, src_strategy_path=None, dst_strategy_path=None, match_func=None,
+                 reshard_mode=0):
         if src_strategy_path is not None:
             src_strategy = _build_searched_strategy(src_strategy_path)
             src_stra_info = _convert_to_list(src_strategy, get_rank())
@@ -252,58 +268,73 @@ class TransformParametersD2D:
 
         self._auto_paralell_context_value_map = {}
         self._pipeline_config = {}
+        self._reshard_mode = reshard_mode
 
-    # pylint: disable=W0702
     def transform(self, input_on_device_flag=(True, True)):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
+        _pynative_executor.set_async_for_graph(True)
         if not isinstance(input_on_device_flag, tuple) or len(input_on_device_flag) != 2:
             raise ValueError(f"The input_on_device_flag must be tuple, and its length must be 2."
                              f"But got {type(input_on_device_flag)}")
-        for i, flag in enumerate(input_on_device_flag):
+        for _, flag in enumerate(input_on_device_flag):
             if not isinstance(flag, bool):
                 raise TypeError(f"elements in input_on_device_flag must be bool, but got ")
         mem_opt_level = self._check_input_flag(input_on_device_flag)
         logger.info(f"The input on device flag is {input_on_device_flag}, memory optimize level is {mem_opt_level}")
-        src_param_name_intersection = self._preprocess_for_src_param(input_on_device_flag)
+        src_param_name_intersection = self.preprocess_for_src_param(input_on_device_flag)
+        if self._reshard_mode == 1 or not ENABLE_PYNATIVE_REDIST:
+            logger.info("Force run in GRAPH redistribution")
+            self.transform_graph(src_param_name_intersection, mem_opt_level)
+            return True
+        force_run_in_pynative = self._reshard_mode == 0
+        logger.info(f"Run in HYBRID redistribution with force_run_in_pynative {force_run_in_pynative}")
+        self.transform_hybrid(src_param_name_intersection, mem_opt_level, force_run_in_pynative)
+        _pynative_executor.set_async_for_graph(False)
+        return True
+
+    def transform_graph(self, src_param_name_intersection, mem_opt_level):
+        """transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network"""
         for i, src_param in enumerate(src_param_name_intersection):
             if not isinstance(src_param, (Parameter, Tensor)):
                 continue
             if mem_opt_level in [1]:
                 src_param._load()
+                self._dst_param_name_intersection[i]._load()
             redist_src_param = _redistribute(src_param, self._dst_param_name_intersection[i]._dtensor_info)
             redist_src_param = ops.cast(redist_src_param, self._dst_param_name_intersection[i].dtype)
+            _pynative_executor.sync()
             if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
-                _pynative_executor.sync()
-                if mem_opt_level in [1]:
-                    self._dst_param_name_intersection[i]._load()
-                if self._dst_param_name_intersection[i].shape != redist_src_param.shape:
-                    try:
-                        src_layout = redist_src_param._dtensor_info.layout.to_dict()
-                    except:
-                        logger.error("Get src layout has error, src_layout will be set to None")
-                        src_layout = None
-                    try:
-                        dst_layout = self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()
-                    except:
-                        logger.error("Get dst layout has error, dst_layout will be set to None")
-                        dst_layout = None
-                    raise ValueError(f"For param {self._dst_param_name_intersection[i].name}, "
-                                     f"src shape must be equal to dst shape, but got "
-                                     f"src shape {redist_src_param.shape}, "
-                                     f"dst shape {self._dst_param_name_intersection[i].shape}. "
-                                     f"src layout is {src_layout}, "
-                                     f"dst layout is {dst_layout}")
+                _check_shape_match(redist_src_param, src_param._dtensor_info, self._dst_param_name_intersection[i])
                 self.assign(self._dst_param_name_intersection[i], redist_src_param)
-                if mem_opt_level in [1]:
-                    # to sync dst value
-                    self._dst_param_name_intersection[i].asnumpy()
-                    self._dst_param_name_intersection[i]._offload()
             if mem_opt_level in [1]:
                 src_param._offload()
+                self._dst_param_name_intersection[i]._offload()
+
+    def transform_hybrid(self, src_param_name_intersection, mem_opt_level, force_run_in_pynative=False):
+        """transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network"""
+        parallel_mode = context.get_auto_parallel_context("parallel_mode")
+        pp_stages = context.get_auto_parallel_context("pipeline_stages")
+        context.set_auto_parallel_context(parallel_mode="stand_alone", device_num=get_group_size(), pipeline_stages=1)
+        for i, src_param in enumerate(src_param_name_intersection):
+            if not isinstance(src_param, (Parameter, Tensor)):
+                continue
+            if mem_opt_level in [1]:
+                src_param._load()
+                self._dst_param_name_intersection[i]._load()
+            merge_pp_src_param = merge_params_in_pipeline_stages(src_param,
+                                                                 self._dst_param_name_intersection[i]._dtensor_info)
+            reshard(merge_pp_src_param, self._dst_param_name_intersection[i], force_run_in_pynative)
+            if mem_opt_level in [1]:
+                src_param._offload()
+                self._dst_param_name_intersection[i]._offload()
+        context.set_auto_parallel_context(parallel_mode=parallel_mode, device_num=get_group_size(),
+                                          pipeline_stages=pp_stages)
 
     # pylint: disable=W0613
-    def _preprocess_for_src_param(self, input_on_device_flag):
+    def preprocess_for_src_param(self, input_on_device_flag):
         return self._src_param_name_intersection
 
     def _log_not_in_intersection_param(self, param_intersection, all_param, debug_string):
@@ -341,14 +372,15 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     """
 
     def __init__(self, src_network, dst_network, transform_args, src_strategy_path=None, dst_strategy_path=None,
-                 match_func=None):
-        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func)
+                 match_func=None, reshard_mode=0):
+        super().__init__(src_network, dst_network, src_strategy_path, dst_strategy_path, match_func, reshard_mode)
         if not isinstance(transform_args, dict):
             raise TypeError("transform args must be dict")
 
         self._n_head = transform_args.get("n_head")
         self._qk_nope_head_dim = transform_args.get("qk_nope_head_dim")
         self._qk_rope_head_dim = transform_args.get("qk_rope_head_dim")
+        self._tok_embedding_shape = transform_args.get("tok_embedding_shape")
         self.l2q_nope_proj = None
         self.l2q_pe_proj = None
         self.kv2l_k_pe = None
@@ -356,7 +388,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         if len(self._src_param_name_intersection) != len(self._dst_param_name_intersection):
             raise ValueError("The length of src_param_name_intersection and dst_param_name_intersection is not equal.")
 
-    def _preprocess_for_src_param(self, input_on_device_flag):
+    def preprocess_for_src_param(self, input_on_device_flag):
         """
         preprocess for train param
         """
@@ -364,7 +396,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         new_src_param_intersection = []
         dev_mat = Layout((get_group_size(),), ("all_dev",))
 
-        for _, src_param in enumerate(self._src_param_name_intersection):
+        for i, src_param in enumerate(self._src_param_name_intersection):
             tensor_map = ["None"] * len(src_param.shape)
             standalone_layout = dev_mat(*tensor_map)
             standalone_dtensor_info = _DistributedTensorInfo(standalone_layout)
@@ -373,72 +405,52 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
                 "feed_forward.routed_experts.ffn.w2",
                 "feed_forward.routed_experts.ffn.w3"
             ]
-
             if any(keyword in src_param.name for keyword in keywords):
-                redist_param = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
-                redist_param = F.transpose(redist_param, (0, 2, 1))
                 if mem_opt_level in [1]:
-                    redist_param._offload()
-                redist_param._dtensor_info = standalone_dtensor_info
-                new_src_param_intersection.append(redist_param)
+                    src_param._load()
+                    self._dst_param_name_intersection[i]._load()
+                merged_params = merge_params_in_pipeline_stages(src_param,
+                                                                self._dst_param_name_intersection[i]._dtensor_info)
+                transposed_params = F.transpose(merged_params, (0, 2, 1))
+                transposed_params._dtensor_info = self._transpose_layout(src_param._dtensor_info, (0, 2, 1))
+                reshard(transposed_params, self._dst_param_name_intersection[i], False)
+                if mem_opt_level in [1]:
+                    src_param._offload()
+                    self._dst_param_name_intersection[i]._offload()
+                new_src_param_intersection.append("skip")
+                continue
+            elif "tok_embeddings" in src_param.name:
+                if mem_opt_level in [1]:
+                    src_param._load()
+                    self._dst_param_name_intersection[i]._load()
+                merged_params = merge_params_in_pipeline_stages(src_param,
+                                                                self._dst_param_name_intersection[i]._dtensor_info,
+                                                                self._tok_embedding_shape)
+                reshard(merged_params, self._dst_param_name_intersection[i])
+                if mem_opt_level in [1]:
+                    src_param._offload()
+                    self._dst_param_name_intersection[i]._offload()
+                new_src_param_intersection.append("skip")
                 continue
             elif "attention.l2q_nope_proj.weight" in src_param.name:
-                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
-                self._check_value_is_none("l2q_nope_proj", src_param_obj.asnumpy())
-                del src_param_obj
+                self._redist_func("l2q_nope_proj", mem_opt_level, src_param, standalone_dtensor_info)
             elif "attention.l2q_pe_proj.weight" in src_param.name:
-                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
-                self._check_value_is_none("l2q_pe_proj", src_param_obj.asnumpy())
-                del src_param_obj
+                self._redist_func("l2q_pe_proj", mem_opt_level, src_param, standalone_dtensor_info)
             elif "attention.kv2l_k_pe.weight" in src_param.name:
-                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
-                self._check_value_is_none("kv2l_k_pe", src_param_obj.asnumpy())
-                del src_param_obj
+                self._redist_func("kv2l_k_pe", mem_opt_level, src_param, standalone_dtensor_info)
             elif "attention.kv2l_latent_kv.weight" in src_param.name:
-                src_param_obj = self._redist_func(mem_opt_level, src_param, standalone_dtensor_info)
-                self._check_value_is_none("kv2l_latent_kv", src_param_obj.asnumpy())
-                del src_param_obj
+                self._redist_func("kv2l_latent_kv", mem_opt_level, src_param, standalone_dtensor_info)
             else:
                 new_src_param_intersection.append(src_param)
                 continue
-
-            if (("attention.l2q_nope_proj.weight" in src_param.name or
-                 "attention.l2q_pe_proj.weight" in src_param.name) and
-                    self.l2q_nope_proj is not None and self.l2q_pe_proj is not None):
-                value_nope = self.l2q_nope_proj.reshape(self._n_head, self._qk_nope_head_dim, -1)
-                reshaped_l2q_pe_proj = self.l2q_pe_proj.reshape(
-                    self._n_head,
-                    2,
-                    self._qk_rope_head_dim // 2,
-                    -1
-                )
-                transposed_l2q_pe_proj = reshaped_l2q_pe_proj.transpose(0, 2, 1, 3)
-                value_pe = transposed_l2q_pe_proj.reshape(
-                    self._n_head,
-                    self._qk_rope_head_dim,
-                    -1
-                )
-                value_merged = np.concatenate([value_nope, value_pe], axis=1)
-                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
-                self.l2q_nope_proj = None
-                self.l2q_pe_proj = None
-            elif ("attention.kv2l_k_pe.weight" in src_param.name or
-                  "attention.kv2l_latent_kv.weight" in src_param.name) and \
-                    self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
-                value_k_pe = self.kv2l_k_pe.reshape(2, self._qk_rope_head_dim // 2, -1)
-                value_k_pe = value_k_pe.transpose(1, 0, 2).reshape(-1, value_k_pe.shape[-1])
-                value_merged = np.concatenate([self.kv2l_latent_kv, value_k_pe], axis=0)
-                value_merged = value_merged.reshape(-1, value_merged.shape[-1])
-                self.kv2l_k_pe = None
-                self.kv2l_latent_kv = None
-            else:
-                new_src_param_intersection.append("skip")
+            value_merged = self._transfer_train_to_infer(src_param, new_src_param_intersection)
+            if value_merged is None:
                 continue
             value_merged = Tensor(value_merged)
             value_merged._dtensor_info = standalone_dtensor_info
-            if mem_opt_level in [1]:
-                value_merged._offload()
-            new_src_param_intersection.append(value_merged)
+            param_obj = _redistribute(value_merged, self._dst_param_name_intersection[i]._dtensor_info)
+            self._assign_value(param_obj, mem_opt_level, i, standalone_dtensor_info)
+            new_src_param_intersection.append("skip")
         self._clean_cache()
         return new_src_param_intersection
 
@@ -447,6 +459,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         self.l2q_pe_proj = None
         self.kv2l_k_pe = None
         self.kv2l_latent_kv = None
+        gc.collect()
 
     def _check_value_is_none(self, input_var, value):
         if getattr(self, input_var) is None:
@@ -454,10 +467,265 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         else:
             raise ValueError(f"{input_var} has value")
 
-    def _redist_func(self, mem_opt_level, param, dtensor_info):
+    def _redist_func(self, input_var, mem_opt_level, param, dtensor_info):
         if mem_opt_level in [1]:
             param._load()
         param_obj = _redistribute(param, dtensor_info)
+        self._check_value_is_none(input_var, param_obj.asnumpy())
         if mem_opt_level in [1]:
             param._offload()
         return param_obj
+
+    def _transpose_layout(self, dtensor_info, transpose_in):
+        """transpose tensor layout according to transpose argument"""
+        layout = dtensor_info.layout
+        layout_info = layout.to_dict()
+        new_dev_mat = Layout(layout_info["device_matrix"], layout_info["alias_name"],
+                             rank_list=layout_info["rank_list"])
+        new_tensor_map = tuple([layout_info["tensor_map"][i] for i in transpose_in])
+        new_alias_name = []
+        for map_idx in new_tensor_map:
+            if isinstance(map_idx, (tuple, list)):
+                local_alias_name = []
+                for idx in map_idx:
+                    if idx != -1:
+                        local_alias_name.append(layout_info["alias_name"][len(layout_info["alias_name"]) - idx - 1])
+                    else:
+                        local_alias_name.append("None")
+                new_alias_name.append(tuple(local_alias_name))
+            else:
+                if map_idx != -1:
+                    new_alias_name.append(layout_info["alias_name"][len(layout_info["alias_name"]) - map_idx - 1])
+                else:
+                    new_alias_name.append("None")
+        new_layout = new_dev_mat(*new_alias_name)
+        return _DistributedTensorInfo(new_layout)
+
+    def _assign_value(self, input_value, mem_opt_level, i, standalone_dtensor_info):
+        if get_rank() in self._dst_param_name_intersection[i]._dtensor_info.layout.to_dict()["rank_list"]:
+            if mem_opt_level in [1]:
+                self._dst_param_name_intersection[i]._load()
+            _check_shape_match(input_value, standalone_dtensor_info, self._dst_param_name_intersection[i])
+            ops.assign(self._dst_param_name_intersection[i],
+                       input_value.astype(self._dst_param_name_intersection[i].dtype))
+            if mem_opt_level in [1]:
+                self._dst_param_name_intersection[i]._offload()
+
+    def _transfer_train_to_infer(self, src_param, new_src_param_intersection):
+        """Get two parts param in train, transfer them to infer"""
+        value_merged = None
+        if (("attention.l2q_nope_proj.weight" in src_param.name or
+             "attention.l2q_pe_proj.weight" in src_param.name) and
+                self.l2q_nope_proj is not None and self.l2q_pe_proj is not None):
+            value_nope = self.l2q_nope_proj
+            value_pe = self.l2q_pe_proj
+            value_nope = value_nope.reshape(self._n_head, self._qk_nope_head_dim, -1)
+            value_pe = value_pe.reshape(self._n_head, self._qk_rope_head_dim, -1)
+            value_merged = np.concatenate([value_nope, value_pe], axis=1)
+            value_merged = value_merged.reshape(-1, value_merged.shape[-1])
+            self.l2q_nope_proj = None
+            self.l2q_pe_proj = None
+        elif ("attention.kv2l_k_pe.weight" in src_param.name or
+              "attention.kv2l_latent_kv.weight" in src_param.name) and \
+                self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
+            value_k_pe = self.kv2l_k_pe
+            value_latent_kv = self.kv2l_latent_kv
+            value_k_pe = value_k_pe.reshape(-1, value_k_pe.shape[-1])
+            value_merged = np.concatenate([value_latent_kv, value_k_pe], axis=0)
+            value_merged = value_merged.reshape(-1, value_merged.shape[-1])
+            self.kv2l_k_pe = None
+            self.kv2l_latent_kv = None
+        else:
+            new_src_param_intersection.append("skip")
+        return value_merged
+
+def _transfer_layout_to_tuple(input_layout, input_shape):
+    input_layout_dict = input_layout.to_dict()
+    return (list(input_layout_dict["device_matrix"]), list(input_layout_dict["tensor_map"]),
+            input_shape, input_layout_dict["rank_list"])
+
+
+def merge_params_in_pipeline_stages(tensor, to_dtensor_info, broadcast_global_shape=None):
+    """
+    merge params between pp stages
+
+    Args:
+        tensor (Tensor)
+        to_dtensor_info (Layout)
+        broadcast_global_shape (tuple)
+    """
+    from_dtensor_layout = tensor._dtensor_info.layout
+    from_shape = [tensor.shape[i] * tensor._dtensor_info.sharding_strategy[i] for i in range(len(tensor.shape))]
+    to_dtensor_layout = to_dtensor_info.layout
+    broadcast_op_map = _get_pipeline_operator_map(_transfer_layout_to_tuple(from_dtensor_layout, from_shape),
+                                                  _transfer_layout_to_tuple(to_dtensor_layout, from_shape),
+                                                  get_rank())
+    if not broadcast_op_map or get_rank() not in broadcast_op_map:
+        logger.info(f"broadcast_op_map is {broadcast_op_map}, current rank {get_rank()} no in it or it's empty.")
+        return tensor
+    broadcast_op_map = broadcast_op_map[get_rank()][0]
+    root_idx = broadcast_op_map[1]
+    broadcast_rank_list = broadcast_op_map[2]
+    str_rank_list = '-'.join([str(rank) for rank in broadcast_rank_list])
+    broadcast_group = f"pp_broadcast_group-{str_rank_list}"
+    global BROADCAST_GROUP_CACHE
+    if broadcast_group not in BROADCAST_GROUP_CACHE:
+        logger.info(f"create broadcast group {broadcast_group} for rank list {broadcast_rank_list}")
+        create_group(broadcast_group, broadcast_rank_list)
+        BROADCAST_GROUP_CACHE.append(broadcast_group)
+    if get_rank() not in from_dtensor_layout.to_dict()["rank_list"]:
+        global_shape = tensor.shape if broadcast_global_shape is None else broadcast_global_shape
+        new_tensor_shape = tuple([global_shape[i] // tensor._dtensor_info.sharding_strategy[i]
+                                  for i in range(len(tensor.shape))])
+        tensor = mint.empty(new_tensor_shape, dtype=tensor.dtype)
+        tensor._dtensor_info = _DistributedTensorInfo(from_dtensor_layout)
+    _ = mint.distributed.broadcast(tensor, root_idx, broadcast_group, async_op=False)
+    return tensor
+
+
+def _run_redist_pynative(tensor, ops_list):
+    """run redistribution ops"""
+    out_tensor = tensor
+    for ops_info in ops_list:
+        ops_name = ops_info[0]
+        if ops_name == "StridedSlice":
+            out_tensor = ops.strided_slice(out_tensor, ops_info[1], ops_info[2], ops_info[3])
+        elif ops_name == "AllConcat":
+            empty_tensor = [mint.empty(out_tensor.shape, dtype=tensor.dtype) for _ in range(ops_info[1])]
+            out_tensor = out_tensor.contiguous()
+            _ = mint.distributed.all_gather(empty_tensor, out_tensor, ops_info[2])
+            out_tensor = mint.concat(empty_tensor, ops_info[3])
+        elif ops_name == "Reshape":
+            out_tensor = out_tensor.view(ops_info[1])
+        else:
+            raise ValueError(f"ops name {ops_name} is not valid, only support ['StridedSlice', 'AllConcat', 'Reshape']")
+    return out_tensor
+
+
+def _preprocess_op_map(operator_map):
+    """preprocess op map, append all inputs of ops to list"""
+    ops_list = []
+    for ops_info in operator_map:
+        ops_name = ops_info[0]
+        if ops_name == "StridedSlice":
+            tensor_dims = len(ops_info[1]) // 3
+            ops_list.append((ops_name, (ops_info[1][:tensor_dims]), (ops_info[1][tensor_dims: 2 * tensor_dims]),
+                             (ops_info[1][2 * tensor_dims:])))
+        elif ops_name == "AllConcat":
+            global ALLGATHER_GROUP_CACHE
+            allgather_rank_list = ops_info[1][:-1]
+            str_rank_list = '-'.join([str(rank) for rank in allgather_rank_list])
+            allgather_group = f"reshard_allgather_group-{str_rank_list}"
+            if allgather_group not in ALLGATHER_GROUP_CACHE:
+                logger.info(f"create allgather group {allgather_group} for rank list {allgather_group}")
+                create_group(allgather_group, allgather_rank_list)
+                ALLGATHER_GROUP_CACHE.append(allgather_group)
+            ops_list.append((ops_name, len(ops_info[1]) - 1, allgather_group, ops_info[1][-1]))
+        elif ops_name == "Reshape":
+            ops_list.append((ops_name, tuple(ops_info[1])))
+        else:
+            raise ValueError(f"ops name {ops_name} is not valid, only support ['StridedSlice', 'AllConcat', 'Reshape']")
+    return tuple(ops_list)
+
+
+def reshard(tensor, out_tensor, force_run_in_pynative=False):
+    """
+    reshard tensor in pp stages
+    """
+    to_dtensor_info = out_tensor._dtensor_info
+    from_rank_list = tensor._dtensor_info.layout.to_dict()["rank_list"]
+    to_rank_list = to_dtensor_info.layout.to_dict()["rank_list"]
+    if get_rank() not in set(from_rank_list).union(set(to_rank_list)):
+        return True
+    if len(from_rank_list) < len(to_rank_list):
+        logger.info(f"rank list of from_layout is not less than rank list of to_layout,"
+                    f"which are {tensor._dtensor_info.layout.to_dict()['rank_list']} "
+                    f"and {to_dtensor_info.layout.to_dict()['rank_list']}."
+                    f"Please first merge pp stages by using _get_pipeline_operator_map")
+    from_dtensor_layout = _insert_virtual_pp_dim(tensor._dtensor_info.layout)
+    to_dtensor_layout = _insert_virtual_pp_dim(to_dtensor_info.layout)
+    from_shape = [tensor.shape[i] * tensor._dtensor_info.sharding_strategy[i] for i in range(len(tensor.shape))]
+    from_layout_tuple = _transfer_layout_to_tuple(from_dtensor_layout, from_shape)
+    to_layout_tuple = _transfer_layout_to_tuple(to_dtensor_layout, from_shape)
+    if from_layout_tuple == to_layout_tuple:
+        logger.debug(f"from layout {from_layout_tuple} is equal to to layout {to_layout_tuple}")
+        _check_shape_match(tensor, tensor._dtensor_info, out_tensor)
+        ops.assign(out_tensor, tensor)
+        return True
+    operator_map = _get_resharding_operator_map(from_layout_tuple, to_layout_tuple, get_rank())[get_rank()]
+    tensor_name = tensor.name if isinstance(tensor, Parameter) else "tensor"
+    logger.debug(f"for input {tensor_name}, from layout is {from_layout_tuple}, to layout is {to_layout_tuple} "
+                 f"and the redistribute operator map is {operator_map}")
+    is_last_all_gather = False
+    last_allgather_rank_list = None
+    if operator_map and operator_map[-1][0] == "AllConcat" and operator_map[-1][1][-1] == 0:
+        # last op is allgather
+        is_last_all_gather = True
+        last_allgather_rank_list = operator_map[-1][1][:-1]
+        operator_map = operator_map[:-1]
+
+    # for debugging, force run redistribution in pynative mode
+    force_run_in_pynative_redist = force_run_in_pynative
+    run_in_graph = (len(to_rank_list) == get_group_size() and
+                    not is_last_all_gather and not force_run_in_pynative_redist)
+    redist_out = _run_redist(tensor, run_in_graph, from_dtensor_layout, to_dtensor_layout, operator_map)
+    if is_last_all_gather:
+        _run_redist_for_last_allgather(redist_out, out_tensor, last_allgather_rank_list)
+        return True
+    if get_rank() in to_dtensor_info.layout.to_dict()["rank_list"]:
+        _check_shape_match(redist_out, tensor._dtensor_info, out_tensor)
+        ops.assign(out_tensor, redist_out.astype(out_tensor.dtype))
+    return True
+
+
+def _run_redist(tensor, run_in_graph, from_dtensor_layout, to_dtensor_layout, operator_map):
+    """run redistribution"""
+    if run_in_graph:
+        og_dtensor_info = tensor._dtensor_info
+        tensor._dtensor_info = _DistributedTensorInfo(from_dtensor_layout)
+        redist_out = _redistribute(tensor, _DistributedTensorInfo(to_dtensor_layout))
+        tensor._dtensor_info = og_dtensor_info
+    else:
+        ops_list = _preprocess_op_map(operator_map)
+        if ops_list:
+            redist_out = _run_redist_pynative(tensor, ops_list)
+        else:
+            redist_out = tensor
+    return redist_out
+
+
+def _run_redist_for_last_allgather(redist_out, out_tensor, last_allgather_rank_list):
+    """run redistribution for the scenario that last ops is allgather"""
+    logger.info("The last op is all_gather, use all_gather_into_tensor to replace assign")
+    global ALLGATHER_GROUP_CACHE
+    str_rank_list = '-'.join([str(rank) for rank in last_allgather_rank_list])
+    allgather_group = f"reshard_allgather_group-{str_rank_list}"
+    if allgather_group not in ALLGATHER_GROUP_CACHE:
+        logger.info(f"create last allgather group {allgather_group} for rank list {last_allgather_rank_list}")
+        create_group(allgather_group, last_allgather_rank_list)
+        ALLGATHER_GROUP_CACHE.append(allgather_group)
+    redist_out = redist_out.contiguous()
+    mint.distributed.all_gather_into_tensor(out_tensor, redist_out.astype(out_tensor.dtype),
+                                            group=allgather_group, async_op=False)
+
+
+# pylint: disable=W0702
+def _check_shape_match(tensor, src_dtensor_info, out_tensor):
+    """check whether shape of tensor is equal to out_tensor"""
+    if out_tensor.shape != tensor.shape:
+        try:
+            src_layout = src_dtensor_info.layout.to_dict()
+        except:
+            logger.error("Get src layout has error, src_layout will be set to None")
+            src_layout = None
+        try:
+            dst_layout = out_tensor._dtensor_info.layout.to_dict()
+        except:
+            logger.error("Get dst layout has error, dst_layout will be set to None")
+            dst_layout = None
+        raise ValueError(f"For param {out_tensor.name}, "
+                         f"src shape must be equal to dst shape, but got "
+                         f"src shape {tensor.shape}, "
+                         f"dst shape {out_tensor.shape}. "
+                         f"src layout is {src_layout}, "
+                         f"dst layout is {dst_layout}")
