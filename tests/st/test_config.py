@@ -49,7 +49,6 @@ def test_config():
            grpo_config_fake.generate_config.parallel_config.data_parallel == 80
     assert grpo_config_empty.generate_config.sampling_config.temperature != \
            grpo_config_fake.generate_config.sampling_config.temperature == 0.08
-    assert grpo_config_empty.ref_config.load != grpo_config_fake.ref_config.load == "/tmp/"
     assert grpo_config_empty.ref_config.parallel_config.data_parallel != \
            grpo_config_fake.ref_config.parallel_config.data_parallel == 40
     assert grpo_config_empty.ref_config.recompute_config.recompute != \

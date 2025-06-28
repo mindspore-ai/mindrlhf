@@ -57,7 +57,7 @@ rl_config:
 
 # actor model config
 actor_config:
-  load: "/path/"
+  load: ""
   save: "ckpt/train/"
   model_config: "./qwen2_5/finetune_qwen2_5_7b_st.yaml"  # need to be set
   enable_alltoall: False
@@ -94,7 +94,7 @@ actor_config:
 # reference model config
 ref_config:
   model_config: "./qwen2_5/ref_qwen2_5_7b_instruct_st.yaml"  # need to be set
-  load: "/path/"
+  load: ""
   ref_model_batch_size: 2
   offset: 0
   use_eod_attn_mask_compression: False
@@ -117,7 +117,7 @@ reward_config:
 # generate config
 generate_config:
   model_config: "./qwen2_5/predict_qwen2_5_7b_instruct_st.yaml"  # need to be set
-  load: "/path/"
+  load: ""
   infer_model_batch_size: 2
 
   parallel_config:
