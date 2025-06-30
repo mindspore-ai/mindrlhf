@@ -459,7 +459,9 @@ class InferWorker(Worker):
         start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
+            _pynative_executor.set_async_for_graph(True)
             self.inference_engine.init_cache_engine()
+            _pynative_executor.set_async_for_graph(False)
             skip_kv_cache = True
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             if skip_kv_cache and "paged_attention_mgr" in param.name:
