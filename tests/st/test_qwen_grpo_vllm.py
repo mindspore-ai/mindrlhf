@@ -40,8 +40,9 @@ def test_qwen_grpo_vllm():
         "actor parallel_config:{'data_parallel': 1, 'model_parallel': 4, 'pipeline_stage': 2,"
         " 'use_seq_parallel': False, 'micro_batch_num': 2, 'vocab_emb_dp': False}",
         "parallel_config:{'data_parallel': 4, 'model_parallel': 2, 'pipeline_stage': 1}",
-        "grpo_config.actor_config.recompute_config:{'recompute': False, 'select_recompute': False, "
-        "'parallel_optimizer_comm_recompute': False, 'mp_comm_recompute': True, "
+        # recompute config
+        "grpo_config.ref_config.recompute_config:{'recompute': False, 'select_recompute': False, "
+        "'select_comm_recompute': False, 'parallel_optimizer_comm_recompute': False, 'mp_comm_recompute': True, "
         "'recompute_slice_activation': False}",
         "total_ref_batch_size: ref_model_batch_size * ref_dp, 2 * 4 = 8",
     ]

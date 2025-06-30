@@ -60,6 +60,7 @@ class InferWorker(Worker):
         self.args = args
         self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
         sft_config_infer = MindFormerConfig(sft_path_infer)
+        sft_config_infer.model.model_config.seq_length = grpo_config.rl_config.seq_length
         sft_config_infer.use_parallel = grpo_config.rl_config.use_parallel
         sft_config_infer.parallel_config = MindFormerConfig(**grpo_config.generate_config.parallel_config.param_dict)
         logger.info(f"generate parallel_config:{sft_config_infer.parallel_config}")

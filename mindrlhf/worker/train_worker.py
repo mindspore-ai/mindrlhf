@@ -70,6 +70,7 @@ class TrainWorker(Worker):
         logger.info(f"actor parallel_config:{sft_config_train.parallel_config}")
         logger.info(f"grpo_config.actor_config.recompute_config:{grpo_config.actor_config.recompute_config.param_dict}")
         sft_config_train.recompute_config = grpo_config.actor_config.recompute_config.param_dict
+        sft_config_train.model.model_config.seq_length = grpo_config.rl_config.seq_length
         sft_config_train.model.model_config.offset = grpo_config.actor_config.offset
         sft_config_train.model.model_config.parallel_config = sft_config_train.parallel_config
 

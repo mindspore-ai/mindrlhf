@@ -53,6 +53,7 @@ class RefWorker(Worker):
         self.use_parallel = grpo_config.rl_config.use_parallel
         self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
         ref_config = MindFormerConfig(sft_path_ref)
+        ref_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
         ref_config.use_parallel = self.use_parallel
         ref_config.parallel_config = MindFormerConfig(**grpo_config.ref_config.parallel_config.param_dict)
         logger.info(f"ref parallel_config:{ref_config.parallel_config}")
