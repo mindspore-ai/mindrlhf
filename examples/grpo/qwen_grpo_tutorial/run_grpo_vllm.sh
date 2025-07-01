@@ -14,7 +14,6 @@ cd $root_path
 export PYTHONPATH=$root_path:$PYTHONPATH  # define mindrlhf path
 
 export ASCEND_HOME_PATH=/path/to/ascend # need modify
-export MINDFORMERS_MODEL_CONFIG=/path/to/configs/predict_qwen2_5_7b_instruct.yaml # need modify
 export MINDFORMERS_PATH=/path/to/mindformers # need modify
 export MSADAPTER_PATH=/path/to/msadapter # need modify (msadapter lib path)
 export QWEN_MODEL_PATH=/path/to/qwen25_7b # need modify (only support huggingface model path)

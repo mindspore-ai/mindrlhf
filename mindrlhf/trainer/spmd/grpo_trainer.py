@@ -32,12 +32,7 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 # mindrlhf
-from mindrlhf.utils import (
-    transfer_from_str_to_bool,
-    set_perf_stats,
-    print_perf_stat,
-    convert_index_json_total,
-)
+from mindrlhf.utils import transfer_from_str_to_bool, set_perf_stats, print_perf_stat, convert_index_json_total
 
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
@@ -57,6 +52,7 @@ class GRPOTrainer:
         """Initialize"""
         self.args = args
         self._init_grpo_configs(args)
+        self._set_vllm_generation_config()
         self.no_patch_tensor_shape = no_patch_tensor_shape
 
         # ================== Initial Tensorboard ==================
@@ -98,8 +94,10 @@ class GRPOTrainer:
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
             assert self.grpo_config.rl_config.pack_num >= 1, "pack_num must >= 1!"
-            logger.info(f"Set packing_sample_length to train worker seq_length: "
-                        f"{self.train.sft_model_config_train.seq_length}.")
+            logger.info(
+                f"Set packing_sample_length to train worker seq_length: "
+                f"{self.train.sft_model_config_train.seq_length}."
+            )
         else:
             self.grpo_config.rl_config.packing = True
             self.grpo_config.rl_config.pack_num = 1
@@ -146,7 +144,7 @@ class GRPOTrainer:
             self.grpo_config,
             self.tokenizer,
             self.tensor_writer,
-            self.i_step
+            self.i_step,
         )
         self.step_num = self.experience_maker.get_step_num()
 
@@ -157,6 +155,13 @@ class GRPOTrainer:
         self.ref.ref_model.model.set_train(False)
 
         self.infer.refresh_policy_model_phase()
+
+    def _set_vllm_generation_config(self):
+        os.environ["MINDFORMERS_MODEL_CONFIG"] = self.grpo_config.generate_config.model_config
+
+    def __del__(self):
+        if os.getenv("MINDFORMERS_MODEL_CONFIG"):
+            del os.environ["MINDFORMERS_MODEL_CONFIG"]
 
     @staticmethod
     def _set_args_to_config(args, grpo_config: GRPOConfig):
@@ -301,10 +306,12 @@ class GRPOTrainer:
         while self.n_epoch < self.grpo_config.rl_config.epochs:
             while self.i_step < self.step_num:
                 if self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
-                    self.train.save_checkpoints(epochs=self.n_epoch, steps=self.i_step,
-                                                start_epoch=self.start_epoch, start_step=self.start_step)
-                    self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step,
-                                              start_epoch=self.start_epoch, start_step=self.start_step)
+                    self.train.save_checkpoints(
+                        epochs=self.n_epoch, steps=self.i_step, start_epoch=self.start_epoch, start_step=self.start_step
+                    )
+                    self.ref.save_checkpoints(
+                        epochs=self.n_epoch, steps=self.i_step, start_epoch=self.start_epoch, start_step=self.start_step
+                    )
 
                 step_begin_time = time.time()
                 logger.info("step begin at {}".format(time.strftime("%H:%M:%S", time.localtime(step_begin_time))))
@@ -386,12 +393,18 @@ class GRPOTrainer:
                 logger.info("step end at  {}".format(time.strftime("%H:%M:%S", time.localtime(step_end_time))))
                 step_time = step_end_time - step_begin_time
                 self.total_time += step_time
-                logger.info("step processed tokens {}, tokens/s/p {}".format(
-                    self.experience_maker.step_total_tokens,
-                    self.experience_maker.step_total_tokens / step_time / self.world_group_size))
-                logger.info("total processed tokens {}, total tokens/s/p {}".format(
-                    self.experience_maker.total_processed_tokens,
-                    self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size))
+                logger.info(
+                    "step processed tokens {}, tokens/s/p {}".format(
+                        self.experience_maker.step_total_tokens,
+                        self.experience_maker.step_total_tokens / step_time / self.world_group_size,
+                    )
+                )
+                logger.info(
+                    "total processed tokens {}, total tokens/s/p {}".format(
+                        self.experience_maker.total_processed_tokens,
+                        self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size,
+                    )
+                )
                 self.i_step += 1
             self.i_step = 0
             self.n_epoch += 1

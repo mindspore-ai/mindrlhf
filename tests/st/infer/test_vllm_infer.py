@@ -30,7 +30,6 @@ pre_cmd = f"""
 export PYTHONPATH={mindrlhf_path}:{mindformers_path}:$PYTHONPATH
 export vLLM_MODEL_BACKEND=MindFormers
 export vLLM_MODEL_MEMORY_USE_GB=40
-export MINDFORMERS_MODEL_CONFIG={model_config}
 
 export MS_DEV_RUNTIME_CONF="memory_statistics:True"
 msrun --worker_num=8 --local_worker_num=8 \
@@ -65,19 +64,21 @@ def run(log_dir, params, check_value):
 @pytest.mark.parametrize("dp,mp", [(4, 2), (8, 1)])
 def test_generate_parallel(dp, mp):
     """
-        Feature: infer case
-        Description: set different data_parallel and model_parallel to test inference,
-        check inference performance and memory.
-        Expectation: Run success or failure.
-        """
+    Feature: infer case
+    Description: set different data_parallel and model_parallel to test inference,
+    check inference performance and memory.
+    Expectation: Run success or failure.
+    """
     log_dir = f"log_{dp}_{mp}"
     params = f"--data_parallel {dp} --model_parallel {mp}"
     check_value = "generate parallel_config:{'data_parallel': %d, 'model_parallel': %d" % (dp, mp)
     run(log_dir, params, check_value)
 
 
-@pytest.mark.parametrize("temperature, repetition_penalty, top_p, top_k",
-                         [(1.0, 1.05, 0.8, 20), (0.8, 1.0, 0.8, 20), (0.8, 1.05, 1.0, 20), (0.8, 1.05, 0.8, -1)])
+@pytest.mark.parametrize(
+    "temperature, repetition_penalty, top_p, top_k",
+    [(1.0, 1.05, 0.8, 20), (0.8, 1.0, 0.8, 20), (0.8, 1.05, 1.0, 20), (0.8, 1.05, 0.8, -1)],
+)
 def test_generate_sampling(temperature, repetition_penalty, top_p, top_k):
     """
     Feature: infer case
@@ -85,11 +86,12 @@ def test_generate_sampling(temperature, repetition_penalty, top_p, top_k):
     Expectation: Run success or failure.
     """
     log_dir = f"log_{temperature}_{repetition_penalty}_{top_p}_{top_k}"
-    params = f"--temperature {temperature} " \
-             f"--repetition_penalty {repetition_penalty} " \
-             f"--top_p {top_p} --top_k {top_k}"
-    check_value = (f"temperature={temperature}, repetition_penalty={repetition_penalty}, "
-                   f"top_p={top_p}, top_k={top_k}")
+    params = (
+        f"--temperature {temperature} " f"--repetition_penalty {repetition_penalty} " f"--top_p {top_p} --top_k {top_k}"
+    )
+    check_value = (
+        f"temperature={temperature}, repetition_penalty={repetition_penalty}, " f"top_p={top_p}, top_k={top_k}"
+    )
     run(log_dir, params, check_value)
 
 
