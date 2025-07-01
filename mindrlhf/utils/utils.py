@@ -147,6 +147,17 @@ def is_first_stage(pipeline_stage):
     return rank < per_stage_num
 
 
+class CustomJsonEncoder(json.JSONEncoder):
+    """Custom Json Encoder"""
+
+    # pylint: disable=W0221
+    # pylint: disable=E0202
+    def default(self, obj):
+        if isinstance(obj, np.float32):
+            return float(obj)
+        return super().default(obj)
+
+
 class FP32StateAdamWeightDecay(AdamWeightDecay):
     r"""
     This class is almost same with the mindspore's AdamWeightDecay implements, the

@@ -55,6 +55,22 @@ rl_config:
   gen_experience_kwargs: False
 
 
+eval_config:
+  val_dataset_file: "./dataset/mini_gsm8k.mindrecord"
+  save_eval_result_data: True
+  save_eval_result_dir: "/tmp/"
+  eval_freq: 1
+  val_repetition_penalty: 1.0
+  val_temperature: 0.6
+  val_top_p: 0.95
+  val_top_k: 40
+  val_seq_length: 512
+  val_max_decode_length: 256
+  val_min_decode_length: 2
+  val_n: 2
+  val_before_train: True
+
+
 # actor model config
 actor_config:
   load: "/path/"
@@ -112,7 +128,8 @@ ref_config:
 reward_config:
   verifier_function: ["accuracy_reward", "format_reward"]
   verifier_weight: [1.0, 1.0]
-
+  val_verifier_function: ["accuracy_reward", "format_reward"]
+  val_verifier_weight: [1.0, 1.0]
 
 # generate config
 generate_config:

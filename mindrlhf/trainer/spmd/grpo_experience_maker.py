@@ -82,6 +82,7 @@ class GRPOExperienceMaker:
         Build dataset for generating.
         """
         self.mind_dataset_dir = self.grpo_config.rl_config.dataset_file
+
         logger.info(f"GRPOExperienceMaker: _init_grpo_experience_dataset, dataset dir {self.mind_dataset_dir}")
         if self.mind_dataset_dir is not None:
             columns_to_project = ["prompt_ids", "pretrain_ids"]
@@ -154,6 +155,7 @@ class GRPOExperienceMaker:
         n_questions = batch[0].shape[0] // num_rollouts
 
         self.infer.load()
+
         # Step 1: generate responses and masks.
         start_time = time.time()
         logger.info(
@@ -504,7 +506,8 @@ class GRPOExperienceMaker:
             )
         self.verifier_weight = np.array(verifier_weight, dtype=np.float32)
 
-    def _split_for_data_parallel(self, batch_inputs, data_parallel_size):
+    @staticmethod
+    def _split_for_data_parallel(batch_inputs, data_parallel_size):
         """
         split batch_inputs for data parallel
         """
@@ -516,34 +519,24 @@ class GRPOExperienceMaker:
         batch_inputs_for_this_rank = batch_inputs[start:stop]
         return batch_inputs_for_this_rank
 
-    def _remove_right_padding(self, token_ids, padding_token=0):
+    @staticmethod
+    def _remove_right_padding(token_ids, padding_token=0):
         """remove_right_padding"""
-        trimmed_sequences = []
-        for seq in token_ids:
-            # 将序列转换为列表以处理不同输入类型（如numpy数组）
-            seq_list = list(seq)
-            # 逆序查找第一个非填充标记的位置
-            last_non_pad = next((i for i in reversed(range(len(seq_list))) if seq_list[i] != padding_token), None)
-            # 截断右侧填充
-            if last_non_pad is not None:
-                trimmed_sequences.append(seq_list[: last_non_pad + 1])
-            else:
-                trimmed_sequences.append([])  # 全为填充时返回空列表
+        begin_time = time.time()
+        counts = np.sum(token_ids != padding_token, axis=1)
+        trimmed_sequences = [token_ids[i, :cnt] for i, cnt in enumerate(counts)]
+        end_time = time.time()
+        logger.info(f"remove right padding time: {end_time - begin_time}")
         return trimmed_sequences
 
-    def _remove_left_padding(self, token_ids, padding_token=0):
+    @staticmethod
+    def _remove_left_padding(token_ids, padding_token=0):
         """remove_left_padding"""
-        trimmed_sequences = []
-        for seq in token_ids:
-            # 将序列转换为列表以处理不同输入类型（如numpy数组）
-            seq_list = list(seq)
-            # 顺查找第一个非填充标记的位置
-            last_non_pad = next((i for i in range(len(seq_list)) if seq_list[i] != padding_token), None)
-            # 截断左侧填充
-            if last_non_pad is not None:
-                trimmed_sequences.append(seq_list[last_non_pad:])
-            else:
-                trimmed_sequences.append([])  # 全为填充时返回空列表
+        begin_time = time.time()
+        counts = np.sum(token_ids != padding_token, axis=1)
+        trimmed_sequences = [token_ids[i, -cnt:] for i, cnt in enumerate(counts)]
+        end_time = time.time()
+        logger.info(f"remove left padding time: {end_time - begin_time}")
         return trimmed_sequences
 
     def _construct_inputs_packing(self, all_packed, batch_size=None, idx=None):

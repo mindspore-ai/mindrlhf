@@ -43,6 +43,7 @@ from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
 from mindrlhf.worker.old_policy_worker import OldPolicyWorker
+from mindrlhf.worker.eval_worker import EvalWorker
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
@@ -88,13 +89,13 @@ class GRPOTrainer:
 
         logger.info("GRPOTrainer: start init workers")
         self.infer = InferWorker(grpo_config=self.grpo_config, sft_path_infer=self.sft_path_infer, args=self.args)
-
         self.ref = RefWorker(grpo_config=self.grpo_config, sft_path_ref=self.sft_path_ref, args=self.args)
-
         self.train = TrainWorker(grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args)
         self.old_policy = OldPolicyWorker(
             grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args
         )
+        self.eval_worker = EvalWorker(grpo_config=self.grpo_config, tokenizer=self.tokenizer, infer=self.infer)
+
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
             assert self.grpo_config.rl_config.pack_num >= 1, "pack_num must >= 1!"
@@ -124,6 +125,7 @@ class GRPOTrainer:
         )
         self.i_step = 0
         self.n_epoch = 0
+        self.total_step = 0
         self.start_step = 0
         self.start_epoch = 0
         self.total_time = 0
@@ -137,7 +139,8 @@ class GRPOTrainer:
                 f"{self.grpo_config.rl_config.save_ckpt_interval}"
             )
         self.world_group_size = get_group_size()
-
+        self.eval_freq = self.grpo_config.eval_config.eval_freq
+        self.val_before_train = self.grpo_config.eval_config.val_before_train
         self.experience_maker = GRPOExperienceMaker(
             self.train,
             self.infer,
@@ -289,6 +292,15 @@ class GRPOTrainer:
         end_time = time.time()
         print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
 
+    def _time_to_validate(self):
+        """Decide whether to validate the model"""
+        if (
+            self.eval_freq > 0 and self.total_step % self.eval_freq == 0
+            and ((self.total_step > 0) or (self.total_step == 0 and self.val_before_train))
+        ):
+            return True
+        return False
+
     def run_grpo_train(self):
         """
         Main entry of MindRLHF GRPO training.
@@ -305,11 +317,13 @@ class GRPOTrainer:
                                                 start_epoch=self.start_epoch, start_step=self.start_step)
                     self.ref.save_checkpoints(epochs=self.n_epoch, steps=self.i_step,
                                               start_epoch=self.start_epoch, start_step=self.start_step)
-
                 step_begin_time = time.time()
                 logger.info("step begin at {}".format(time.strftime("%H:%M:%S", time.localtime(step_begin_time))))
-
                 logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
+
+                if self._time_to_validate():
+                    self.eval_worker.validate(self.total_step)
+
                 self.experience_maker.make_experience(
                     num_rollouts=self.grpo_config.rl_config.num_rollouts,
                     num_generations=self.grpo_config.rl_config.num_generations,
@@ -340,7 +354,6 @@ class GRPOTrainer:
                     assert self.infer.on_device, (
                         "when reshard_mem_opt_level is equal to 0, " "infer model must on device before transform param"
                     )
-
                 if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
                     # in some work, ref update may have a 'bad' effect
                     if self.reshard_mem_opt_level == 0:
@@ -393,6 +406,7 @@ class GRPOTrainer:
                     self.experience_maker.total_processed_tokens,
                     self.experience_maker.total_processed_tokens / self.total_time / self.world_group_size))
                 self.i_step += 1
+                self.total_step += 1
             self.i_step = 0
             self.n_epoch += 1
 
