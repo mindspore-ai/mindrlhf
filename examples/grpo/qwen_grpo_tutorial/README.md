@@ -272,7 +272,6 @@ https://gitee.com/mindspore/vllm-mindspore/wikis/Getting%20Started/Installation
 ```shell
 export vLLM_MODEL_BACKEND=MindFormers
 export vLLM_MODEL_MEMORY_USE_GB=40
-export MINDFORMERS_MODEL_CONFIG=/path/to/mindrlhf/model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml
 export HCCL_EXEC_TIMEOUT=7200
 export MS_JIT_MODULES=vllm_mindspore,research
 ```

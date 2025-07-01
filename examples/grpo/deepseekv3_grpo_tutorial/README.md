@@ -150,7 +150,6 @@ export PYTHONPATH=/path/to/mindrlhf/:$PYTHONPATH
 export PYTHONPATH=/path/to/mindformers/:$PYTHONPATH
 # use for vllm
 export vLLM_MODEL_BACKEND=MindFormers
-export MINDFORMERS_MODEL_CONFIG="./model_configs/deepseek_v3_grpo/predict_deepseek3_671b.yaml"
 # 性能优化
 export MS_DEV_RUNTIME_CONF="parallel_dispatch_kernel:True"
 export MS_ALLOC_CONF=enable_vmm:true
@@ -168,7 +167,6 @@ export MS_ENABLE_LCCL=off
 
 # 参数说明
 vLLM_MODEL_BACKEND: 指定使用mindformers模型，使用vllm时开启
-MINDFORMERS_MODEL_CONFIG： 指定推理yaml，使用vllm时开启
 vLLM_MODEL_MEMORY_USE_GB：性能优化相关
 ASCEND_TOTAL_MEMORY_GB： 内存管理相关
 MS_DEV_RUNTIME_CONF：性能优化相关

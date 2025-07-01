@@ -26,7 +26,6 @@ export PYTHONPATH=$MINDRLHF_PATH:$MINDFORMERS_PATH:$PYTHONPATH
 echo "PYTHONPATH is $PYTHONPATH"
 
 # vllm config
-export MINDFORMERS_MODEL_CONFIG=./qwen2_5_vllm/predict_qwen2_5_7b_instruct_st.yaml
 export vLLM_MODEL_BACKEND=MindFormers
 export HCCL_EXEC_TIMEOUT=7200
 export MS_JIT_MODULES=vllm_mindspore,research

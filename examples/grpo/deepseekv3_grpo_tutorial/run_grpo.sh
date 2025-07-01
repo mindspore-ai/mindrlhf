@@ -19,7 +19,6 @@ export PYTHONPATH=/path/to/mindrlhf/:$PYTHONPATH
 export PYTHONPATH=/path/to/mindformers/:$PYTHONPATH
 # use for vllm
 export vLLM_MODEL_BACKEND=MindFormers
-export MINDFORMERS_MODEL_CONFIG="./model_configs/deepseek_v3_grpo/predict_deepseek3_671b.yaml"
 # 性能优化
 export MS_DEV_RUNTIME_CONF="parallel_dispatch_kernel:True"
 export MS_ALLOC_CONF=enable_vmm:true

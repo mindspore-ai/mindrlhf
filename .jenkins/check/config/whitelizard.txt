@@ -1,1 +1,2 @@
 mindrlhf/mindrlhf/trainer/spmd/grpo_experience_maker.py:make_experience
+mindrlhf/mindrlhf/trainer/spmd/grpo_trainer.py:run_grpo_train
