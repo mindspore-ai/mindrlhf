@@ -43,6 +43,7 @@ from mindspore.parallel import set_algo_parameters
 from mindspore.parallel._cost_model_context import _set_multi_subgraphs
 from mindspore import context
 import mindspore.common.dtype as mstype
+from mindspore.common.api import _pynative_executor
 
 from mindformers.tools.ckpt_transform import TransformCkpt
 from mindformers import logger
@@ -692,3 +693,15 @@ def load_safetensors(
         format="safetensors",
         name_map=name_map,
     )
+
+
+def enable_pynative_async(func):
+    """enable pynative async and disable when finish executing func"""
+
+    def wrapper(*args, **kwargs):
+        _pynative_executor.set_async_for_graph(True)
+        result = func(*args, **kwargs)
+        _pynative_executor.set_async_for_graph(False)
+        return result
+
+    return wrapper

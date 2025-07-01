@@ -22,7 +22,6 @@ from mindspore import Tensor
 from mindspore.communication import GlobalComm, get_rank
 from mindspore import context
 from mindspore import communication as D
-from mindspore.common.api import _pynative_executor
 
 from mindformers import LlamaConfig
 from mindformers import MindFormerConfig
@@ -39,7 +38,7 @@ from mindrlhf.utils import transfer_from_str_to_bool, print_perf_stat
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.configs.grpo_configs import VllmMode
-from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors
+from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors, enable_pynative_async
 from mindrlhf.worker.worker import Worker
 from mindrlhf.utils.strategy_utils import save_strategy_file
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
@@ -160,12 +159,12 @@ class InferWorker(Worker):
         if self.use_vllm != VllmMode.ORIGIN:
             self.policy_model.phase = self.old_phase
 
+    @enable_pynative_async
     def __init_use_vllm(self):
         """
         init_vllm
         """
         # pylint: disable=W0611
-        _pynative_executor.set_async_for_graph(True)
         from mindrlhf.third_party.vllm import package_version, LLM
         from vllm import SamplingParams
 
@@ -234,7 +233,6 @@ class InferWorker(Worker):
             detokenize=self.grpo_config.generate_config.sampling_config.detokenize,
         )
         logger.info(f"init SamplingParams end, cost time: {time.time() - vllm_start_time}")
-        _pynative_executor.set_async_for_graph(False)
         return policy_model
 
     def model(self):
@@ -360,12 +358,7 @@ class InferWorker(Worker):
             logger.info("start vllm")
             prompt = input_ids_numpy[:, :max_valid_length]
             vllm_prompt = prompt.tolist()
-            _pynative_executor.set_async_for_graph(True)
-            token_ids = self.inference_engine.pre_process_inputs(vllm_prompt, valid_length_each_example)
-            outputs = self.inference_engine.generate(
-                prompts=None, sampling_params=self.sampling_params, prompt_token_ids=token_ids, use_tqdm=False
-            )
-            _pynative_executor.set_async_for_graph(False)
+            outputs = self._vllm_generate(vllm_prompt, valid_length_each_example)
             logger.info("end vllm")
 
         logger.info(f"Generating elapsed time: {time.time() - generate_begin_time}")
@@ -460,9 +453,7 @@ class InferWorker(Worker):
         start_time = time.time()
         skip_kv_cache = False
         if self.use_vllm == VllmMode.VLLM:
-            _pynative_executor.set_async_for_graph(True)
-            self.inference_engine.init_cache_engine()
-            _pynative_executor.set_async_for_graph(False)
+            self._init_cache_engine()
             skip_kv_cache = True
         for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
             if skip_kv_cache and "paged_attention_mgr" in param.name:
@@ -523,3 +514,15 @@ class InferWorker(Worker):
         weight_dict = network.convert_map_dict(source_dict, **kwargs)
         new_weight_dict = {f"{prefix}{key}": value for key, value in weight_dict.items()}
         return new_weight_dict
+
+    @enable_pynative_async
+    def _vllm_generate(self, vllm_prompt, valid_length_each_example):
+        token_ids = self.inference_engine.pre_process_inputs(vllm_prompt, valid_length_each_example)
+        outputs = self.inference_engine.generate(
+            prompts=None, sampling_params=self.sampling_params, prompt_token_ids=token_ids, use_tqdm=False
+        )
+        return outputs
+
+    @enable_pynative_async
+    def _init_cache_engine(self):
+        self.inference_engine.init_cache_engine()
