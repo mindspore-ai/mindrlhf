@@ -16,6 +16,8 @@
 import gc
 import numpy as np
 
+from mindrlhf.utils.utils import enable_pynative_async
+
 import mindspore.log as logger
 from mindspore import ops, Tensor, Parameter, mint, context
 from mindspore.ops import operations as P
@@ -270,10 +272,10 @@ class TransformParametersD2D:
         self._pipeline_config = {}
         self._reshard_mode = reshard_mode
 
+    @enable_pynative_async
     def transform(self, input_on_device_flag=(True, True)):
         """transform the parameters from source network layout to dest network layout and assign the parameter to
         dest network"""
-        _pynative_executor.set_async_for_graph(True)
         if not isinstance(input_on_device_flag, tuple) or len(input_on_device_flag) != 2:
             raise ValueError(f"The input_on_device_flag must be tuple, and its length must be 2."
                              f"But got {type(input_on_device_flag)}")
@@ -290,7 +292,6 @@ class TransformParametersD2D:
         force_run_in_pynative = self._reshard_mode == 0
         logger.info(f"Run in HYBRID redistribution with force_run_in_pynative {force_run_in_pynative}")
         self.transform_hybrid(src_param_name_intersection, mem_opt_level, force_run_in_pynative)
-        _pynative_executor.set_async_for_graph(False)
         return True
 
     def transform_graph(self, src_param_name_intersection, mem_opt_level):
