@@ -141,6 +141,9 @@ class SamplingConfig:
     min_tokens: int = 2
     min_p: float = 0.01
 
+    temperatures: tuple = None
+    temperatures_step_interval: int = 10
+
 
 @dataclass
 class GenerateConfig:
