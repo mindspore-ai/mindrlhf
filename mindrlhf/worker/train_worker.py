@@ -158,10 +158,10 @@ class TrainWorker(Worker):
             shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32
         )  # [bs, seq_len]
         ref_per_token_logps = ms.Tensor(
-            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float32
         )  # [bs, seq_len]
         advantages = ms.Tensor(
-            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float32
         )  # [bs, seq_len]
         actual_seq_length = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
@@ -173,7 +173,7 @@ class TrainWorker(Worker):
             shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
         old_per_token_logps = ms.Tensor(
-            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
+            shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float32
         )  # [bs, seq_len]
 
         with TimeConsumingCollector("train model compile"):
@@ -384,15 +384,15 @@ class TrainWorker(Worker):
         dataset = GeneratorDataset(pipeline, column_names=column_names)
         logger.info(f"dataset.len: {len(dataset)}")
         type_cast_op_int32 = TypeCast(ms.int32)
-        type_cast_op_fp16 = TypeCast(ms.float16)
+        type_cast_op_fp32 = TypeCast(ms.float32)
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="prompt_completion_ids")
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="responses_mask")
-        dataset = dataset.map(operations=type_cast_op_fp16, input_columns="ref_per_token_logps")
-        dataset = dataset.map(operations=type_cast_op_fp16, input_columns="advantages")
+        dataset = dataset.map(operations=type_cast_op_fp32, input_columns="ref_per_token_logps")
+        dataset = dataset.map(operations=type_cast_op_fp32, input_columns="advantages")
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="actual_sequence_length")
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_index")
         dataset = dataset.map(operations=type_cast_op_int32, input_columns="sample_valid_length")
-        dataset = dataset.map(operations=type_cast_op_fp16, input_columns="old_per_token_logps")
+        dataset = dataset.map(operations=type_cast_op_fp32, input_columns="old_per_token_logps")
         micro_batch_num = 1
         if self.sft_model_config_train.parallel_config.pipeline_stage > 1:
             micro_batch_num = self.sft_model_config_train.parallel_config.micro_batch_num

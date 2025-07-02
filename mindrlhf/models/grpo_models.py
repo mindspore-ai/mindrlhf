@@ -293,7 +293,6 @@ class GRPOModel(nn.Cell, GeneratorMixin):
 
         if self.num_iterations <= 1:
             old_per_token_logps = ops.stop_gradient(per_token_logps)
-        old_per_token_logps = self.cast(old_per_token_logps, per_token_logps.dtype)
         ratio = self.exp(per_token_logps - old_per_token_logps)
         surr1 = ratio * advantages
         if self.num_iterations > 1:
