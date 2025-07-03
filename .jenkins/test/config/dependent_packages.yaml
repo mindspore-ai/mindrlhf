@@ -6,3 +6,5 @@ vllm:
   'https://repo.mindspore.cn/mirrors/vllm/version/202505/20250514/v0.8.4.dev0_newest/'
 mindspore:
   'https://repo.mindspore.cn/mindspore/mindspore/version/202506/20250609/master_20250609160019_8f35b18d992cacea735567ab011e91f83a074731_newest/'
+mindspore_gs:
+  'https://repo.mindspore.cn/mindspore/golden-stick/version/202506/20250604/master_20250604160014_35fcbec4406d3b18faf02ef99fcbe2741e80348e_newest/'
