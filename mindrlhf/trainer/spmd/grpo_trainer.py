@@ -32,7 +32,7 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 # mindrlhf
-from mindrlhf.utils import transfer_from_str_to_bool, set_perf_stats, print_perf_stat, convert_index_json_total
+from mindrlhf.utils import transfer_from_str_to_bool, set_perf_stats, TimeConsumingCollector, convert_index_json_total
 
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
@@ -254,16 +254,14 @@ class GRPOTrainer:
         """
         compile model
         """
-        start_time = time.time()
-        self.infer.generate_strategy(self.reshard_optimizer)
-        origin_shape = Tensor.shape
-        Tensor.shape = self.no_patch_tensor_shape
-        self.ref.compile()
-        self.old_policy.compile()
-        self.train.compile()
-        Tensor.shape = origin_shape
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "GRPOTrainer compile")
+        with TimeConsumingCollector("GRPOTrainer compile"):
+            self.infer.generate_strategy(self.reshard_optimizer)
+            origin_shape = Tensor.shape
+            Tensor.shape = self.no_patch_tensor_shape
+            self.ref.compile()
+            self.old_policy.compile()
+            self.train.compile()
+            Tensor.shape = origin_shape
 
     def _load_checkpoint(self):
         """
@@ -286,13 +284,72 @@ class GRPOTrainer:
                 self.i_step = data_skip_steps
                 self.start_step = data_skip_steps
             return
-        start_time = time.time()
-        self.infer.load_checkpoint()
-        self.ref.load_checkpoint()
-        self.old_policy.load_checkpoint()
-        self.train.load_checkpoint()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "GRPOTrainer load checkpoint")
+
+        with TimeConsumingCollector("GRPOTrainer load checkpoint"):
+            self.infer.load_checkpoint()
+            self.ref.load_checkpoint()
+            self.old_policy.load_checkpoint()
+            self.train.load_checkpoint()
+
+    def _reshard_train_to_infer(self):
+        """Reshard train model parameters to infer model."""
+        if self.reshard_mem_opt_level == 1:
+            self.train.offload_model()
+            assert not self.train.model_on_device, (
+                "when reshard_mem_opt_level is equal to 1, " "train model must not on device before transform param"
+            )
+            assert not self.infer.on_device, (
+                "when reshard_mem_opt_level is equal to 1, " "infer model must not on device before transform param"
+            )
+            self.old_policy.check_not_on_device()
+        else:
+            self.infer.load()
+            self.old_policy.load()
+            assert self.train.model_on_device, (
+                "when reshard_mem_opt_level is equal to 0, " "train model must on device before transform param"
+            )
+            assert self.infer.on_device, (
+                "when reshard_mem_opt_level is equal to 0, " "infer model must on device before transform param"
+            )
+
+        if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
+            # in some work, ref update may have a 'bad' effect
+            if self.reshard_mem_opt_level == 0:
+                self.ref.load()
+            input_on_device_flag_dict = {
+                "policy2infer": (self.train.model_on_device, self.infer.on_device),
+                "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                "policy2old": (self.train.model_on_device, self.old_policy.on_device),
+            }
+            self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
+            if self.reshard_mem_opt_level == 0:
+                self.ref.offload()
+        else:
+            input_on_device_flag_dict = {
+                "policy2infer": (self.train.model_on_device, self.infer.on_device),
+                "policy2ref": (self.train.model_on_device, self.ref.on_device),
+                "policy2old": (self.train.model_on_device, self.old_policy.on_device),
+            }
+            self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
+
+        if self.reshard_mem_opt_level == 0:
+            assert self.train.model_on_device, (
+                "when reshard_mem_opt_level is equal to 0, " "train model must on device after transform param"
+            )
+            assert self.infer.on_device, (
+                "when reshard_mem_opt_level is equal to 0, " "infer model must on device after transform param"
+            )
+            self.train.offload_model()
+            self.old_policy.check_on_device()
+            self.old_policy.offload()
+        else:
+            assert not self.train.model_on_device, (
+                "when reshard_mem_opt_level is equal to 1, " "train model must not on device after transform param"
+            )
+            assert not self.infer.on_device, (
+                "when reshard_mem_opt_level is equal to 1, " "infer model must not on device after transform param"
+            )
+            self.old_policy.check_not_on_device()
 
     def run_grpo_train(self):
         """
@@ -313,90 +370,28 @@ class GRPOTrainer:
                         epochs=self.n_epoch, steps=self.i_step, start_epoch=self.start_epoch, start_step=self.start_step
                     )
 
-                step_begin_time = time.time()
-                logger.info("step begin at {}".format(time.strftime("%H:%M:%S", time.localtime(step_begin_time))))
-
-                logger.info(f"epoch: {self.n_epoch}, step: {self.i_step}")
-                self.experience_maker.make_experience(
-                    num_rollouts=self.grpo_config.rl_config.num_rollouts,
-                    num_generations=self.grpo_config.rl_config.num_generations,
-                )
-                self.train.load_optimizer()
-                self.train.load_model()
-                self.train.train()
-                self.train.offload_optimizer()
-
-                # load for reshard
-                if self.reshard_mem_opt_level == 1:
-                    self.train.offload_model()
-                    assert not self.train.model_on_device, (
-                        "when reshard_mem_opt_level is equal to 1, "
-                        "train model must not on device before transform param"
-                    )
-                    assert not self.infer.on_device, (
-                        "when reshard_mem_opt_level is equal to 1, "
-                        "infer model must not on device before transform param"
-                    )
-                    self.old_policy.check_not_on_device()
-                else:
-                    self.infer.load()
-                    self.old_policy.load()
-                    assert self.train.model_on_device, (
-                        "when reshard_mem_opt_level is equal to 0, " "train model must on device before transform param"
-                    )
-                    assert self.infer.on_device, (
-                        "when reshard_mem_opt_level is equal to 0, " "infer model must on device before transform param"
-                    )
-
-                if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
-                    # in some work, ref update may have a 'bad' effect
-                    if self.reshard_mem_opt_level == 0:
-                        self.ref.load()
-                    input_on_device_flag_dict = {
-                        "policy2infer": (self.train.model_on_device, self.infer.on_device),
-                        "policy2ref": (self.train.model_on_device, self.ref.on_device),
-                        "policy2old": (self.train.model_on_device, self.old_policy.on_device),
-                    }
-                    self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
-                    if self.reshard_mem_opt_level == 0:
-                        self.ref.offload()
-                else:
-                    input_on_device_flag_dict = {
-                        "policy2infer": (self.train.model_on_device, self.infer.on_device),
-                        "policy2ref": (self.train.model_on_device, self.ref.on_device),
-                        "policy2old": (self.train.model_on_device, self.old_policy.on_device),
-                    }
-                    self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
-                if self.reshard_mem_opt_level == 0:
-                    assert self.train.model_on_device, (
-                        "when reshard_mem_opt_level is equal to 0, " "train model must on device after transform param"
-                    )
-                    assert self.infer.on_device, (
-                        "when reshard_mem_opt_level is equal to 0, " "infer model must on device after transform param"
-                    )
-                    self.train.offload_model()
-                    self.old_policy.check_on_device()
-                    self.old_policy.offload()
-                else:
-                    assert not self.train.model_on_device, (
-                        "when reshard_mem_opt_level is equal to 1, "
-                        "train model must not on device after transform param"
-                    )
-                    assert not self.infer.on_device, (
-                        "when reshard_mem_opt_level is equal to 1, "
-                        "infer model must not on device after transform param"
-                    )
-                    self.old_policy.check_not_on_device()
-
-                step_end_time = time.time()
-                print_perf_stat(step_begin_time, step_end_time, f"epoch {self.n_epoch} step {self.i_step}")
-                logger.info("step end at  {}".format(time.strftime("%H:%M:%S", time.localtime(step_end_time))))
-                step_time = step_end_time - step_begin_time
-                self.total_time += step_time
+                logger.info(f"epoch: {self.n_epoch}, step: {self.i_step} start")
+                with TimeConsumingCollector(f"whole epoch {self.n_epoch} train stage") as perf_collector:
+                    with TimeConsumingCollector("make_experience"):
+                        self.experience_maker.make_experience(
+                            num_rollouts=self.grpo_config.rl_config.num_rollouts,
+                            num_generations=self.grpo_config.rl_config.num_generations,
+                        )
+                    with TimeConsumingCollector("load train optimizer"):
+                        self.train.load_optimizer()
+                    with TimeConsumingCollector("load train model"):
+                        self.train.load_model()
+                    with TimeConsumingCollector("train model"):
+                        self.train.train()
+                    with TimeConsumingCollector("offload train optimizer"):
+                        self.train.offload_optimizer()
+                    with TimeConsumingCollector("reshard train to infer"):
+                        self._reshard_train_to_infer()
+                self.total_time += perf_collector.duration
                 logger.info(
                     "step processed tokens {}, tokens/s/p {}".format(
                         self.experience_maker.step_total_tokens,
-                        self.experience_maker.step_total_tokens / step_time / self.world_group_size,
+                        self.experience_maker.step_total_tokens / perf_collector.duration / self.world_group_size,
                     )
                 )
                 logger.info(
@@ -409,9 +404,10 @@ class GRPOTrainer:
             self.i_step = 0
             self.n_epoch += 1
 
-        # save checkpoint
-        self.train.load_model()
-        self.train.save_checkpoints(epochs=self.grpo_config.rl_config.epochs, steps=self.step_num)
+        with TimeConsumingCollector("save checkpoint"):
+            with TimeConsumingCollector("load train model"):
+                self.train.load_model()
+            self.train.save_checkpoints(epochs=self.grpo_config.rl_config.epochs, steps=self.step_num)
         logger.info("run grpo train end")
 
     def rename_safetensors_weights(self):

@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Train Worker"""
-
 import os
-import time
 import math
 
 import mindspore as ms
@@ -36,7 +34,7 @@ from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.utils.adam import AdamWeightDecayOp
-from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, print_perf_stat
+from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, TimeConsumingCollector
 from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLossScaleCellGRPO
 from mindrlhf.utils.utils import (
     load_param_to_net,
@@ -130,8 +128,9 @@ class TrainWorker(Worker):
         self.tensor_writer = self.args.tensor_writer
         self.global_training_step = 0
         if self.grpo_config.rl_config.save_max_ckpt_num < 1:
-            raise ValueError(f"save_max_ckpt_num should be lager than 0, "
-                             f"but got {self.grpo_config.rl_config.save_max_ckpt_num}")
+            raise ValueError(
+                f"save_max_ckpt_num should be lager than 0, " f"but got {self.grpo_config.rl_config.save_max_ckpt_num}"
+            )
 
     def model(self):
         return self.grpo_model_train
@@ -177,35 +176,33 @@ class TrainWorker(Worker):
             shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float16
         )  # [bs, seq_len]
 
-        start_time = time.time()
-        stage_name = "train"
-        strategy_path = self.save_strategy_dir
-        context.set_auto_parallel_context(
-            strategy_ckpt_config={
-                "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
-            },
-            pipeline_stages=self.train_pp_stage,
-        )
-        # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
-        # use positional arguments instead of keyword arguments
-        self.grpo_with_grad.compile(
-            prompt_completion_ids,
-            responses_mask,
-            ref_per_token_logps,
-            advantages,
-            actual_seq_length,
-            sample_index,
-            sample_valid_len,
-            old_per_token_logps,
-        )
-        stage_name = "other"
-        context.set_auto_parallel_context(
-            strategy_ckpt_config={
-                "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
-            }
-        )
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "train model compile")
+        with TimeConsumingCollector("train model compile"):
+            stage_name = "train"
+            strategy_path = self.save_strategy_dir
+            context.set_auto_parallel_context(
+                strategy_ckpt_config={
+                    "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                },
+                pipeline_stages=self.train_pp_stage,
+            )
+            # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
+            # use positional arguments instead of keyword arguments
+            self.grpo_with_grad.compile(
+                prompt_completion_ids,
+                responses_mask,
+                ref_per_token_logps,
+                advantages,
+                actual_seq_length,
+                sample_index,
+                sample_valid_len,
+                old_per_token_logps,
+            )
+            stage_name = "other"
+            context.set_auto_parallel_context(
+                strategy_ckpt_config={
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                }
+            )
 
         sim_level = os.getenv("MS_SIMULATION_LEVEL")
         if sim_level:
@@ -425,55 +422,50 @@ class TrainWorker(Worker):
 
         iterator = dataset.create_dict_iterator()
         logger.info(f"dataset size is {len(dataset)}")
-        train_start_time = time.time()
-        for epoch in range(self.grpo_config.rl_config.num_iterations):
-            for step, databatch in enumerate(iterator):
-
-                ep_begin_time = time.time()
-                out = self.grpo_with_grad(**databatch)
-                end_time = time.time()
-                print_perf_stat(ep_begin_time, end_time, f"train epoch {epoch} step {step}")
-                logger.info(
-                    " loss: {} | lr: {} | is overflow: {} | loss scale: {}".format(
-                        formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])
+        with TimeConsumingCollector(
+            f"train model {dataset.dataset_size} epochs and {self.grpo_config.rl_config.num_iterations} steps"
+        ):
+            for epoch in range(self.grpo_config.rl_config.num_iterations):
+                for step, databatch in enumerate(iterator):
+                    with TimeConsumingCollector(f"train epoch {epoch} step {step}"):
+                        out = self.grpo_with_grad(**databatch)
+                    logger.info(
+                        " loss: {} | lr: {} | is overflow: {} | loss scale: {}".format(
+                            formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])
+                        )
                     )
-                )
-                if self.args.custom_model_name == "deepseek":
-                    if self.topk_bias_balance_callback.update_topk_bias_flag:
-                        policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
-                        # pylint: disable=W0212
-                        self.topk_bias_balance_callback._update_topk_bias(policy_model)
-                if self.tensor_writer:
-                    self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
-                    self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=self.global_training_step)
-                    self.tensor_writer.add_scalar("overflow", out[2].asnumpy(), global_step=self.global_training_step)
-                    self.tensor_writer.add_scalar("loss-scale", out[3].asnumpy(), global_step=self.global_training_step)
-                self.global_training_step += 1
-        train_end_time = time.time()
-        print_perf_stat(
-            train_start_time,
-            train_end_time,
-            f"train model {dataset.dataset_size} epochs and {self.grpo_config.rl_config.num_iterations} steps",
-        )
+                    if self.args.custom_model_name == "deepseek":
+                        if self.topk_bias_balance_callback.update_topk_bias_flag:
+                            policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
+                            # pylint: disable=W0212
+                            self.topk_bias_balance_callback._update_topk_bias(policy_model)
+                    if self.tensor_writer:
+                        self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
+                        self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=self.global_training_step)
+                        self.tensor_writer.add_scalar(
+                            "overflow", out[2].asnumpy(), global_step=self.global_training_step
+                        )
+                        self.tensor_writer.add_scalar(
+                            "loss-scale", out[3].asnumpy(), global_step=self.global_training_step
+                        )
+                    self.global_training_step += 1
 
     def offload_optimizer(self):
         """offload optimizer"""
         if self.optimizer_on_device is False:
             return
         logger.info(f"before offload train {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.grpo_with_grad.optimizer.moments1:
-            # pylint: disable=W0212
-            param._offload()
-        for param in self.grpo_with_grad.optimizer.moments2:
-            # pylint: disable=W0212
-            param._offload()
-        if self.train_pp_stage > 1:
-            for param in self.grpo_with_grad.accu_grads:
+        with TimeConsumingCollector("offload train optimizer"):
+            for param in self.grpo_with_grad.optimizer.moments1:
                 # pylint: disable=W0212
                 param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload train optimizer")
+            for param in self.grpo_with_grad.optimizer.moments2:
+                # pylint: disable=W0212
+                param._offload()
+            if self.train_pp_stage > 1:
+                for param in self.grpo_with_grad.accu_grads:
+                    # pylint: disable=W0212
+                    param._offload()
         logger.info(f"after offload train {ms.hal.memory_stats()}")
         self.optimizer_on_device = False
 
@@ -482,19 +474,17 @@ class TrainWorker(Worker):
         if self.optimizer_on_device:
             return
         logger.info(f"before load train optimizer {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.grpo_with_grad.optimizer.moments1:
-            # pylint: disable=W0212
-            param._load()
-        for param in self.grpo_with_grad.optimizer.moments2:
-            # pylint: disable=W0212
-            param._load()
-        if self.train_pp_stage > 1:
-            for param in self.grpo_with_grad.accu_grads:
+        with TimeConsumingCollector("load train optimizer"):
+            for param in self.grpo_with_grad.optimizer.moments1:
                 # pylint: disable=W0212
                 param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load train optimizer")
+            for param in self.grpo_with_grad.optimizer.moments2:
+                # pylint: disable=W0212
+                param._load()
+            if self.train_pp_stage > 1:
+                for param in self.grpo_with_grad.accu_grads:
+                    # pylint: disable=W0212
+                    param._load()
         logger.info(f"after load train optimizer {ms.hal.memory_stats()}")
         self.optimizer_on_device = True
 
@@ -502,13 +492,11 @@ class TrainWorker(Worker):
         """load model"""
         if self.model_on_device:
             return
-        start_time = time.time()
         logger.info(f"before load train model {ms.hal.memory_stats()}")
-        for param in self.grpo_with_grad.network.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load train model")
+        with TimeConsumingCollector("load train model"):
+            for param in self.grpo_with_grad.network.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._load()
         logger.info(f"after load train model {ms.hal.memory_stats()}")
         self.model_on_device = True
 
@@ -516,13 +504,11 @@ class TrainWorker(Worker):
         """offload model"""
         if self.model_on_device is False:
             return
-        start_time = time.time()
         logger.info(f"after offload train model {ms.hal.memory_stats()}")
-        for param in self.grpo_with_grad.network.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload train model")
+        with TimeConsumingCollector("offload train model"):
+            for param in self.grpo_with_grad.network.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._offload()
         logger.info(f"after offload train model {ms.hal.memory_stats()}")
         self.model_on_device = False
 

@@ -14,7 +14,6 @@
 """ Reference Worker """
 
 # python
-import time
 import os
 import numpy as np
 
@@ -30,7 +29,7 @@ from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
-from mindrlhf.utils import print_perf_stat
+from mindrlhf.utils import TimeConsumingCollector
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.utils import load_safetensors
 
@@ -79,8 +78,7 @@ class OldPolicyWorker(Worker):
             self.old_policy_pp_stage = old_policy_model_config.parallel_config.pipeline_stage or 1
             self.old_policy_dp = old_policy_model_config.parallel_config.data_parallel
             self.enable_parallel_optimizer = (
-                grpo_config.actor_config.enable_parallel_optimizer
-                and self.old_policy_dp > 1
+                grpo_config.actor_config.enable_parallel_optimizer and self.old_policy_dp > 1
             )
             context.set_auto_parallel_context(
                 pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
@@ -112,25 +110,23 @@ class OldPolicyWorker(Worker):
         old_policy_bs = self.grpo_config.rl_config.batch_size * self.old_policy_dp
         fake_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32)
         actual_seq_data = ms.Tensor(shape=(old_policy_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32)
-        start_time = time.time()
-        stage_name = "old_policy"
-        context.set_auto_parallel_context(
-            strategy_ckpt_config={
-                "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt"
-            },
-            pipeline_stages=self.old_policy_pp_stage,
-        )
-        self.old_policy_model.compile(
-            fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False
-        )
-        stage_name = "other"
-        context.set_auto_parallel_context(
-            strategy_ckpt_config={
-                "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
-            }
-        )
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "old policy model compile")
+        with TimeConsumingCollector("old policy model compile"):
+            stage_name = "old_policy"
+            context.set_auto_parallel_context(
+                strategy_ckpt_config={
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt"
+                },
+                pipeline_stages=self.old_policy_pp_stage,
+            )
+            self.old_policy_model.compile(
+                fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False
+            )
+            stage_name = "other"
+            context.set_auto_parallel_context(
+                strategy_ckpt_config={
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                }
+            )
 
     # pylint: disable=W0613
     def offset_actual_seq_length(self, data, offset):
@@ -169,12 +165,10 @@ class OldPolicyWorker(Worker):
         if self.on_device is False:
             return
         logger.info(f"before offload old policy model {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.old_policy_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload old policy model")
+        with TimeConsumingCollector("offload old policy model"):
+            for param in self.old_policy_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._offload()
         logger.info(f"after offload old policy model {ms.hal.memory_stats()}")
         self.on_device = False
 
@@ -185,12 +179,10 @@ class OldPolicyWorker(Worker):
         if self.on_device:
             return
         logger.info(f"before load old policy model {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.old_policy_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load old policy model")
+        with TimeConsumingCollector("load old policy model"):
+            for param in self.old_policy_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._load()
         logger.info(f"after load old policy model {ms.hal.memory_stats()}")
         self.on_device = True
 

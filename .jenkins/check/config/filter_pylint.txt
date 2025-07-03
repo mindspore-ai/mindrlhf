@@ -46,3 +46,4 @@
 "mindrlhf/tests/st/qwen2_5/grpo_train.py"                                                                       "wrong-import-position"
 "mindrlhf/tests/st/qwen2_5/grpo_train.py"                                                                       "unused-argument"
 "mindrlhf/tests/st/test_qwen_grpo_packing.py"                                                                   "ungrouped-imports"
+"mindrlhf/mindrlhf/worker/train_worker.py"                                                                      "bad-continuation"

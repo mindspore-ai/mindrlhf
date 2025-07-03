@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Reference Worker."""
-
-import time
 import os
 import numpy as np
 
@@ -30,7 +28,7 @@ from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.models.grpo_models import CausalLMHybrid
 from mindrlhf.worker.worker import Worker
-from mindrlhf.utils import print_perf_stat, _get_pipeline_group
+from mindrlhf.utils import TimeConsumingCollector, _get_pipeline_group
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.utils import (
     load_param_to_net,
@@ -168,12 +166,10 @@ class RefWorker(Worker):
         if self.on_device is False:
             return
         logger.info(f"before offload ref model {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.ref_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._offload()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "offload ref model")
+        with TimeConsumingCollector("offload ref model"):
+            for param in self.ref_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._offload()
         logger.info(f"after offload ref model {ms.hal.memory_stats()}")
         self.on_device = False
 
@@ -182,12 +178,10 @@ class RefWorker(Worker):
         if self.on_device:
             return
         logger.info(f"before load ref model {ms.hal.memory_stats()}")
-        start_time = time.time()
-        for param in self.ref_model.get_parameters(expand=True):
-            # pylint: disable=W0212
-            param._load()
-        end_time = time.time()
-        print_perf_stat(start_time, end_time, "load ref model")
+        with TimeConsumingCollector("load ref model"):
+            for param in self.ref_model.get_parameters(expand=True):
+                # pylint: disable=W0212
+                param._load()
         logger.info(f"after load ref model {ms.hal.memory_stats()}")
         self.on_device = True
 
