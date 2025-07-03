@@ -273,15 +273,15 @@ class GlobalNorm(nn.Cell):
                 self.group_size = config.parallel_config.model_parallel
             group_list, group_name = _get_model_parallel_group(self.group_size)
             # In avoid of the group name too long
-            hashed = hashlib.md5(group_name.encode()).hexdigest()[:48]
-            print(f"Creating hash value for the group_name hash({group_name})={hashed}")
-            group_name = str(hashed)
+            sha256 = hashlib.sha256(group_name.encode()).hexdigest()  # sha256 len is 64
+            print(f"Creating hash value for the group_name hash({group_name})={sha256}")
+            group_name = str(sha256)
             create_group(group_name, group_list)
             self.allreduce = P.AllReduce(group=group_name)
             pipeline_group_list, pipeline_group_name = _get_pipeline_group()
-            hashed = hashlib.md5(pipeline_group_name.encode()).hexdigest()[:48]
-            print(f"Creating hash value for the group_name hash({pipeline_group_name})={hashed}")
-            pipeline_group_name = str(hashed)
+            sha256 = hashlib.sha256(pipeline_group_name.encode()).hexdigest()  # sha256 len is 64
+            print(f"Creating hash value for the group_name hash({pipeline_group_name})={sha256}")
+            pipeline_group_name = str(sha256)
             create_group(pipeline_group_name, pipeline_group_list)
             self.allreduce2 = P.AllReduce(group=pipeline_group_name)
         else:
@@ -649,9 +649,7 @@ def record_last_ckpt_to_json(epoch: int, step: int, ckpt_file: str, meta_json: s
         json.dump(meta_data, fp)
 
 
-def load_safetensors(
-        safetensors_path, load_ckpt_format, network, grpo_model, prefix, strategy_path
-):
+def load_safetensors(safetensors_path, load_ckpt_format, network, grpo_model, prefix, strategy_path):
     """
     load_safetensors
     Args:
@@ -676,7 +674,7 @@ def load_safetensors(
                     for k in f.keys():
                         name_map.update({f"{prefix}{k}": k})
                         param_name_map_dict[f"{prefix}{k}"] = os.path.basename(checkpoint_file)
-            with open(os.path.join(safetensors_path, 'param_name_map.json'), "w", encoding="utf-8") as f:
+            with open(os.path.join(safetensors_path, "param_name_map.json"), "w", encoding="utf-8") as f:
                 json.dump(param_name_map_dict, f, ensure_ascii=False, indent=4)
     except Exception as e:
         raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
