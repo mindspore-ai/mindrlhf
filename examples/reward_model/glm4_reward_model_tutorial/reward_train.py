@@ -1,4 +1,4 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
+# Copyright 2024-2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,8 +21,6 @@ from mindformers.trainer import Trainer
 from mindformers.tools.register.config import MindFormerConfig
 from mindformers.tools.utils import str2bool
 
-from mindrlhf.models.glm4.glm_reward import Glm4RewardModel
-
 
 def run(
     config="xxx.yaml",
@@ -35,11 +33,13 @@ def run(
     strategy=None,
     auto_trans_ckpt=None,
     resume=False,
-    predict_data="",
     tokenizer_path="",
 ):
     """Reward model training entrance."""
-    assert os.path.exists(config) and config.endswith((".yaml", ".yml"))
+    if not os.path.exists(config):
+        raise FileNotFoundError(f"config file {config} not found")
+    if not config.endswith((".yaml", ".yml")):
+        raise TypeError(f"config file {config} must be a .yaml or .yml file")
     # init config
     config = MindFormerConfig(os.path.realpath(config))
     # variable that work in this function
@@ -63,57 +63,29 @@ def run(
 
     if run_mode == "train":
         task = Trainer(args=config, task=task, train_dataset=train_dataset)
-        task.train(
-            train_checkpoint=ckpt,
-            auto_trans_ckpt=config.auto_trans_ckpt,
-            resume_training=resume,
-        )
+        task.train(train_checkpoint=ckpt, auto_trans_ckpt=config.auto_trans_ckpt, resume_training=resume)
     else:
         raise NotImplementedError("run_mode only support train")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config", default="run_glm4_9b_rm.yaml", type=str, help="set task type."
-    )
-    parser.add_argument(
-        "--run_mode", default="train", type=str, help="set run mode for model."
-    )
-    parser.add_argument(
-        "--task", default="text_generation", type=str, help="set task type."
-    )
+    parser.add_argument("--config", default="run_glm4_9b_rm.yaml", type=str, help="set task type.")
+    parser.add_argument("--run_mode", default="train", type=str, help="set run mode for model.")
+    parser.add_argument("--task", default="text_generation", type=str, help="set task type.")
     parser.add_argument("--seq_length", default=None, type=int, help="seq_length")
-    parser.add_argument(
-        "--train_dataset", default="", type=str, help="set train dataset."
-    )
-    parser.add_argument(
-        "--use_parallel", default=True, type=str2bool, help="open parallel for model."
-    )
-    parser.add_argument(
-        "--load_checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint name or dir to load.",
-    )
-    parser.add_argument(
-        "--src_strategy", default=None, type=str, help="strategy of load_checkpoint"
-    )
+    parser.add_argument("--train_dataset", default="", type=str, help="set train dataset.")
+    parser.add_argument("--use_parallel", default=True, type=str2bool, help="open parallel for model.")
+    parser.add_argument("--load_checkpoint", default=None, type=str, help="checkpoint name or dir to load.")
+    parser.add_argument("--src_strategy", default=None, type=str, help="strategy of load_checkpoint")
     parser.add_argument(
         "--auto_trans_ckpt",
         default=None,
         type=str2bool,
         help="whether to transform checkpoint to the checkpoint matching current distribute strategy.",
     )
-    parser.add_argument(
-        "--resume", default=False, type=str2bool, help="whether resume training."
-    )
-    parser.add_argument(
-        "--predict_data", default="", type=str, nargs="+", help="input predict data."
-    )
-    parser.add_argument(
-        "--tokenizer", default=None, type=str, help="path to tokenizer model"
-    )
+    parser.add_argument("--resume", default=False, type=str2bool, help="whether resume training.")
+    parser.add_argument("--tokenizer", default=None, type=str, help="path to tokenizer model")
 
     args = parser.parse_args()
     run(
@@ -127,6 +99,5 @@ if __name__ == "__main__":
         strategy=args.src_strategy,
         auto_trans_ckpt=args.auto_trans_ckpt,
         resume=args.resume,
-        predict_data=args.predict_data,
         tokenizer_path=args.tokenizer,
     )

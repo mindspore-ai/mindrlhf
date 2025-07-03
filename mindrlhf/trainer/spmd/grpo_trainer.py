@@ -93,7 +93,8 @@ class GRPOTrainer:
         )
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
-            assert self.grpo_config.rl_config.pack_num >= 1, "pack_num must >= 1!"
+            if self.grpo_config.rl_config.pack_num < 1:
+                raise ValueError("pack_num must >= 1!")
             logger.info(
                 f"Set packing_sample_length to train worker seq_length: "
                 f"{self.train.sft_model_config_train.seq_length}."
@@ -295,22 +296,26 @@ class GRPOTrainer:
         """Reshard train model parameters to infer model."""
         if self.reshard_mem_opt_level == 1:
             self.train.offload_model()
-            assert not self.train.model_on_device, (
-                "when reshard_mem_opt_level is equal to 1, " "train model must not on device before transform param"
-            )
-            assert not self.infer.on_device, (
-                "when reshard_mem_opt_level is equal to 1, " "infer model must not on device before transform param"
-            )
+            if self.train.model_on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 1, train model must not on device before transform param"
+                )
+            if self.infer.on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 1, infer model must not on device before transform param"
+                )
             self.old_policy.check_not_on_device()
         else:
             self.infer.load()
             self.old_policy.load()
-            assert self.train.model_on_device, (
-                "when reshard_mem_opt_level is equal to 0, " "train model must on device before transform param"
-            )
-            assert self.infer.on_device, (
-                "when reshard_mem_opt_level is equal to 0, " "infer model must on device before transform param"
-            )
+            if not self.train.model_on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 0, train model must on device before transform param"
+                )
+            if not self.infer.on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 0, infer model must on device before transform param"
+                )
 
         if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
             # in some work, ref update may have a 'bad' effect
@@ -333,22 +338,26 @@ class GRPOTrainer:
             self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
 
         if self.reshard_mem_opt_level == 0:
-            assert self.train.model_on_device, (
-                "when reshard_mem_opt_level is equal to 0, " "train model must on device after transform param"
-            )
-            assert self.infer.on_device, (
-                "when reshard_mem_opt_level is equal to 0, " "infer model must on device after transform param"
-            )
+            if not self.train.model_on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 0, train model must on device after transform param"
+                )
+            if not self.infer.on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 0, infer model must on device after transform param"
+                )
             self.train.offload_model()
             self.old_policy.check_on_device()
             self.old_policy.offload()
         else:
-            assert not self.train.model_on_device, (
-                "when reshard_mem_opt_level is equal to 1, " "train model must not on device after transform param"
-            )
-            assert not self.infer.on_device, (
-                "when reshard_mem_opt_level is equal to 1, " "infer model must not on device after transform param"
-            )
+            if self.train.model_on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 1, train model must not on device after transform param"
+                )
+            if self.infer.on_device:
+                raise RuntimeError(
+                    "when reshard_mem_opt_level is equal to 1, infer model must not on device after transform param"
+                )
             self.old_policy.check_not_on_device()
 
     def run_grpo_train(self):

@@ -33,6 +33,7 @@ from mindrlhf.utils import TimeConsumingCollector
 from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.utils import load_safetensors
 
+
 class OldPolicyWorker(Worker):
     """
     This class generates responses.
@@ -196,13 +197,14 @@ class OldPolicyWorker(Worker):
         if not os.path.exists(self.old_policy_ckpt_path):
             raise ValueError(f"old policy model checkpoint path: {self.old_policy_ckpt_path} not exists")
 
-        if self.old_policy_ckpt_path and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
+        if self.old_policy_ckpt_path and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
             strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
             network = self.old_policy_model.model
             prefix = "model."
-            load_safetensors(self.old_policy_ckpt_path, self.load_ckpt_format, network,
-                             self.old_policy_model, prefix, strategy_path)
+            load_safetensors(
+                self.old_policy_ckpt_path, self.load_ckpt_format, network, self.old_policy_model, prefix, strategy_path
+            )
             return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel} {load_ckpt_func}")
@@ -228,13 +230,15 @@ class OldPolicyWorker(Worker):
     def check_not_on_device(self):
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
-        assert not self.on_device, (
-            "when reshard_mem_opt_level is equal to 0, " "old policy model must not on device before transform param"
-        )
+        if self.on_device:
+            raise RuntimeError(
+                "when reshard_mem_opt_level is equal to 0, old policy model must not on device before transform param"
+            )
 
     def check_on_device(self):
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
-        assert self.on_device, (
-            "when reshard_mem_opt_level is equal to 0, " "old policy model must on device before transform param"
-        )
+        if not self.on_device:
+            raise RuntimeError(
+                "when reshard_mem_opt_level is equal to 0, old policy model must on device before transform param"
+            )
