@@ -1,4 +1,4 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
+# Copyright 2024-2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ from mindformers.tools.utils import (
     delete_file,
     remake_folder,
     is_main_rank,
-    format_path
+    format_path,
 )
 from mindformers.tools.logger import logger
 from mindformers.tools.cloud_adapter import mox_adapter
@@ -44,23 +44,27 @@ from mindformers.tools.ckpt_transform.utils import (
     check_ckpt_file_exist,
     is_power_of_two,
     show_progress,
-    make_soft_link
+    make_soft_link,
 )
 
 if check_in_modelarts():
     import moxing as mox
 
-__all__ = ['TransformCkpt']
+__all__ = ["TransformCkpt"]
+
 
 class TransformCkpt:
     """Transform src_checkpoint from src_strategy to dst_strategy."""
-    def __init__(self,
-                 auto_trans_ckpt: bool = False,
-                 rank_id: Optional[int] = None,
-                 world_size: Optional[int] = None,
-                 transform_process_num: int = 1,
-                 transform_by_rank: bool = False,
-                 npu_num_per_node: int = None):
+
+    def __init__(
+        self,
+        auto_trans_ckpt: bool = False,
+        rank_id: Optional[int] = None,
+        world_size: Optional[int] = None,
+        transform_process_num: int = 1,
+        transform_by_rank: bool = False,
+        npu_num_per_node: int = None,
+    ):
         """
         Initializes the object.
 
@@ -103,23 +107,34 @@ class TransformCkpt:
         self.is_main_rank = is_main_rank()
         self.npu_num_per_node = npu_num_per_node or get_device_num_per_node()
         self.node_num = self.world_size // self.npu_num_per_node
-        assert is_power_of_two(self.npu_num_per_node), \
-            f"The `npu_num_per_node` must be a power of 2, but get {npu_num_per_node}"
+        if not is_power_of_two(self.npu_num_per_node):
+            raise AssertionError(f"The `npu_num_per_node` must be a power of 2, but get {npu_num_per_node}")
 
         # Before obtaining transform_rank_id_list, check 1 ≤ transform_process_num ≤ world_size.
-        assert transform_process_num >= 1, "`transform_process_num` should not smaller than 1."
+        if transform_process_num < 1:
+            raise AssertionError("`transform_process_num` should not smaller than 1.")
         if transform_process_num > self.world_size:
-            logger.warning("transform_process_num: %d should not bigger than world_size: %d. \
+            logger.warning(
+                "transform_process_num: %d should not bigger than world_size: %d. \
                 transform_process_num is set to %d",
-                           transform_process_num, self.world_size, self.world_size)
+                transform_process_num,
+                self.world_size,
+                self.world_size,
+            )
             transform_process_num = self.world_size
-        assert self.world_size % transform_process_num == 0, \
-            f"transform_process_num: {transform_process_num} should be divided by world_size: {self.world_size}."
+        if self.world_size % transform_process_num != 0:
+            raise AssertionError(
+                f"transform_process_num: {transform_process_num} should be divided by world_size: {self.world_size}."
+            )
         if check_in_modelarts() and 1 < transform_process_num < self.node_num:
-            logger.warning("transform_process_num: %d should not smaller than \
+            logger.warning(
+                "transform_process_num: %d should not smaller than \
                 node_num = world_size // npu_num_per_node = %d when training on AICC. \
                     transform_process_num is set to node num = %d",
-                           transform_process_num, self.node_num, self.node_num)
+                transform_process_num,
+                self.node_num,
+                self.node_num,
+            )
             transform_process_num = self.world_size // npu_num_per_node
         if check_in_modelarts() and transform_process_num == 1:
             # The 0th NPU of each node is responsible for transform all checkpoints.
@@ -130,8 +145,9 @@ class TransformCkpt:
             # Obtain transform_rank_id_list. For example, if world_size=8 and transform_process_num=2,
             # then transform_rank_id_list=[0,4], means that the 0th rank and the 4th rank
             # responsible for transform checkpoints.
-            self.transform_rank_id_list = \
-                [i for i in range(0, self.world_size, self.world_size // transform_process_num)]
+            self.transform_rank_id_list = [
+                i for i in range(0, self.world_size, self.world_size // transform_process_num)
+            ]
         self.transform_process_num = len(self.transform_rank_id_list)
 
         if auto_trans_ckpt:
@@ -159,12 +175,14 @@ class TransformCkpt:
         logger.info(f"transform_process_num: {self.transform_process_num}")
         logger.info(f"transform_rank_id_list: {self.transform_rank_id_list}")
 
-    def __call__(self,
-                 src_checkpoint: str,
-                 dst_checkpoint_dir: Optional[str] = None,
-                 src_strategy: Optional[str] = None,
-                 dst_strategy: Optional[str] = None,
-                 prefix: str = "checkpoint_") -> str:
+    def __call__(
+        self,
+        src_checkpoint: str,
+        dst_checkpoint_dir: Optional[str] = None,
+        src_strategy: Optional[str] = None,
+        dst_strategy: Optional[str] = None,
+        prefix: str = "checkpoint_",
+    ) -> str:
         """
         Transform checkpoints.
 
@@ -232,21 +250,26 @@ class TransformCkpt:
             if self.world_size > 1:
                 dst_strategy_list = glob(os.path.join(self.dst_strategy_dir, f"*_rank_{self.rank_id}.ckpt"))
                 if not dst_strategy_list:
-                    raise RuntimeError(f"The `dst_strategy`={self.dst_strategy_dir} \
-                        does not contain strategy file of rank_{self.rank_id}.")
+                    raise RuntimeError(
+                        f"The `dst_strategy`={self.dst_strategy_dir} \
+                        does not contain strategy file of rank_{self.rank_id}."
+                    )
                 if len(dst_strategy_list) > 1:
-                    raise RuntimeError(f"There can only be one strategy file corresponding to rank_{self.rank_id}, \
+                    raise RuntimeError(
+                        f"There can only be one strategy file corresponding to rank_{self.rank_id}, \
                         but multiple strategy files corresponding to rank_{self.rank_id} were found \
-                            in {self.dst_strategy_dir}.")
+                            in {self.dst_strategy_dir}."
+                    )
                 dst_strategy = dst_strategy_list[0]
             else:
                 dst_strategy = None
 
             if check_in_modelarts():
-                assert mox.file.exists(self.transformed_checkpoint_dir_obs), \
-                    f"{self.transformed_checkpoint_dir_obs} is not found!"
+                if not mox.file.exists(self.transformed_checkpoint_dir_obs):
+                    raise FileNotFoundError(f"{self.transformed_checkpoint_dir_obs} is not found!")
                 if self.world_size > 1:
-                    assert mox.file.exists(self.dst_strategy_dir_obs), f"{self.dst_strategy_dir_obs} is not found!"
+                    if not mox.file.exists(self.dst_strategy_dir_obs):
+                        raise FileNotFoundError(f"{self.dst_strategy_dir_obs} is not found!")
 
             # Get final dst_strategy in auto_trans_ckpt mode.
             dst_strategy = self.get_dst_strategy(dst_strategy)
@@ -269,58 +292,52 @@ class TransformCkpt:
                     dst_checkpoint_dir=dst_ckpt_dir,
                     src_strategy=src_strategy,
                     dst_strategy=dst_strategy,
-                    prefix=prefix
+                    prefix=prefix,
                 )
 
         self.clear_cache()
         return dst_checkpoint_dir
 
-    def transform_ckpt(self,
-                       src_checkpoint,
-                       dst_checkpoint_dir,
-                       src_strategy=None,
-                       dst_strategy=None,
-                       prefix="checkpoint_"):
+    def transform_ckpt(
+        self, src_checkpoint, dst_checkpoint_dir, src_strategy=None, dst_strategy=None, prefix="checkpoint_"
+    ):
         """Transform ckpt using mindspore.transform_checkpoint"""
         self.check_src_checkpoint_and_strategy(src_checkpoint, src_strategy)
         if src_strategy is None and dst_strategy is None:
             raise ValueError("`src_strategy` and `dst_strategy` cannot both be None!")
         if check_in_modelarts():
-            dst_checkpoint_dir_obs = os.path.join(self.transformed_checkpoint_dir_obs,
-                                                  os.path.basename(dst_checkpoint_dir))
+            dst_checkpoint_dir_obs = os.path.join(
+                self.transformed_checkpoint_dir_obs, os.path.basename(dst_checkpoint_dir)
+            )
 
         if self.rank_id in self.transform_rank_id_list:
             try:
                 if not self.transform_by_rank:
-                    self.transform_checkpoints(src_checkpoint,
-                                               dst_checkpoint_dir,
-                                               prefix,
-                                               src_strategy,
-                                               dst_strategy)
+                    self.transform_checkpoints(src_checkpoint, dst_checkpoint_dir, prefix, src_strategy, dst_strategy)
                 else:
-                    self.transform_checkpoint_by_rank(src_checkpoint,
-                                                      dst_checkpoint_dir,
-                                                      prefix,
-                                                      src_strategy,
-                                                      dst_strategy)
+                    self.transform_checkpoint_by_rank(
+                        src_checkpoint, dst_checkpoint_dir, prefix, src_strategy, dst_strategy
+                    )
                 logger.info(".........Transform succeed!.........")
                 logger.info("The transformed checkpoint was saved to %s", dst_checkpoint_dir)
                 if check_in_modelarts():
-                    transform_succeed_txt = os.path.join(dst_checkpoint_dir_obs,
-                                                         f'transform_succeed_rank_{self.rank_id}.txt')
+                    transform_succeed_txt = os.path.join(
+                        dst_checkpoint_dir_obs, f"transform_succeed_rank_{self.rank_id}.txt"
+                    )
                 else:
-                    transform_succeed_txt = os.path.join(dst_checkpoint_dir,
-                                                         f'transform_succeed_rank_{self.rank_id}.txt')
+                    transform_succeed_txt = os.path.join(
+                        dst_checkpoint_dir, f"transform_succeed_rank_{self.rank_id}.txt"
+                    )
                 create_file(transform_succeed_txt)
             # pylint: disable=W0703
             except BaseException as e:
                 logger.error(f".........Transform failed due to: {str(e)}.........")
                 if check_in_modelarts():
-                    transform_failed_txt = os.path.join(dst_checkpoint_dir_obs,
-                                                        f'transform_failed_rank_{self.rank_id}.txt')
+                    transform_failed_txt = os.path.join(
+                        dst_checkpoint_dir_obs, f"transform_failed_rank_{self.rank_id}.txt"
+                    )
                 else:
-                    transform_failed_txt = os.path.join(dst_checkpoint_dir,
-                                                        f'transform_failed_rank_{self.rank_id}.txt')
+                    transform_failed_txt = os.path.join(dst_checkpoint_dir, f"transform_failed_rank_{self.rank_id}.txt")
                 create_file(transform_failed_txt, info=str(e))
 
         # Wait transform finished.
@@ -329,12 +346,7 @@ class TransformCkpt:
         if check_in_modelarts():
             self.send_transformed_checkpoint_to_obs(dst_checkpoint_dir)
 
-    def transform_checkpoints(self,
-                              src_checkpoint,
-                              dst_checkpoint,
-                              prefix,
-                              src_strategy,
-                              dst_strategy):
+    def transform_checkpoints(self, src_checkpoint, dst_checkpoint, prefix, src_strategy, dst_strategy):
         """transform checkpoints using mindspore.transform_checkpoints"""
         os.makedirs(dst_checkpoint, exist_ok=True)
         logger.info(".........Transforming ckpt.........")
@@ -342,25 +354,15 @@ class TransformCkpt:
         logger.info("src_strategy: %s", src_strategy)
         logger.info("dst_checkpoint: %s", dst_checkpoint)
         logger.info("dst_strategy: %s", dst_strategy)
-        ms.transform_checkpoints(src_checkpoint,
-                                 dst_checkpoint,
-                                 prefix,
-                                 src_strategy,
-                                 dst_strategy)
+        ms.transform_checkpoints(src_checkpoint, dst_checkpoint, prefix, src_strategy, dst_strategy)
 
-    def transform_checkpoint_by_rank(self,
-                                     src_checkpoint,
-                                     dst_checkpoint,
-                                     prefix,
-                                     src_strategy,
-                                     dst_strategy):
+    def transform_checkpoint_by_rank(self, src_checkpoint, dst_checkpoint, prefix, src_strategy, dst_strategy):
         """transform checkpoints using mindspore.transform_checkpoint_by_rank"""
-        for current_transform_rank_id in \
-            range(self.rank_id, self.rank_id + self.world_size // self.transform_process_num):
+        for current_transform_rank_id in range(
+            self.rank_id, self.rank_id + self.world_size // self.transform_process_num
+        ):
             logger.info(".........Transforming Ckpt For Rank: %d.........", current_transform_rank_id)
-            src_rank_list = ms.rank_list_for_transform(current_transform_rank_id,
-                                                       src_strategy,
-                                                       dst_strategy)
+            src_rank_list = ms.rank_list_for_transform(current_transform_rank_id, src_strategy, dst_strategy)
             checkpoint_file_map = {}
             for src_rank_id in src_rank_list:
                 checkpoint_rank_dir = os.path.join(src_checkpoint, f"rank_{src_rank_id}")
@@ -371,34 +373,39 @@ class TransformCkpt:
                 checkpoint_file_map[src_rank_id] = checkpoint_file_list[-1]
             save_checkpoint_dir = os.path.join(dst_checkpoint, "rank_{}".format(current_transform_rank_id))
             os.makedirs(save_checkpoint_dir, exist_ok=True)
-            save_checkpoint_path = os.path.join(save_checkpoint_dir,
-                                                "{}.ckpt".format(prefix + str(current_transform_rank_id)))
+            save_checkpoint_path = os.path.join(
+                save_checkpoint_dir, "{}.ckpt".format(prefix + str(current_transform_rank_id))
+            )
             logger.info("rank_list: %s", src_rank_list)
             logger.info("checkpoint_file_map: %s", checkpoint_file_map)
             logger.info("save_checkpoint_path: %s", save_checkpoint_path)
             logger.info("src_strategy: %s", src_strategy)
             logger.info("dst_strategy: %s", dst_strategy)
-            ms.transform_checkpoint_by_rank(current_transform_rank_id,
-                                            checkpoint_file_map,
-                                            save_checkpoint_path,
-                                            src_strategy,
-                                            dst_strategy)
+            ms.transform_checkpoint_by_rank(
+                current_transform_rank_id, checkpoint_file_map, save_checkpoint_path, src_strategy, dst_strategy
+            )
 
     def build_soft_link_of_checkpoint(self, checkpoint, soft_link_dir):
         """Build softlink of src checkpoint"""
-        if os.path.isdir(checkpoint) and not check_rank_folders(checkpoint, 0) and \
-            not check_ckpt_file_exist(checkpoint):
+        if (
+            os.path.isdir(checkpoint)
+            and not check_rank_folders(checkpoint, 0)
+            and not check_ckpt_file_exist(checkpoint)
+        ):
             raise ValueError(f"No rank_0 folder or ckpt files are found under {checkpoint}.")
-        if os.path.isfile(checkpoint) and not checkpoint.endswith('.ckpt'):
-            raise ValueError(f"The value of load_checkpoint must be a folder or a file with suffix '.ckpt', "
-                             f"but got {checkpoint}")
+        if os.path.isfile(checkpoint) and not checkpoint.endswith(".ckpt"):
+            raise ValueError(
+                f"The value of load_checkpoint must be a folder or a file with suffix '.ckpt', " f"but got {checkpoint}"
+            )
 
         if os.path.isdir(checkpoint):
             if check_rank_folders(checkpoint, 0):
                 # Has rank_0 dir under checkpoint.
                 if check_ckpt_file_exist(checkpoint):
-                    logger.warning(f"Find both ckpt files and rank folder under {checkpoint}, "
-                                   "the rank folder will be used for checkpoint transform.")
+                    logger.warning(
+                        f"Find both ckpt files and rank folder under {checkpoint}, "
+                        "the rank folder will be used for checkpoint transform."
+                    )
                 soft_link = os.path.join(soft_link_dir, os.path.basename(checkpoint))
                 make_soft_link(soft_link, checkpoint)
             else:
@@ -437,22 +444,26 @@ class TransformCkpt:
         if not strategy_path or strategy_path == "None":
             return None
 
-        assert os.path.exists(strategy_path), f'{strategy_path} not found!'
+        if not os.path.exists(strategy_path):
+            raise FileNotFoundError(f"{strategy_path} not found!")
 
         if os.path.isfile(strategy_path):
             return strategy_path
 
         if os.path.isdir(strategy_path):
             if rank_id:
-                merge_path = os.path.join(strategy_path, f'merged_ckpt_strategy_by_rank_{rank_id}.ckpt')
+                merge_path = os.path.join(strategy_path, f"merged_ckpt_strategy_by_rank_{rank_id}.ckpt")
             else:
-                merge_path = os.path.join(strategy_path, f'merged_ckpt_strategy.ckpt')
+                merge_path = os.path.join(strategy_path, f"merged_ckpt_strategy.ckpt")
 
             merged_succeed_txt = os.path.join(strategy_path, "merge_succeed.txt")
             if self.is_main_rank:
                 if os.path.exists(merge_path):
-                    logger.info("The merged strategy: %s has existed. \
-                                It will be deleted and re-merge a new strategy.", merge_path)
+                    logger.info(
+                        "The merged strategy: %s has existed. \
+                                It will be deleted and re-merge a new strategy.",
+                        merge_path,
+                    )
                     os.remove(merge_path)
                 ms.merge_pipeline_strategys(strategy_path, merge_path)
                 create_file(merged_succeed_txt)
@@ -471,8 +482,9 @@ class TransformCkpt:
         if self.world_size == 1:
             return None
 
-        assert dst_strategy.endswith(f"_rank_{self.rank_id}.ckpt") and \
-            os.path.exists(dst_strategy), f"`dst_strategy`={dst_strategy} is not found!"
+        assert dst_strategy.endswith(f"_rank_{self.rank_id}.ckpt") and os.path.exists(
+            dst_strategy
+        ), f"`dst_strategy`={dst_strategy} is not found!"
 
         logger.info(".........Collecting strategy.........")
         if check_in_modelarts():
@@ -512,9 +524,11 @@ class TransformCkpt:
         """check src checkpoint and strategy"""
         check_path(src_checkpoint, "src_checkpoint")
         if not os.path.isdir(src_checkpoint) or not glob(os.path.join(src_checkpoint, "rank_*")):
-            raise ValueError("The load_checkpoint must be a dir and "
-                             "ckpt should be stored in the format of load_checkpoint/rank_x/xxx.ckpt,"
-                             f"but get {src_checkpoint}.")
+            raise ValueError(
+                "The load_checkpoint must be a dir and "
+                "ckpt should be stored in the format of load_checkpoint/rank_x/xxx.ckpt,"
+                f"but get {src_checkpoint}."
+            )
         # Check rank_dirs is continuous.
         # For example, rank_0, rank_1, rank_4 is not continuous because it is missing rank_3
         src_checkpoint_rank_dir_list = glob(os.path.join(src_checkpoint, "rank_*"))
@@ -542,8 +556,8 @@ class TransformCkpt:
     def send_transformed_checkpoint_to_obs(self, dst_checkpoint_dir):
         """Local rank send transformed checkpoint to obs."""
         dst_checkpoint_dir_obs = os.path.join(self.transformed_checkpoint_dir_obs, os.path.basename(dst_checkpoint_dir))
-        dst_checkpoint_rankdir_obs = os.path.join(dst_checkpoint_dir_obs, f'rank_{self.rank_id}')
-        dst_checkpoint_rankdir = os.path.join(dst_checkpoint_dir, f'rank_{self.rank_id}')
+        dst_checkpoint_rankdir_obs = os.path.join(dst_checkpoint_dir_obs, f"rank_{self.rank_id}")
+        dst_checkpoint_rankdir = os.path.join(dst_checkpoint_dir, f"rank_{self.rank_id}")
         mox_adapter(dst_checkpoint_rankdir, dst_checkpoint_rankdir_obs)
         logger.info("Save %s to %s.", dst_checkpoint_rankdir, dst_checkpoint_rankdir_obs)
 
@@ -555,7 +569,8 @@ class TransformCkpt:
         while True:
             if check_in_modelarts():
                 obs_strategy_path_list = mox.file.glob(
-                    os.path.join(self.dst_strategy_dir_obs, "ckpt_strategy_rank_*.ckpt"))
+                    os.path.join(self.dst_strategy_dir_obs, "ckpt_strategy_rank_*.ckpt")
+                )
                 obs_strategy_num = len(obs_strategy_path_list)
                 progress = (obs_strategy_num / self.world_size) * 100
                 if obs_strategy_num != last_obs_strategy_num:
@@ -589,13 +604,15 @@ class TransformCkpt:
         while True:
             if check_in_modelarts():
                 transformed_ckpt_dir_obs = os.path.join(self.transformed_checkpoint_dir_obs, os.path.basename(ckpt_dir))
-                transform_failed_txts = mox.file.glob(os.path.join(transformed_ckpt_dir_obs,
-                                                                   f'transform_failed_rank_*.txt'))
-                transform_succeed_txts = mox.file.glob(os.path.join(transformed_ckpt_dir_obs,
-                                                                    f'transform_succeed_rank_*.txt'))
+                transform_failed_txts = mox.file.glob(
+                    os.path.join(transformed_ckpt_dir_obs, f"transform_failed_rank_*.txt")
+                )
+                transform_succeed_txts = mox.file.glob(
+                    os.path.join(transformed_ckpt_dir_obs, f"transform_succeed_rank_*.txt")
+                )
             else:
-                transform_failed_txts = glob(os.path.join(ckpt_dir, f'transform_failed_rank_*.txt'))
-                transform_succeed_txts = glob(os.path.join(ckpt_dir, f'transform_succeed_rank_*.txt'))
+                transform_failed_txts = glob(os.path.join(ckpt_dir, f"transform_failed_rank_*.txt"))
+                transform_succeed_txts = glob(os.path.join(ckpt_dir, f"transform_succeed_rank_*.txt"))
             if transform_failed_txts:
                 raise ValueError(f"Transform failed, find {transform_failed_txts}.")
             current_count = len(transform_succeed_txts)
@@ -608,49 +625,30 @@ class TransformCkpt:
             else:
                 break
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--src_checkpoint',
-                        default="",
-                        type=str,
-                        help='path of src ckpt')
-    parser.add_argument('--dst_checkpoint_dir',
-                        default="",
-                        type=str,
-                        help='path where to save dst ckpt')
-    parser.add_argument('--src_strategy',
-                        default=None,
-                        help='path of src ckpt strategy')
-    parser.add_argument('--dst_strategy',
-                        default=None,
-                        help='path of dst ckpt strategy')
-    parser.add_argument('--prefix',
-                        default='checkpoint_',
-                        type=str,
-                        help='prefix of transformed checkpoint')
-    parser.add_argument('--rank_id',
-                        default=0,
-                        type=int,
-                        help='rank id')
-    parser.add_argument('--world_size',
-                        default=1,
-                        type=int,
-                        help='world size')
-    parser.add_argument('--transform_process_num',
-                        default=1,
-                        type=int,
-                        help='transform process num')
-    parser.add_argument('--transform_by_rank',
-                        default=False,
-                        type=bool,
-                        help='transform checkpoint using mindspore.transform_checkpoint_by_rank')
+    parser.add_argument("--src_checkpoint", default="", type=str, help="path of src ckpt")
+    parser.add_argument("--dst_checkpoint_dir", default="", type=str, help="path where to save dst ckpt")
+    parser.add_argument("--src_strategy", default=None, help="path of src ckpt strategy")
+    parser.add_argument("--dst_strategy", default=None, help="path of dst ckpt strategy")
+    parser.add_argument("--prefix", default="checkpoint_", type=str, help="prefix of transformed checkpoint")
+    parser.add_argument("--rank_id", default=0, type=int, help="rank id")
+    parser.add_argument("--world_size", default=1, type=int, help="world size")
+    parser.add_argument("--transform_process_num", default=1, type=int, help="transform process num")
+    parser.add_argument(
+        "--transform_by_rank",
+        default=False,
+        type=bool,
+        help="transform checkpoint using mindspore.transform_checkpoint_by_rank",
+    )
     args = parser.parse_args()
 
     transform_ckpt = TransformCkpt(
         rank_id=args.rank_id,
         world_size=args.world_size,
         transform_process_num=args.transform_process_num,
-        transform_by_rank=args.transform_by_rank
+        transform_by_rank=args.transform_by_rank,
     )
 
     transform_ckpt(
@@ -658,7 +656,7 @@ if __name__ == '__main__':
         dst_checkpoint_dir=args.dst_checkpoint_dir,
         src_strategy=args.src_strategy,
         dst_strategy=args.dst_strategy,
-        prefix=args.prefix
+        prefix=args.prefix,
     )
 
     print("......Transform finished!......")

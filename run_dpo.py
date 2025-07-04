@@ -1,4 +1,4 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
+# Copyright 2024-2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 """run dpo"""
 import argparse
 import os
+
 # pylint: disable=W0611
 from mindformers import Trainer, MindFormerConfig
 from mindformers import init_context, ContextConfig, ParallelContextConfig
@@ -33,28 +34,32 @@ from mindrlhf.utils import DPODataset
 
 
 @cloud_monitor()
-def main(task='text_generation',
-         config=None,
-         run_mode=None,
-         seq_length=None,
-         mode=None,
-         use_parallel=None,
-         device_id=None,
-         ckpt=None,
-         strategy=None,
-         auto_trans_ckpt=None,
-         resume=False,
-         train_dataset='',
-         eval_dataset='',
-         predict_data='',
-         max_length=512,
-         remote_save_url=None,
-         vocab_file=None,
-         merges_file=None,
-         batch_size=None):
+def main(
+    task="text_generation",
+    config=None,
+    run_mode=None,
+    seq_length=None,
+    mode=None,
+    use_parallel=None,
+    device_id=None,
+    ckpt=None,
+    strategy=None,
+    auto_trans_ckpt=None,
+    resume=False,
+    train_dataset="",
+    eval_dataset="",
+    predict_data="",
+    max_length=512,
+    remote_save_url=None,
+    vocab_file=None,
+    merges_file=None,
+    batch_size=None,
+):
     """main function."""
-
-    assert os.path.exists(config) and config.endswith(('.yaml', '.yml'))
+    if not os.path.exists(config):
+        raise FileNotFoundError(f"config file {config} not found")
+    if not config.endswith((".yaml", ".yml")):
+        raise TypeError(f"config file {config} must be a .yaml or .yml file")
 
     # init config
     config = MindFormerConfig(os.path.realpath(config))
@@ -88,97 +93,80 @@ def main(task='text_generation',
     # init context
     build_context(config)
 
-    if run_mode in ['train', 'finetune']:
+    if run_mode in ["train", "finetune"]:
         config.model.model_config.use_past = False
 
     # start task
-    if run_mode == 'train':
-        trainer = Trainer(args=config,
-                          task=task,
-                          train_dataset=train_dataset)
+    if run_mode == "train":
+        trainer = Trainer(args=config, task=task, train_dataset=train_dataset)
         trainer.train(train_checkpoint=ckpt, auto_trans_ckpt=config.auto_trans_ckpt, resume_training=resume)
-    elif run_mode == 'finetune':
-        trainer = Trainer(args=config,
-                          task=task,
-                          train_dataset=train_dataset)
+    elif run_mode == "finetune":
+        trainer = Trainer(args=config, task=task, train_dataset=train_dataset)
         trainer.finetune(finetune_checkpoint=ckpt, auto_trans_ckpt=config.auto_trans_ckpt, resume_training=resume)
-    elif run_mode == 'eval':
-        trainer = Trainer(args=config,
-                          task=task,
-                          eval_dataset=eval_dataset)
+    elif run_mode == "eval":
+        trainer = Trainer(args=config, task=task, eval_dataset=eval_dataset)
         trainer.evaluate(eval_checkpoint=ckpt, auto_trans_ckpt=config.auto_trans_ckpt)
-    elif run_mode == 'predict':
-        trainer = Trainer(args=config,
-                          task=task)
+    elif run_mode == "predict":
+        trainer = Trainer(args=config, task=task)
         batch_input = [[predict_data for _ in range(config.model.model_config.batch_size)]]
         for input_prompt in batch_input:
-            result = trainer.predict(input_data=input_prompt,
-                                     predict_checkpoint=ckpt,
-                                     auto_trans_ckpt=config.auto_trans_ckpt,
-                                     max_length=int(max_length))
+            result = trainer.predict(
+                input_data=input_prompt,
+                predict_checkpoint=ckpt,
+                auto_trans_ckpt=config.auto_trans_ckpt,
+                max_length=int(max_length),
+            )
             logger.info(result)
     else:
-        raise ValueError(f'run_mode should be one of [train, finetune, eval, predict], but get {config.run_mode}')
+        raise ValueError(f"run_mode should be one of [train, finetune, eval, predict], but get {config.run_mode}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--task', default='text_generation', type=str,
-                        help='set task type.')
-    parser.add_argument('--config', default=None, type=str,
-                        help='set task type.')
-    parser.add_argument('--run_mode', default='train', type=str,
-                        help='set run mode for model.')
-    parser.add_argument('--seq_length', default=None, type=int,
-                        help='seq_length')
-    parser.add_argument('--use_parallel', default=None, type=str2bool,
-                        help='open parallel for model.')
-    parser.add_argument('--device_id', default=None, type=int,
-                        help='device id set when run on single card. Default: 0')
-    parser.add_argument('--mode', default=0, type=int,
-                        help='0--Graph Mode; 1--Pynative Mode')
-    parser.add_argument('--load_checkpoint', default=None, type=str,
-                        help='checkpoint name or dir to load.')
-    parser.add_argument('--src_strategy', default=None, type=str,
-                        help='strategy of load_checkpoint')
-    parser.add_argument('--auto_trans_ckpt', default=None, type=str2bool,
-                        help='whether to transform checkpoint to the checkpoint matching current distribute strategy.')
-    parser.add_argument('--resume', default=None, type=str2bool,
-                        help='whether resume training.')
-    parser.add_argument('--train_dataset', default='', type=str,
-                        help='set train dataset.')
-    parser.add_argument('--eval_dataset', default='', type=str,
-                        help='set eval dataset.')
-    parser.add_argument('--predict_data', default='', type=str, nargs='+',
-                        help='input predict data.')
-    parser.add_argument('--max_length', default=512, type=int,
-                        help='max length for predict output.')
-    parser.add_argument('--remote_save_url', default='', type=str,
-                        help='whether use optimizer parallel. Default: None')
-    parser.add_argument('--vocab_file', default=None, type=str,
-                        help='tokenizer model or vocab_file')
-    parser.add_argument('--merges_file', default=None, type=str,
-                        help='merges_file')
-    parser.add_argument('--batch_size', default=None, type=str,
-                        help='batch_size')
+    parser.add_argument("--task", default="text_generation", type=str, help="set task type.")
+    parser.add_argument("--config", default=None, type=str, help="set task type.")
+    parser.add_argument("--run_mode", default="train", type=str, help="set run mode for model.")
+    parser.add_argument("--seq_length", default=None, type=int, help="seq_length")
+    parser.add_argument("--use_parallel", default=None, type=str2bool, help="open parallel for model.")
+    parser.add_argument("--device_id", default=None, type=int, help="device id set when run on single card. Default: 0")
+    parser.add_argument("--mode", default=0, type=int, help="0--Graph Mode; 1--Pynative Mode")
+    parser.add_argument("--load_checkpoint", default=None, type=str, help="checkpoint name or dir to load.")
+    parser.add_argument("--src_strategy", default=None, type=str, help="strategy of load_checkpoint")
+    parser.add_argument(
+        "--auto_trans_ckpt",
+        default=None,
+        type=str2bool,
+        help="whether to transform checkpoint to the checkpoint matching current distribute strategy.",
+    )
+    parser.add_argument("--resume", default=None, type=str2bool, help="whether resume training.")
+    parser.add_argument("--train_dataset", default="", type=str, help="set train dataset.")
+    parser.add_argument("--eval_dataset", default="", type=str, help="set eval dataset.")
+    parser.add_argument("--predict_data", default="", type=str, nargs="+", help="input predict data.")
+    parser.add_argument("--max_length", default=512, type=int, help="max length for predict output.")
+    parser.add_argument("--remote_save_url", default="", type=str, help="whether use optimizer parallel. Default: None")
+    parser.add_argument("--vocab_file", default=None, type=str, help="tokenizer model or vocab_file")
+    parser.add_argument("--merges_file", default=None, type=str, help="merges_file")
+    parser.add_argument("--batch_size", default=None, type=str, help="batch_size")
     args = parser.parse_args()
 
-    main(task=args.task,
-         config=args.config,
-         run_mode=args.run_mode,
-         seq_length=args.seq_length,
-         mode=args.mode,
-         use_parallel=args.use_parallel,
-         device_id=args.device_id,
-         ckpt=args.load_checkpoint,
-         strategy=args.src_strategy,
-         auto_trans_ckpt=args.auto_trans_ckpt,
-         resume=args.resume,
-         train_dataset=args.train_dataset,
-         eval_dataset=args.eval_dataset,
-         predict_data=args.predict_data,
-         max_length=args.max_length,
-         remote_save_url=args.remote_save_url,
-         vocab_file=args.vocab_file,
-         merges_file=args.merges_file,
-         batch_size=args.batch_size)
+    main(
+        task=args.task,
+        config=args.config,
+        run_mode=args.run_mode,
+        seq_length=args.seq_length,
+        mode=args.mode,
+        use_parallel=args.use_parallel,
+        device_id=args.device_id,
+        ckpt=args.load_checkpoint,
+        strategy=args.src_strategy,
+        auto_trans_ckpt=args.auto_trans_ckpt,
+        resume=args.resume,
+        train_dataset=args.train_dataset,
+        eval_dataset=args.eval_dataset,
+        predict_data=args.predict_data,
+        max_length=args.max_length,
+        remote_save_url=args.remote_save_url,
+        vocab_file=args.vocab_file,
+        merges_file=args.merges_file,
+        batch_size=args.batch_size,
+    )

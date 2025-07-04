@@ -71,8 +71,10 @@ def init_group_coordinator(
             self.device_group = device_group
             self.cpu_group = cpu_group
 
-    assert self.cpu_group is not None
-    assert self.device_group is not None
+    if self.cpu_group is  None:
+        raise AssertionError("cpu_group cannot be None")
+    if self.device_group is None:
+        raise AssertionError("device_group cannot be None")
 
     from vllm.platforms import current_platform
 
@@ -137,6 +139,7 @@ def initialize_parallel_state(
 
     # Use the world_size set by TORCHRUN
     world_size = int(os.getenv("WORLD_SIZE", "-1"))
-    assert world_size != -1, "The world_size is set to -1, not initialized by TORCHRUN"
+    if world_size == -1:
+        raise AssertionError("The world_size is set to -1, not initialized by TORCHRUN")
     init_distributed_environment(world_size, rank, distributed_init_method, local_rank, backend)
     initialize_model_parallel(tensor_model_parallel_size, pipeline_model_parallel_size, backend)
