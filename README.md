@@ -51,6 +51,23 @@ There are some requirements for MindRLHF:
 | MindSpore    | r2.5    |
 | Mindformers | dev     |
 
+The framework that the current version relies on:
+
+| requirements     | version |
+|------------------|------------------------------------------------------------|
+| Firmware&Drivers | 24.1.RC3.3                                                 |
+| CANN             | 8.1                                                        |
+| Python           | 3.10                                                       |
+| MindSpore        | master, commit id：8f35b18d992cacea735567ab011e91f83a074731 |
+| MindFormers      | dev, commit id：6a52b43    |
+| MindRLHF         | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
+| vLLM             | master, commit id：8f35b18d992cacea735567ab011e91f83a074731 |
+| vLLM_MindSpore   | dev, commit id：6a52b43    |
+| msadapter        | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
+| mindspore_gs     | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
+
+You can directly run the bash install.sh installation dependencies, and if the installation fails, you can refer to the [Installation Guide](docs/install). MindRLHF and MindFormers need to be used by specifying the PYTHONPATH.
+
 ## Supported Models
 
 Current version of MindRLHF: `0.3.0`
