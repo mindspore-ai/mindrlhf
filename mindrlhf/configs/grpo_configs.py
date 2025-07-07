@@ -292,6 +292,24 @@ class RLConfig:
 
 
 @dataclass
+class ProfilerConfig:
+    """profiler config"""
+    profile: bool = False
+    mstx: bool = False
+    stage: str = "all"
+    profile_save_path: str = "./profiler_data"
+    profile_level: str = "level1"
+    profile_with_memory: bool = False
+    profile_with_cpu: bool = True
+    profile_with_npu: bool = True
+    profile_with_stack: bool = False
+    profile_step_start: int = 0
+    profile_step_end: int = 1
+    profile_analysis: bool = False
+    profile_ranks: str = "all"
+
+
+@dataclass
 class GRPOConfig:
     """
     GRPO config class which defines the model size
@@ -302,6 +320,7 @@ class GRPOConfig:
     reward_config = RewardConfig
     generate_config = GenerateConfig
     rl_config = RLConfig
+    profiler_config = ProfilerConfig
     context = Context
 
     def __init__(self, file_path):

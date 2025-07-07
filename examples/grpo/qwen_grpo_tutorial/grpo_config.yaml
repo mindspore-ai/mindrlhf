@@ -171,3 +171,20 @@ context:
   memory_optimize_level: "O0"
   ascend_config:
     precision_mode: "must_keep_origin_dtype"
+
+
+# profiler config
+profiler_config:
+  profile: false
+  mstx: false
+  stage: all
+  profile_save_path: ./profiler_data
+  profile_step_start: 0
+  profile_step_end: 1
+  profile_level: level1
+  profile_with_memory: false
+  profile_with_cpu: true
+  profile_with_npu: true
+  profile_with_stack: false
+  profile_analysis: false
+  profile_ranks: all
