@@ -20,11 +20,21 @@ import stat
 from mindspore import nn
 from mindspore.train.node_strategy_pb2 import ParallelStrategyMap as ckpt_strategy
 from mindspore.communication.management import get_group_size
-from mindformers.experimental.infer.core import (
-    ColumnParallelLinear,
-    RowParallelLinear,
-    VocabParallelEmbedding,
-)
+
+
+try:
+    # 尝试第一种导入方式
+    from mindformers.parallel_core.inference.tensor_parallel.layers import (
+        ColumnParallelLinear,
+        RowParallelLinear,
+        VocabParallelEmbedding,
+    )
+except ImportError:
+    from mindformers.experimental.infer.core import (
+        ColumnParallelLinear,
+        RowParallelLinear,
+        VocabParallelEmbedding,
+    )
 from mindformers.tools import logger
 
 from mindrlhf.utils.reshard_optimizer import Layout as StrategyLayout
