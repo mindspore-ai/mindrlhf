@@ -12,9 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""
-MindRLHF utils
-"""
+"""MindRLHF utils."""
+__all__ = [
+    "set_pipeline_parallel_context",
+    "is_last_stage",
+    "is_first_stage",
+    "FP32StateAdamWeightDecay",
+    "TimePoint",
+    "LearningRate",
+    "GlobalNorm",
+    "ClipByGlobalNorm",
+    "transfer_from_str_to_bool",
+    "ckpt_transfer_for_generate",
+    "yaml_to_dataclass",
+    "set_perf_stats",
+    "_get_pipeline_group",
+    "convert_index_json_total",
+    "save_prompt_completions_data",
+    "add_metrics_to_tensorboard",
+    "get_dp_rank",
+    "get_checkpoint_name",
+    "ensure_total_ckpt_is_less_than_limit",
+    "load_param_to_net",
+    "record_last_ckpt_to_json",
+    "TimeConsumingCollector",
+]
+
 import os
 import json
 import time
@@ -53,30 +76,6 @@ from mindformers import logger
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig
 
-__all__ = [
-    "set_pipeline_parallel_context",
-    "is_last_stage",
-    "is_first_stage",
-    "FP32StateAdamWeightDecay",
-    "TimePoint",
-    "LearningRate",
-    "GlobalNorm",
-    "ClipByGlobalNorm",
-    "transfer_from_str_to_bool",
-    "ckpt_transfer_for_generate",
-    "yaml_to_dataclass",
-    "set_perf_stats",
-    "_get_pipeline_group",
-    "convert_index_json_total",
-    "save_prompt_completions_data",
-    "add_metrics_to_tensorboard",
-    "get_dp_rank",
-    "get_checkpoint_name",
-    "ensure_total_ckpt_is_less_than_limit",
-    "load_param_to_net",
-    "record_last_ckpt_to_json",
-    "TimeConsumingCollector",
-]
 
 PERF_STATS = False
 

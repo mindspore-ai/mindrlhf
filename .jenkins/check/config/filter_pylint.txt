@@ -50,3 +50,4 @@
 "mindrlhf/mindrlhf/tools/transform_checkpoint.py"                                                               "bad-continuation"
 "mindrlhf/run_dpo.py"                                                                                           "bad-continuation"
 "mindrlhf/examples/reward_model/glm4_reward_model_tutorial/reward_train.py"                                     "bad-continuation"
+"mindrlhf/mindrlhf/wrapper/wrapper.py"                                                                          "bad-continuation"

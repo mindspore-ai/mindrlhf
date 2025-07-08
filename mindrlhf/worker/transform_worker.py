@@ -37,9 +37,7 @@ def match_func(s1, s2):
 
 
 def match_func_dkv3(s1, s2):
-    """
-    match_func_dkv3
-    """
+    """match_func_dkv3."""
     s1 = s1[s1.find(".") + 1 :]
     s2 = s2[s2.find(".") + 1 :]
 
