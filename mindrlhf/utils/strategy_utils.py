@@ -23,7 +23,6 @@ from mindspore.communication.management import get_group_size
 
 
 try:
-    # 尝试第一种导入方式
     from mindformers.parallel_core.inference.tensor_parallel.layers import (
         ColumnParallelLinear,
         RowParallelLinear,
