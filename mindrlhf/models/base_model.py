@@ -17,7 +17,6 @@ MindRLHF Base Model
 """
 import mindspore.nn as nn
 from mindformers import LlamaForCausalLM
-from mindformers.models.glm2 import ChatGLM2ForConditionalGeneration
 from research.qwen2_5.infer.qwen2_5 import ParallelQwenForCausalLM
 from research.deepseek3.deepseek3_model_infer import InferenceDeepseekV3ForCausalLM
 from research.deepseek3.deepseek3_model_train import TrainingDeepseekV3ForCausalLM
@@ -31,7 +30,6 @@ class BaseModel(nn.Cell):
         super(BaseModel, self).__init__()
         self._model_list = [
             "llama",
-            "glm4",
             "deepseek_infer",
             "deepseek_training"
         ]
@@ -57,10 +55,6 @@ class BaseModel(nn.Cell):
                 self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
             self.lm_head = self.model.lm_head
-        elif self.model_type == "glm4":
-            self.model = ChatGLM2ForConditionalGeneration(model_config)
-            self.backbone = self.model.transformer
-            self.lm_head = self.model.transformer.output_layer
         elif "deepseek" in self.model_type:
             if model_config.use_past:
                 self.model = InferenceDeepseekV3ForCausalLM(model_config)
@@ -89,9 +83,6 @@ class BaseModel(nn.Cell):
             else:
                 self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
-        elif self.model_type == "glm4":
-            self.model = ChatGLM2ForConditionalGeneration(model_config)
-            self.backbone = self.model.transformer
         elif "deepseek" in self.model_type:
             if model_config.use_past:
                 self.model = InferenceDeepseekV3ForCausalLM(model_config)
@@ -120,9 +111,6 @@ class BaseModel(nn.Cell):
             else:
                 self.model = LlamaForCausalLM(model_config)
             self.backbone = self.model.model
-        elif self.model_type == "glm4":
-            self.model = ChatGLM2ForConditionalGeneration(model_config)
-            self.backbone = self.model.transformer
         elif "deepseek" in self.model_type:
             if model_config.use_past:
                 self.model = InferenceDeepseekV3ForCausalLM(model_config)

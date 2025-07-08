@@ -136,17 +136,14 @@ class GeneratorMixin:
                            current_index,
                            valid_length_each_example,
                            is_first_iteration,
-                           position_ids=None,
                            attention_mask=None):
         """model forward for incremental infer."""
         # Claim the first graph
-        if self.policy_model.model.is_first_iteration:
+        if is_first_iteration:
             self.policy_model.model.add_flags_recursive(is_first_iteration=True)
             attention_mask_tmp = None
             if attention_mask:
                 attention_mask_tmp = Tensor(attention_mask, mstype.float32)
-            print("===== first iteration: ", input_ids.tolist(), current_index, attention_mask_tmp, valid_length_each_example,
-                  self.policy_model.model.is_first_iteration, self.policy_model.model.use_past, flush=True)
             log_probs = self.policy_model(
                 input_ids=Tensor(input_ids, mstype.int32),
                 input_position=Tensor(current_index, mstype.int32),
@@ -156,7 +153,6 @@ class GeneratorMixin:
                 is_first_iteration=self.policy_model.model.is_first_iteration,
                 use_past=self.policy_model.model.use_past,
             )
-            print("===== first iteration output: ", log_probs, flush=True)
             # first iter done, go to other iters
             self.policy_model.model.is_first_iteration = False
         else:
@@ -174,8 +170,6 @@ class GeneratorMixin:
                 attention_mask_tmp = attention_mask[:, :, current_index_tmp:current_index_tmp + 1, :]
                 attention_mask_tmp = Tensor(attention_mask_tmp, mstype.float32)
 
-            # print("===== other iterations: ", inputs_tmp, current_index, attention_mask_tmp, valid_length_each_example, self.policy_model.model.is_first_iteration, self.policy_model.model.use_past, flush=True)
-
             log_probs = self.policy_model(
                 input_ids=Tensor(inputs_tmp, mstype.int32),
                 input_position=Tensor(current_index, mstype.int32),
@@ -186,8 +180,6 @@ class GeneratorMixin:
                 use_past=self.policy_model.model.use_past,
                 # batch_valid_length (1,) int32 5
             )
-            # print("===== other iterations output: ", log_probs, flush=True)
-
         return log_probs
 
     def _forward(self,
@@ -248,8 +240,6 @@ class GeneratorMixin:
         input_mask = np.zeros_like(input_ids)
         for i in range(valid_length_each_example.shape[0]):
             input_mask[i, :valid_length_each_example[i]] = 1
-        encoder_output = None
-        encoder_mask = None
 
         # A single loop generates one token, loop until reaching target model_origin_max_length or generating eod token
         is_finished = [False] * batch_size
@@ -268,15 +258,12 @@ class GeneratorMixin:
 
             current_index = [(valid_length_each_example[i+j*batch_size] - 1 + i * seq_length)
                              for i in range(batch_size) for j in range(self.ppo_config.inference_micro_size)]
-            print("===== current_index: ", current_index, flush=True)
-
             current_index = Tensor(current_index, mstype.int32)
             # print("validate length: %s", valid_length_each_example)
             if self.policy_model.model.use_past:
-                # print("===== use_past", flush=True)
                 is_first_iteration = self.policy_model.model.is_first_iteration
                 # generate input_position & attention_mask for incremental
-                position_ids, attention_mask = self.generate_pos_id_and_mask_for_incr_infer(
+                _, attention_mask = self.generate_pos_id_and_mask_for_incr_infer(
                     input_ids=input_ids,
                     current_index=current_index,
                     valid_length_each_example=valid_length_each_example
@@ -284,32 +271,19 @@ class GeneratorMixin:
                 # incremental generate
                 log_probs = self._incremental_infer(
                     input_ids=input_ids,
-                    position_ids=position_ids,
                     attention_mask=attention_mask,
                     current_index=current_index,
                     valid_length_each_example=valid_length_each_example,
                     is_first_iteration=is_first_iteration
                 )
             else:
-                print("===== Not use_past", flush=True)
-                # auto-aggressive generate
-                # log_probs = self.policy_model(Tensor(input_ids, mstype.int32), current_index)[0]
-
-                # for multi-microbatch inference
-                print("===== input_ids & current_index: ", input_ids,
-                      input_ids.shape, current_index, current_index.shape, flush=True)
-
                 # log_probs = self.inference_wrapper(Tensor(input_ids, mstype.int32), current_index).squeeze()
                 log_probs = self.policy_model(Tensor(input_ids, mstype.int32), current_index)
 
-            # print("===== log_probs: ", np.shape(log_probs.asnumpy()), log_probs, flush=True)
             if self.policy_model.model_config.parallel_config.pipeline_stage > 1:
                 context.reset_auto_parallel_context()
                 log_probs = self.sr_net_logprobs(log_probs)
-                set_pipeline_parallel_context(parallel_mode=self.ppo_config.parallel_mode, full_batch=self.ppo_config.full_batch,
-                                              optimizer_shard=self.policy_model.model_config.parallel_config.optimizer_shard,
-                                              stage_num=self.policy_model.model_config.parallel_config.pipeline_stage,
-                                              enable_alltoall=self.ppo_config.enable_alltoall)
+                set_pipeline_parallel_context(self.ppo_config)
 
             # Sample
             log_probs = log_probs.asnumpy()
@@ -321,9 +295,7 @@ class GeneratorMixin:
                 log_probs_revised = log_probs - frequency_list * repetition_penalty - \
                     (frequency_list > 0) * repetition_penalty
 
-            # p, p_args = sampler(log_probs_revised, top_p, top_k, use_pynative)
-            p = np.ones_like(log_probs)
-            p_args = log_probs
+            p, p_args = sampler(log_probs_revised, top_p, top_k, use_pynative)
 
             # Random select a token as final output for this round
             for i in range(batch_size):
@@ -443,9 +415,6 @@ class GeneratorMixin:
                                    eos_token_id=eos_token_id,
                                    pad_token_id=pad_token_id,
                                    streamer=streamer)
-
-        # print("The output is: ", tokenizer.decode(output_ids[0]), tokenizer.decode(output_ids[1]), flush=True)
-
         # set to original phase
         self.policy_model.model.set_train(origin_phase == 'train')
         return output_ids

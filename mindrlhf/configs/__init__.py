@@ -13,7 +13,5 @@
 # limitations under the License.
 # ============================================================================
 """MindRLHF configs."""
-from .ppo_configs import PPOConfig
 from .grpo_configs import GRPOConfig
-__all__ = ['PPOConfig',
-           'GRPOConfig']
+__all__ = ['GRPOConfig']

@@ -131,7 +131,7 @@ if __name__ == '__main__':
 
     setup(
         name='mindrlhf',
-        version='0.3.0.dev',
+        version='0.5.0.dev',
         author='The MindSpore Authors',
         author_email='contact@mindspore.cn',
         url='https://www.mindspore.cn',

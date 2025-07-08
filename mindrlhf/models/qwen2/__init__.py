@@ -13,7 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """qwen2."""
-from .qwen_dpo import *
 from .qwen2_tokenizer import *
 
-__all__ = ["Qwen7BDPO", "Qwen2Tokenizer"]
+__all__ = ["Qwen2Tokenizer"]
