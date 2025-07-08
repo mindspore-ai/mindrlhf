@@ -203,11 +203,11 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.beta = grpo_config.rl_config.beta
         self.pad_token_id = Tensor(grpo_config.generate_config.sampling_config.pad_token_id, mstype.int32)
         self.policy_model = policy_model
-        self.num_iterations = self.grpo_config.rl_config.num_iterations
+        self.enable_oldpolicy = self.grpo_config.rl_config.enable_oldpolicy
         self.epsilon_high = self.grpo_config.rl_config.epsilon_high
         self.epsilon_low = self.grpo_config.rl_config.epsilon_low
         logger.info(
-            f"num_iterations: {self.num_iterations}, "
+            f"enable_oldpolicy: {self.enable_oldpolicy}, "
             f"epsilon_low: {self.epsilon_low}, epsilon_high: {self.epsilon_high}"
         )
 
@@ -291,12 +291,12 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         kl_mean = self.masked_mean(log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_len, dim=-1)
         kl_loss = kl_mean.sum() / real_sample_num
 
-        if self.num_iterations <= 1:
+        if not self.enable_oldpolicy:
             old_per_token_logps = ops.stop_gradient(per_token_logps)
         old_per_token_logps = self.cast(old_per_token_logps, per_token_logps.dtype)
         ratio = self.exp(per_token_logps - old_per_token_logps)
         surr1 = ratio * advantages
-        if self.num_iterations > 1:
+        if self.enable_oldpolicy:
             surr2 = mint.clamp(ratio, min=(1.0 - self.epsilon_low), max=(1.0 + self.epsilon_high)) * advantages
             loss = -mint.min(surr1, surr2)
         else:

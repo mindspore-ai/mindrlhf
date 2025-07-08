@@ -58,6 +58,7 @@ rl_config:
   num_iterations: 1
   epsilon_low: 0.2
   epsilon_high: 0.2
+  enable_oldpolicy: True
   seed: 0
 
 

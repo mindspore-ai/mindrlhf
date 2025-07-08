@@ -288,6 +288,7 @@ class RLConfig:
     num_iterations: int = 1
     epsilon_low: float = 0.2
     epsilon_high: float = 0.2
+    enable_oldpolicy: bool = True
     seed: int = None
 
 

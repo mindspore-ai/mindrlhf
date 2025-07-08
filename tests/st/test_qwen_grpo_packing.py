@@ -135,7 +135,7 @@ class TestGRPOTrainer:
     @mock.patch("mindrlhf.worker.train_worker.get_rank")
     @mock.patch("mindrlhf.worker.train_worker.CausalLMHybrid")
     @mock.patch("mindrlhf.worker.train_worker.GRPOModelTrain")
-    @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.OldPolicyWorker")
+    @mock.patch("mindrlhf.trainer.spmd.grpo_trainer.get_old_policy_worker")
     # pylint: disable=E1120
     def run_grpo_packing(
         self,

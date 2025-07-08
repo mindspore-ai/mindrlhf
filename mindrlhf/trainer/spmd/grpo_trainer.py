@@ -45,7 +45,7 @@ from mindrlhf.utils import (
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
-from mindrlhf.worker.old_policy_worker import OldPolicyWorker
+from mindrlhf.worker.old_policy_worker import get_old_policy_worker, set_enable_old_policy
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
@@ -102,7 +102,7 @@ class GRPOTrainer:
         self.ref = RefWorker(grpo_config=self.grpo_config, sft_path_ref=self.sft_path_ref, args=self.args)
 
         self.train = TrainWorker(grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args)
-        self.old_policy = OldPolicyWorker(
+        self.old_policy = get_old_policy_worker(
             grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args
         )
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
@@ -218,6 +218,7 @@ class GRPOTrainer:
         grpo_config = GRPOConfig(args.config)
         grpo_config = self._set_args_to_config(args, grpo_config)
         set_perf_stats(grpo_config)
+        set_enable_old_policy(grpo_config)
         if grpo_config.generate_config.use_vllm not in range(len(VllmMode)):
             logger.warning(f"use_vllm should be 0, 1 or 2, but got {grpo_config.generate_config.use_vllm}. Reset to 0.")
             grpo_config.generate_config.use_vllm = 0
@@ -451,7 +452,7 @@ class GRPOTrainer:
             convert_func_lst = []
             convert_func_lst.append(self.infer.convert_map_dict)
             convert_func_lst.append(self.ref.convert_map_dict)
-            if self.grpo_config.rl_config.num_iterations > 1:
+            if self.grpo_config.rl_config.enable_oldpolicy:
                 convert_func_lst.append(self.old_policy.convert_map_dict)
             convert_func_lst.append(self.train.convert_map_dict)
             convert_index_json_total(config.load_checkpoint, config.load_checkpoint, convert_func_lst, False)

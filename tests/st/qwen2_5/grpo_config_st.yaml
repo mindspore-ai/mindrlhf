@@ -52,6 +52,7 @@ rl_config:
   ref_mean: False
   ref_std: False
   gen_experience_kwargs: False
+  enable_oldpolicy: False
 
 
 # actor model config
