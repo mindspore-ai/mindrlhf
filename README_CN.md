@@ -29,7 +29,7 @@ OPENAI的[ChatGPT](https://openai.com/blog/chatgpt)在自然语言方面表现�
 * 阶段2： 奖励模型训练
 * 阶段3： 强化学习训练
 
-MindRLHF集成了大模型套件[MindFormers](https://github.com/mindspore-lab/mindformers)中丰富的模型库， 提供了`Qwen2_5`、`Glm4`等基础模型的微调流程。MindRLHF完全继承MindSpore的并行接口，可以一键将模型部署到训练集群上，开启大模型的训练和推理。
+MindRLHF集成了大模型套件[MindFormers](https://github.com/mindspore-lab/mindformers)中丰富的模型库， 提供了`Qwen2_5`等基础模型的微调流程。MindRLHF完全继承MindSpore的并行接口，可以一键将模型部署到训练集群上，开启大模型的训练和推理。
 
 ### 特性
 
@@ -49,7 +49,7 @@ MindRLHF支持源码安装或通过Docker镜像安装。
 
 ### 源码安装
 
-当前版本`0.3.0`支持源码安装：
+当前版本`0.5.0`支持源码安装：
 
 ```bash
 git clone https://gitee.com/mindspore/mindrlhf.git
@@ -112,72 +112,45 @@ pip install -e .
 
 ## 支持列表
 
-当前版本集成了`Qwen2_5`、`DeepSeek V3`、`Glm4`等模型，用户可以基于这些模型进行探索。未来，我们将提供更多模型如`LLAMA3`、`Pangu`等，帮助用户快速实现自己的应用。
+当前版本集成了`Qwen2_5`、`DeepSeek V3`等模型，用户可以基于这些模型进行探索。未来，我们将提供更多模型如`Qwen3`等，帮助用户快速实现自己的应用。
 
 MindSpore RLHF中不同模型对不同训练阶段的支持情况如下表所示：
 
 表 1： MindSpore RLHF支持的模型和阶段
 
-| 训练阶段                             | Qwen2_5  | DeepSeek V3 | Glm4 |
-|----------------------------------|----------|-------------|------|
-| [奖励模型训练](examples/reward_model)  | ❌        | ❌           | ❌    |
-| [DPO偏好微调训练](examples/dpo)        | ✅        | ❌           | ✅    |
-| [PPO强化学习训练](examples/ppo)        | ✅        | ❌           | ❌    |
-| [GRPO强化学习训练](examples/grpo)      | ✅        | ✅           | ❌    |
+| 训练阶段                             | Qwen2_5  | DeepSeek V3 |
+|----------------------------------|----------|-------------|
+| [GRPO强化学习训练](examples/grpo)      | ✅        | ✅           |
 
 ## 快速入门
-
-* 奖励模型训练: 在[`examples/reward_model_train_tutorial`](examples/reward_model)文件夹中展示了如何使用`Llama2`、`Glm4`模型进行奖励模型微调的过程。
-
-* DPO偏好微调训练：在[`examples/dpo`](examples/dpo)文件夹中展示了如何使用`GLM4`、`Qwen2`和`Qwen2.5`模型进行DPO偏好微调训练的过程。
-
-* PPO强化学习训练: 在[`examples/ppo/qwen_ppo_tutorial/README.md`](examples/ppo/qwen_ppo_tutorial/README.md)中展示了如何利用MindRLHF中的`PPOTrainer`组件使用`Qwen2.5`模型进行PPO强化学习训练的过程，包括模型与数据集获得、
-  模型切分、数据集处理、配置设置以及拉起训练任务。
-
-下面是`MindRLHF`中使用`PPOTrainer`拉起训练任务的主要代码步骤。
-
-   ```python
-   ppo_config, sft_model_config, ref_model_config, critic_model_config, rm_model_config = init_configs(
-       args)
-   trainer = PPOTrainer(ppo_config=ppo_config, sft_model_config=sft_model_config, ref_model_config=ref_model_config,
-                           critic_model_config=critic_model_config, rm_model_config=rm_model_config)
-   ppo_with_grad = init_network_and_optimizer(trainer)
-   for epoch in range(ppo_config.epochs):
-       # sampling
-       trainer.make_experience(num_rollouts=ppo_config.num_rollouts)
-       dataset = init_ppo_dataset(trainer)
-       # use data sink to accelerate
-       trainer.train(ppo_with_grad, dataset, epoch)
-       trainer.save_checkpoint(rank_id, epoch)
-   ```
 
 * GRPO强化学习训练: 在[`examples/grpo/qwen_grpo_tutorial/README.md`](examples/grpo/qwen_grpo_tutorial/README.md)中展示了如何利用MindRLHF中的`GRPOOTrainer`组件使用`Qwen2.5`模型进行GRPO强化学习训练的过程，包括模型与数据集获得、
   模型切分、数据集处理、配置设置以及拉起训练任务。
 
 下面是`MindRLHF`中使用`GRPOTrainer`拉起训练任务的主要代码步骤。
 
-   ```python
-   grpo_config = GRPOConfig()
-   sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
-   sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
-   ref_model_config = LlamaConfig(**ref_config.model.model_config)
-   tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
-   trainer = GRPOTrainer(
-       grpo_config=grpo_config,
-       sft_model_config_infer=sft_model_config_infer,
-       sft_model_config_train=sft_model_config_train,
-       ref_model_config=ref_model_config,
-       reward_funcs=[accuracy_reward, format_reward],
-       tokenizer=tokenizer,
-   )
-   grpo_with_grad = init_grpo_network_and_optimizer(trainer)
-   for n in range(grpo_config.epochs):
-       steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
-       for i in range(steps):
-           trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
-           dataset = init_grpo_dataset(trainer)
-           trainer.train(grpo_with_grad, dataset)
-   ```
+```python
+grpo_config = GRPOConfig()
+sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+ref_model_config = LlamaConfig(**ref_config.model.model_config)
+tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+trainer = GRPOTrainer(
+    grpo_config=grpo_config,
+    sft_model_config_infer=sft_model_config_infer,
+    sft_model_config_train=sft_model_config_train,
+    ref_model_config=ref_model_config,
+    reward_funcs=[accuracy_reward, format_reward],
+    tokenizer=tokenizer,
+)
+grpo_with_grad = init_grpo_network_and_optimizer(trainer)
+for n in range(grpo_config.epochs):
+    steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
+    for i in range(steps):
+        trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
+        dataset = init_grpo_dataset(trainer)
+        trainer.train(grpo_with_grad, dataset)
+```
 
 ## 贡献
 

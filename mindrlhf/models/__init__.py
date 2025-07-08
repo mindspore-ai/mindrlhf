@@ -13,13 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """MindRLHF models."""
-from .ppo_models import *
 from .grpo_models import *
-from .reward_model import *
-from .llama import LlamaRewardModel
 
-__all__ = ["LlamaRewardModel"]
-__all__.extend(ppo_models.__all__)
+__all__ = []
 __all__.extend(grpo_models.__all__)
-__all__.extend(reward_model.__all__)
-__all__.extend(llama.__all__)

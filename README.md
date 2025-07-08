@@ -48,7 +48,7 @@ There are some requirements for MindRLHF:
 
 |  requirements   | version |
 |  ----   |---------|
-| MindSpore    | r2.5    |
+| MindSpore    | r2.7    |
 | Mindformers | dev     |
 
 The framework that the current version relies on:
@@ -70,58 +70,53 @@ You can directly run the bash install.sh installation dependencies, and if the i
 
 ## Supported Models
 
-Current version of MindRLHF: `0.3.0`
+Current version of MindRLHF: `0.5.0`
 
-The current version integrates GPT2, Baichuan2(7B/13B) models, and users can explore these two models. In the future, we will provide more models such as LLAMA, BLOOM, GLM, etc. To help users quickly implement their own applications. The specific supported list is shown below:
+The current version integrates GPT2.5(7B/32B), DeepSeekV3(671B) models, and users can explore these two models. In the future, we will provide more models such as Qwen3, etc. To help users quickly implement their own applications. The specific supported list is shown below:
 
 Table 1： The models and scales supported in MindRLHF
-|  Models   |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
-|  ----     |  ----   |  ----   |  ----   |----   |
-| Scales    | 124M    | 7B    | 7B    |9B    |
-| Parallel  | Y       | Y            |   Y       |Y       |
-| Device    | NPU     | NPU          |   NPU     | NPU     |
+|  Models   |  Qwen2_5 | DeepSeekV3 |
+|  ----     |  ----   |  ----   |
+| Scales    | 7B/32B    | 671B    |
+| Parallel  | Y            |   Y       |
+| Device    | NPU          |   NPU     |
 
 The support of models for different training stages is shown in the following table:
 
 Table 2： The models and stages supported in MindRLHF
-|  Stages     |  GPT2   |  Qwen2_5 | Qwen2 | Glm4 |
-|  ----       |  ----   |  ----        |----        |
-| SFT         | Y       | Y            |Y            |
-| RM          | Y       | Y            |Y            |
-| RLHF        | Y       | Y            |Y            |
+| Train type                 | Qwen2_5  | DeepSeek V3 |
+|----------------------------------|----------|-------------|
+| [GRPO](examples/grpo)      | ✅        | ✅           |
 
-In the future, we will integrate more models such as LLAMA, GLM, BLOOM, etc.
-
-Now we support `DPO`, and models supported are shown in the following table:
-
-Table 3： The models for DPO
-|  Type     |  Glm4   |  Qwen2       |Qwen2_5       |
-|  ----     |  ----        |  ----        |----        |
-| offline   | Y            | Y            |Y            |
-| online    |              |              |             |
-
-In the future, we will integrate more models such as LLAMA etc.
+In the future, we will integrate more models such as Qwen3, etc.
 
 ## Get Started
 
-* Reward model training: a `GPT2` based reward model training tutorial is listed in 'examples'.
+* Reward model training: a `Qwen2.5` based reward model training tutorial is listed in 'examples'.
 
 * RLHF fine-tuning: here is an example for RLHF fine-tuning in `MindRLHF`:
 
 ```python
-ppo_config, sft_model_config, ref_model_config, critic_model_config, rm_model_config = init_configs(
-    args)
-trainer = PPOTrainer(ppo_config=ppo_config, sft_model_config=sft_model_config, ref_model_config=ref_model_config,
-                        critic_model_config=critic_model_config, rm_model_config=rm_model_config)
-ppo_with_grad = init_network_and_optimizer(trainer)
-rank_id = D.get_rank()
-for epoch in range(ppo_config.epochs):
-    # sampling
-    trainer.make_experience(num_rollouts=ppo_config.num_rollouts)
-    dataset = init_ppo_dataset(trainer)
-    # use data sink to accelerate
-    trainer.train(ppo_with_grad, dataset, epoch)
-    trainer.save_checkpoint(rank_id, epoch)
+grpo_config = GRPOConfig()
+sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
+ref_model_config = LlamaConfig(**ref_config.model.model_config)
+tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+trainer = GRPOTrainer(
+    grpo_config=grpo_config,
+    sft_model_config_infer=sft_model_config_infer,
+    sft_model_config_train=sft_model_config_train,
+    ref_model_config=ref_model_config,
+    reward_funcs=[accuracy_reward, format_reward],
+    tokenizer=tokenizer,
+)
+grpo_with_grad = init_grpo_network_and_optimizer(trainer)
+for n in range(grpo_config.epochs):
+    steps = trainer.prompt_dataset.get_dataset_size() // trainer.prompt_dataset.get_batch_size()
+    for i in range(steps):
+        trainer.make_experience(num_generations=grpo_config.num_generations, rank_id=rank_id)
+        dataset = init_grpo_dataset(trainer)
+        trainer.train(grpo_with_grad, dataset)
 ```
 
 ## Contribution

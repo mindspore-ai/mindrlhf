@@ -336,7 +336,7 @@ class InferWorker(Worker):
         if self.use_vllm == VllmMode.DEBUG:
             # use vllm model
             logger.info("infer without vllm, use vllm model")
-            outputs = self.grpo_model_infer.grpo_model.policy_model.generate(
+            outputs = self.grpo_model_infer.grpo_model.policy_model.model.generate(
                 input_ids_numpy[:, :max_valid_length],
                 max_new_tokens=max_tokens,
                 min_new_tokens=min_tokens,
@@ -368,23 +368,23 @@ class InferWorker(Worker):
         max_prompt_length = self.grpo_config.generate_config.max_prompt_length
         max_tokens = self.grpo_config.generate_config.sampling_config.max_tokens
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
-        # 初始化存储prompt的数组，序列长度最大为max_prompt_length
+        # init prompt, max length is max_prompt_length
         left_padding_prompts = np.ones((num_sample, max_prompt_length)) * pad_token_id
-        # 初始化存储response的数组，序列长度最大为max_decode_length
+        # init response, max length is max_decode_length
         right_padding_responses = np.ones((num_sample, max_tokens)) * pad_token_id
-        # 计算每个样本的prompt长度（不包含padding token)
+        # prompt length without padding token
         prompt_len = (np.array(input_ids_list) != pad_token_id).astype(int).sum(1)
 
         for i in range(num_sample):
-            # 只包含response, 范围是从 "prompt结束位置" 到 "prompt结束位置+最大生成长度"
-            if self.use_vllm == VllmMode.DEBUG or self.use_vllm == VllmMode.ORIGIN:
+            # only response
+            if self.use_vllm == VllmMode.ORIGIN:
                 response = outputs[i][prompt_len[i] : prompt_len[i] + max_tokens]
             else:
-                # vllm output中不包含prompt
+                # vllm output without prompt
                 response = outputs[i].outputs[0].token_ids
             right_padding_responses[i, : len(response)] = response
 
-            # 整个batch的样本右对齐（左侧进行padding）
+            # right padding
             left_padding_prompts[i, max_prompt_length - prompt_len[i] :] = input_ids_list[i][: prompt_len[i]]
 
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)

@@ -3,7 +3,6 @@ output/
 __pycache__/
 rank_*/
 data/
-ppo_ckpt/
 sft_ckpt/
 *.npy
 *.ckpt
