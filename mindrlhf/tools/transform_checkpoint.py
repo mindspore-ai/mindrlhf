@@ -13,6 +13,9 @@
 # limitations under the License.
 # ============================================================================
 """transform ckpt tool"""
+
+__all__ = ["TransformCkpt"]
+
 import os
 import time
 import argparse
@@ -49,8 +52,6 @@ from mindformers.tools.ckpt_transform.utils import (
 
 if check_in_modelarts():
     import moxing as mox
-
-__all__ = ["TransformCkpt"]
 
 
 class TransformCkpt:
@@ -140,14 +141,12 @@ class TransformCkpt:
             # The 0th NPU of each node is responsible for transform all checkpoints.
             # For example, if world_size=16 and npu_num_per_node=8,
             # then transform_rank_id_list=[0,8].
-            self.transform_rank_id_list = [i for i in range(0, self.world_size, self.npu_num_per_node)]
+            self.transform_rank_id_list = list(range(0, self.world_size, self.npu_num_per_node))
         else:
             # Obtain transform_rank_id_list. For example, if world_size=8 and transform_process_num=2,
             # then transform_rank_id_list=[0,4], means that the 0th rank and the 4th rank
             # responsible for transform checkpoints.
-            self.transform_rank_id_list = [
-                i for i in range(0, self.world_size, self.world_size // transform_process_num)
-            ]
+            self.transform_rank_id_list = list(range(0, self.world_size, self.world_size // transform_process_num))
         self.transform_process_num = len(self.transform_rank_id_list)
 
         if auto_trans_ckpt:
@@ -346,7 +345,8 @@ class TransformCkpt:
         if check_in_modelarts():
             self.send_transformed_checkpoint_to_obs(dst_checkpoint_dir)
 
-    def transform_checkpoints(self, src_checkpoint, dst_checkpoint, prefix, src_strategy, dst_strategy):
+    @staticmethod
+    def transform_checkpoints(src_checkpoint, dst_checkpoint, prefix, src_strategy, dst_strategy):
         """transform checkpoints using mindspore.transform_checkpoints"""
         os.makedirs(dst_checkpoint, exist_ok=True)
         logger.info(".........Transforming ckpt.........")
@@ -481,10 +481,10 @@ class TransformCkpt:
         """Get src and dst strategy."""
         if self.world_size == 1:
             return None
-
-        assert dst_strategy.endswith(f"_rank_{self.rank_id}.ckpt") and os.path.exists(
-            dst_strategy
-        ), f"`dst_strategy`={dst_strategy} is not found!"
+        if not dst_strategy.endswith(f"_rank_{self.rank_id}.ckpt"):
+            raise ValueError(f"{dst_strategy} is not found.")
+        if not os.path.exists(dst_strategy):
+            raise FileNotFoundError(f"{dst_strategy} is not found.")
 
         logger.info(".........Collecting strategy.........")
         if check_in_modelarts():
