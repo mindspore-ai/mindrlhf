@@ -16,7 +16,6 @@
 import re
 
 
-# pylint: disable=W0613
 def accuracy_reward(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
     rewards = []

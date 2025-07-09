@@ -217,6 +217,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.dump = P.TensorDump()
 
     def masked_mean(self, data, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
+        """Masked mean"""
         if mask is None:
             return data.mean(axis=dim)
         deno = self.batch_unsorted_segment_sum((data * mask), sample_index,
@@ -225,6 +226,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         return deno / nume
 
     def compute_approx_kl(self, log_probs, log_probs_base):
+        """Compute approx kl"""
         log_ratio = self.cast(log_probs, mstype.float32) - self.cast(log_probs_base, mstype.float32)
         log_ratio = -log_ratio
         log_ratio = self.exp(log_ratio) - 1 - log_ratio

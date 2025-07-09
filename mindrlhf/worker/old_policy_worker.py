@@ -93,9 +93,11 @@ class OldPolicyWorker(Worker):
             self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
     def get_old_policy_dp(self):
+        """Get old policy model data parallel size"""
         return self.old_policy_dp
 
     def model(self):
+        """Get old policy model"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return None
         return self.old_policy_model
@@ -129,8 +131,8 @@ class OldPolicyWorker(Worker):
                 }
             )
 
-    # pylint: disable=W0613
     def offset_actual_seq_length(self, data, offset):
+        """Offset actual sequence length"""
         bs = data.shape[0] // self.old_policy_model.dp
         n = data.shape[1]
         data_type = data.dtype
@@ -228,6 +230,7 @@ class OldPolicyWorker(Worker):
         return new_weight_dict
 
     def check_not_on_device(self):
+        """Check params not on device"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         if self.on_device:
@@ -236,6 +239,7 @@ class OldPolicyWorker(Worker):
             )
 
     def check_on_device(self):
+        """Check params on device"""
         if self.grpo_config.rl_config.num_iterations <= 1:
             return
         if not self.on_device:

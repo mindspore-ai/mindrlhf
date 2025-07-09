@@ -82,6 +82,9 @@ def match_func_policy2ref(s1, s2):
 
 
 def match_func_vllm(s1, s2):
+    """
+    Weight match_func_vllm for qwen 2.5
+    """
     s1 = s1[s1.find(".") + 1:]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
