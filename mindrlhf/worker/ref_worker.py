@@ -148,8 +148,6 @@ class RefWorker(Worker):
         """
         np.set_printoptions(threshold=1024)
         context.set_auto_parallel_context(pipeline_stages=self.ref_pp_stage, enable_parallel_optimizer=False)
-        logger.info(f"precision refmodel inputs are {prompt_completion_ids_tensor}, {samples}")
-
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         ref_per_token_logps = self.ref_model(
             prompt_completion_ids_tensor,

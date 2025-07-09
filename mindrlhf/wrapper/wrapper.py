@@ -66,6 +66,7 @@ reciprocal = P.Reciprocal()
 
 @grad_scale.register("Tensor", "Tensor")
 def tensor_grad_scale(scale, grad):
+    """Tensor grad scale"""
     return grad * P.Cast()(reciprocal(scale), F.dtype(grad))
 
 
