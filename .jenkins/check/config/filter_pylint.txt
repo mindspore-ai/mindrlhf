@@ -50,3 +50,5 @@
 "mindrlhf/mindrlhf/utils/generator.py"                                                                          "line-too-long"
 "mindrlhf/mindrlhf/utils/generator.py"                                                                          "line-too-long"
 "mindrlhf/mindrlhf/wrapper/wrapper.py"                                                                          "bad-continuation"
+"mindrlhf/mindrlhf/models/qwen2/qwen2_tokenizer.py"                                                             "bad-continuation"
+"mindrlhf/mindrlhf/models/qwen2_5/qwen2_5_tokenizer.py"                                                         "invalid-name"

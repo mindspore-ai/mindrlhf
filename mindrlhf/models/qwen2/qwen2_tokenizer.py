@@ -14,6 +14,7 @@
 # ============================================================================
 """Tokenization classes for Qwen2."""
 # https://gitee.com/mindspore/mindformers/blob/r1.3.0/research/qwen2/qwen2_tokenizer.py
+__all__ = ['Qwen2Tokenizer']
 
 import json
 import os
@@ -29,7 +30,6 @@ from mindformers.models.tokenization_utils import PreTrainedTokenizer
 from mindformers.models.tokenization_utils_base import AddedToken
 from mindformers.tools.utils import check_file
 
-__all__ = ['Qwen2Tokenizer']
 
 VOCAB_FILES_NAMES = {
     "vocab_file": "vocab.json",

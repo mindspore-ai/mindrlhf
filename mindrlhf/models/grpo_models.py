@@ -13,6 +13,11 @@
 # limitations under the License
 # ============================================================================
 """GRPO model"""
+__all__ = [
+    "GRPOModel",
+    "CausalLMHybrid",
+]
+
 import numpy as np
 import mindspore.common.dtype as mstype
 import mindspore.nn as nn
@@ -24,10 +29,6 @@ from mindformers.models.utils import lazy_inline
 from mindformers import logger
 from .base_model import BaseModel
 
-__all__ = [
-    "GRPOModel",
-    "CausalLMHybrid",
-]
 
 class CausalLMHybrid(BaseModel):
     """

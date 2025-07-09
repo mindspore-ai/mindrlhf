@@ -96,13 +96,13 @@ def yaml_to_dataclass(file_path, dataclass_type):
             data = yaml.safe_load(file)
             return dataclass_type(**data)
     except FileNotFoundError:
-        print(f"File not found: {file_path}")
+        logger.error(f"File not found: {file_path}")
         return None
     except yaml.YAMLError as error:
-        print(f"Error parsing YAML file: {error}")
+        logger.error(f"Error parsing YAML file: {error}")
         return None
     except TypeError as error:
-        print(f"Data type mismatch: {error}")
+        logger.error(f"Data type mismatch: {error}")
         return None
 
 
@@ -137,6 +137,7 @@ def set_pipeline_parallel_context(ppo_config):
 
 
 def is_last_stage(pipeline_stage):
+    """Check is last stage"""
     device_num = D.get_group_size()
     rank = D.get_rank()
     per_stage_num = int(device_num / pipeline_stage)
@@ -144,6 +145,7 @@ def is_last_stage(pipeline_stage):
 
 
 def is_first_stage(pipeline_stage):
+    """Check is first stage"""
     device_num = D.get_group_size()
     rank = D.get_rank()
     per_stage_num = int(device_num / pipeline_stage)
@@ -273,13 +275,13 @@ class GlobalNorm(nn.Cell):
             group_list, group_name = _get_model_parallel_group(self.group_size)
             # In avoid of the group name too long
             sha256 = hashlib.sha256(group_name.encode()).hexdigest()  # sha256 len is 64
-            print(f"Creating hash value for the group_name hash({group_name})={sha256}")
+            logger.info(f"Creating hash value for the group_name hash({group_name})={sha256}")
             group_name = str(sha256)
             create_group(group_name, group_list)
             self.allreduce = P.AllReduce(group=group_name)
             pipeline_group_list, pipeline_group_name = _get_pipeline_group()
             sha256 = hashlib.sha256(pipeline_group_name.encode()).hexdigest()  # sha256 len is 64
-            print(f"Creating hash value for the group_name hash({pipeline_group_name})={sha256}")
+            logger.info(f"Creating hash value for the group_name hash({pipeline_group_name})={sha256}")
             pipeline_group_name = str(sha256)
             create_group(pipeline_group_name, pipeline_group_list)
             self.allreduce2 = P.AllReduce(group=pipeline_group_name)

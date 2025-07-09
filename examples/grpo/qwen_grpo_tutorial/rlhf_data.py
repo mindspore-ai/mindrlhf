@@ -20,6 +20,7 @@ import numpy as np
 import jsonlines
 from tqdm import tqdm
 from mindspore.mindrecord import FileWriter
+from mindformers import logger
 from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
 
 
@@ -131,10 +132,10 @@ def write_mindrecord(args):
                                pad_token_id, args.dataset_type):
         count += 1
         writer.write_raw_data([sample])
-    print("Total number of samples: {}".format(count))
+    logger.info(f"Total number of samples: {count}")
 
     writer.commit()
-    print("Transformation finished! Output file refer: {}".format(args.output_path))
+    logger.info(f"Transformation finished! Output file refer: {args.output_path}")
 
 
 def get_args():

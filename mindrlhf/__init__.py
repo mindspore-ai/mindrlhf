@@ -23,12 +23,6 @@ from mindrlhf.wrapper import *
 from mindrlhf.trainer import *
 from mindrlhf.worker import *
 from mindrlhf.utils import *
-# from mindrlhf.third_party.vllm.qwen2 import qwen2_init
-
-# FIXME
-# from vllm_mindspore.model_executor.models.mf_models.qwen2 import Qwen2ForCausalLM
-
-# Qwen2ForCausalLM.__init__ = qwen2_init
 
 __all__ = []
 __all__.extend(configs.__all__)

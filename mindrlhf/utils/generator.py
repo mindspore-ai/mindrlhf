@@ -14,6 +14,8 @@
 # ============================================================================
 
 """text generation"""
+__all__ = ['GeneratorMixin']
+
 from typing import Optional, List, Union
 import numpy as np
 
@@ -25,7 +27,6 @@ from mindformers.generation.streamers import BaseStreamer
 
 from mindrlhf.utils.utils import set_pipeline_parallel_context
 
-__all__ = ['GeneratorMixin']
 
 
 def topk_fun(logits, topk=5):
@@ -99,7 +100,7 @@ def sampler(log_probs_revised, top_p, top_k, use_pynative=False):
 
 
 def precision_correct(p, top_p, top_k, batch_size):
-    # Avoid rounding error
+    """Precision correct"""
     if top_p == 1:
         for i in range(batch_size):
             if np.sum(p[i]) == 0:
@@ -123,13 +124,6 @@ class GeneratorMixin:
                                  f"seq_length of the model {self.ppo_config.seq_length}.")
             input_ids[i, :ilen] = origin_input
         return input_ids
-
-    def generate_pos_id_and_mask_for_incr_infer(self, **kwargs):
-        """should be implemented in pretrained model,
-        if you need to generate position ids and attention mask before construct.
-        here gives None by default"""
-        _ = kwargs
-        return None, None
 
     def _incremental_infer(self,
                            input_ids,
@@ -229,14 +223,14 @@ class GeneratorMixin:
                              f"max_length to {np.max(valid_length_each_example)}")
 
         target_length = [self.ppo_config.seq_length if valid_length_each_example[i] + self.ppo_config.max_decode_length
-                         > self.ppo_config.seq_length else valid_length_each_example[i] + self.ppo_config.max_decode_length for i in range(batch_size)]
+                         > self.ppo_config.seq_length else valid_length_each_example[i] + \
+                            self.ppo_config.max_decode_length for i in range(batch_size)]
         print("max target_length is: %s", target_length)
         # A list of the frequency of each token
         frequency_list = None
         input_ids = self._pad_inputs_using_max_length(origin_inputs=origin_inputs, pad_token_id=pad_token_id)
 
         print("pad the origin inputs from %s into shape: %s", origin_inputs.shape, input_ids.shape)
-
         input_mask = np.zeros_like(input_ids)
         for i in range(valid_length_each_example.shape[0]):
             input_mask[i, :valid_length_each_example[i]] = 1
@@ -254,20 +248,12 @@ class GeneratorMixin:
                 break
             seq_length = input_ids.shape[1]
 
-            # current_index = [valid_length_each_example[i] - 1 + i * seq_length for i in range(batch_size)]
-
             current_index = [(valid_length_each_example[i+j*batch_size] - 1 + i * seq_length)
                              for i in range(batch_size) for j in range(self.ppo_config.inference_micro_size)]
             current_index = Tensor(current_index, mstype.int32)
-            # print("validate length: %s", valid_length_each_example)
             if self.policy_model.model.use_past:
                 is_first_iteration = self.policy_model.model.is_first_iteration
-                # generate input_position & attention_mask for incremental
-                _, attention_mask = self.generate_pos_id_and_mask_for_incr_infer(
-                    input_ids=input_ids,
-                    current_index=current_index,
-                    valid_length_each_example=valid_length_each_example
-                )
+                attention_mask = None
                 # incremental generate
                 log_probs = self._incremental_infer(
                     input_ids=input_ids,
@@ -277,7 +263,6 @@ class GeneratorMixin:
                     is_first_iteration=is_first_iteration
                 )
             else:
-                # log_probs = self.inference_wrapper(Tensor(input_ids, mstype.int32), current_index).squeeze()
                 log_probs = self.policy_model(Tensor(input_ids, mstype.int32), current_index)
 
             if self.policy_model.model_config.parallel_config.pipeline_stage > 1:

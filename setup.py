@@ -29,6 +29,12 @@ from setuptools.command.install import install
 
 
 def get_configs_content():
+    """
+    Get configs name.
+
+    Returns:
+        str, configs.
+    """
     pwd = os.path.dirname(os.path.realpath(__file__))
     configs = [os.path.join(root, file)
                for root, _, file_list in os.walk(os.path.join(pwd, "configs")) for file in file_list
@@ -37,6 +43,12 @@ def get_configs_content():
 
 
 def get_readme_content():
+    """
+    Get readme name.
+
+    Returns:
+        str, readme.
+    """
     pwd = os.path.dirname(os.path.realpath(__file__))
     with open(os.path.join(pwd, 'README.md'), encoding='UTF-8') as f:
         return f.read()
