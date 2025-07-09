@@ -15,16 +15,17 @@
 """
     data process
 """
-import numpy as np
 import argparse
+import numpy as np
 import jsonlines
 from tqdm import tqdm
 from mindspore.mindrecord import FileWriter
 from mindformers import AutoTokenizer
+from mindformers import logger
 
 
 def load_json_file(file_path):
-    "Read data from json file"
+    """Read data from json file"""
     raw_data = []
     with open(file_path, 'r', encoding='utf-8') as f:
         for item in jsonlines.Reader(f):
@@ -33,7 +34,8 @@ def load_json_file(file_path):
 
 
 def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
-    template = ("{prompt}{response}")
+    """Process data"""
+    template = "{prompt}{response}"
 
     for item in tqdm(raw_data):
         sample = {}
@@ -74,6 +76,7 @@ def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_i
 
 
 def write_mindrecord(args):
+    """Write mindrecord"""
     raw_data = load_json_file(args.file_path)
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name_or_path)
@@ -94,13 +97,14 @@ def write_mindrecord(args):
     for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
         count += 1
         writer.write_raw_data([sample])
-    print("Total number of samples: {}".format(count))
+    logger.info("Total number of samples: {}".format(count))
 
     writer.commit()
-    print("Transformation finished! Output file refer: {}".format(args.output_path))
+    logger.info("Transformation finished! Output file refer: {}".format(args.output_path))
 
 
 def get_args():
+    """Get args"""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--tokenizer_name_or_path',
@@ -132,5 +136,4 @@ def get_args():
 
 
 if __name__ == "__main__":
-    args = get_args()
-    write_mindrecord(args)
+    write_mindrecord(get_args())

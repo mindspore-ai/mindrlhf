@@ -161,7 +161,7 @@ class ReshardOptimizer:
                 end = train_tp * (i + 1)
                 for j in range(num_tensor_model_parallel_groups_per_train_tp):
                     ranks = list(range(start, end, num_tensor_model_parallel_groups_per_train_tp))
-                    for k in range(len(ranks)):
+                    for k, _ in enumerate(ranks):
                         ranks[k] += j
                     group_ranks.append(ranks)
         return {"tp": group_ranks, "dp": [list(group) for group in zip(*group_ranks)]}
