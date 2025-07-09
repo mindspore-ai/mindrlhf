@@ -71,6 +71,7 @@ def tensor_grad_scale(scale, grad):
 
 @grad_scale.register("Tensor", "Tensor", "Tensor")
 def tensor_grad_scale_pipeline(scale, grad, accu_grad):
+    """Tensor grad scale in pipeline"""
     accu_grad = F.depend(accu_grad, grad)
     new_grad = accu_grad * reciprocal(scale)
     accu_grad = F.depend(accu_grad, new_grad)
@@ -81,6 +82,7 @@ def tensor_grad_scale_pipeline(scale, grad, accu_grad):
 
 @shard_grad_scale.register("Tensor", "Tensor", "Tensor")
 def tensor_shard_grad_scale_pipeline(scale, grad, accu_grad):
+    """Tensor shard grad scale in pipeline"""
     new_grad = grad * reciprocal(scale)
     accu_grad = F.depend(accu_grad, new_grad)
     new_grad = F.depend(new_grad, F.assign(accu_grad, F.zeros_like(accu_grad)))

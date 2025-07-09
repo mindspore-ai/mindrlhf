@@ -74,12 +74,11 @@ def generate_state_dict(network):
                                       'shard': tuple([1] * model_param_dict[name].ndim)}
     return state_dict
 
+
 def save_strategy_file(state_dict, reshard_optimizer, strategy_file_name):
     """save_strategy_file"""
-    print(f"----------------start save front parallel strategy---------------")
-
+    logger.info(f"----------------start save front parallel strategy---------------")
     stra = ckpt_strategy()
-
     stage_rank_size = state_dict["stage_rank_size"]
     stage = state_dict["stage"]
     model_param = state_dict["model"]
@@ -163,4 +162,4 @@ def save_strategy_file(state_dict, reshard_optimizer, strategy_file_name):
         )
         raise e
 
-    print(f"----------------end save front parallel strategy---------------")
+    logger.info(f"----------------end save front parallel strategy---------------")

@@ -136,7 +136,7 @@ class AdamWeightDecayOp(Optimizer):
         >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
         >>> model = Model(net, loss_fn=loss, optimizer=optim)
-   """
+    """
 
     def __init__(self, params, learning_rate=1e-3, beta1=0.9, beta2=0.999, eps=1e-6, weight_decay=0.0,
                  clip_norm=1.0, param_init_type=mstype.float32):
@@ -146,7 +146,7 @@ class AdamWeightDecayOp(Optimizer):
         self.beta2 = Tensor(np.array([beta2]).astype(np.float32))
         self.eps = Tensor(np.array([eps]).astype(np.float32))
         self.clip_norm = Tensor([clip_norm], mstype.float32)
-        self.enable_init_fp16 = (param_init_type == mstype.float16)
+        self.enable_init_fp16 = param_init_type == mstype.float16
         if self.enable_init_fp16:
             self.moments1 = self.clone_param32(prefix="adam_m", init='zeros')
             self.moments2 = self.clone_param32(prefix="adam_v", init='zeros')
