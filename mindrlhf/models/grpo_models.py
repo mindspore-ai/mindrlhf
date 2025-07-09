@@ -23,10 +23,10 @@ import mindspore.common.dtype as mstype
 import mindspore.nn as nn
 from mindspore import Tensor, ops, mint
 from mindspore.ops import operations as P
-from mindrlhf.utils.generator import GeneratorMixin
-from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindformers.models.utils import lazy_inline
 from mindformers import logger
+from mindrlhf.utils.generator import GeneratorMixin
+from mindrlhf.configs.grpo_configs import GRPOConfig
 from .base_model import BaseModel
 
 
