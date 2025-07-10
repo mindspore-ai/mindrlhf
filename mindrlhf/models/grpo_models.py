@@ -30,6 +30,7 @@ from mindrlhf.configs.grpo_configs import GRPOConfig
 from .base_model import BaseModel
 
 
+
 class CausalLMHybrid(BaseModel):
     """
     CausalLMHybrid
@@ -80,6 +81,7 @@ class CausalLMHybrid(BaseModel):
         self.dp = dp
 
     def offset_actual_seq_length(self, data, offset):
+        """add offset to data"""
         bs = data.shape[0] // self.dp
         n = data.shape[1]
         data_type = data.dtype
@@ -255,8 +257,8 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         )
         return flat_sum.view(bs, num_segments)
 
-    # pylint: disable=W0613
     def offset_actual_seq_length(self, data, offset):
+        """add offset to data"""
         bs = data.shape[0] // self.dp
         n = data.shape[1]
         data_type = data.dtype
@@ -273,12 +275,11 @@ class GRPOModel(nn.Cell, GeneratorMixin):
             ref_per_token_logps, # [bs, seq_len]
             advantages,  # [bs, seq_len]
             actual_seq_length,  # [bs, packed_sample_num]
-            sample_index, #[bs, seq_len]
-            sample_valid_len,  #[bs, packed_sample_num]
+            sample_index, # [bs, seq_len]
+            sample_valid_len,  # [bs, packed_sample_num]
             old_per_token_logps  # [bs, seq_len]
         ):
         """ construct function for GRPOModel """
-        # bs, seq_len = prompt_completion_ids.shape
         pack_sample_num = sample_valid_len.shape[1]
         real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
 

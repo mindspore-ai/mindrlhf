@@ -239,9 +239,11 @@ class InferWorker(Worker):
         return policy_model
 
     def model(self):
+        """return model"""
         return self.grpo_model_infer
 
     def get_updated_grpo_config(self):
+        """update grpo config"""
         return self.grpo_config
 
     def get_infer_dp(self):
