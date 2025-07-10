@@ -13,6 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """SPMD trainers."""
+__all__ = ['GRPOTrainer', 'GRPOExperienceMaker']
 from .grpo_trainer import GRPOTrainer
 from .grpo_experience_maker import GRPOExperienceMaker
-__all__ = ['GRPOTrainer', 'GRPOExperienceMaker']

@@ -73,6 +73,7 @@ class GRPOExperienceMaker:
         self.make_exp_step = 0
         self.total_processed_tokens = 0
         self.step_num = 0
+        self.step_total_tokens = 0
 
         self._init_grpo_experience_dataset()
         self._init_reward_fn()
@@ -99,9 +100,6 @@ class GRPOExperienceMaker:
                 logger.info(f"The beginning {self.i_step} batch data will be skipped.")
         else:
             logger.info("In main task, there is not dataset for making experience")
-
-    def get_step_num(self):
-        return self.step_num
 
     def _get_batch(self, num_rollouts):
         """get batch"""
@@ -135,13 +133,14 @@ class GRPOExperienceMaker:
         solution_ids = Tensor(batch[1], mstype.int32).asnumpy()
         prompt_tensors_full = prompt_tensors
         repeat_solution_ids = solution_ids
-        for i in range(num_generations - 1):
+        for _ in range(num_generations - 1):
             prompt_tensors_full = np.concatenate((prompt_tensors_full, prompt_tensors))
             repeat_solution_ids = np.concatenate((repeat_solution_ids, solution_ids))
         input_ids_numpy = self._split_for_data_parallel(prompt_tensors_full, self.infer_dp)
         solution_ids = self._remove_right_padding(repeat_solution_ids, padding_token=pad_token_id)
         solution = self.tokenizer.decode(solution_ids, skip_special_tokens=True)
-        for i in range(len(solution)):
+        num_solution = len(solution)
+        for i in range(num_solution):
             solution[i] = "$" + solution[i] + "$"
         reward_kwargs = {"solution": solution}
         logger.info(f"solution: {solution}")
@@ -160,8 +159,9 @@ class GRPOExperienceMaker:
                     result = self.infer.generate(
                         input_ids_numpy[idx * input_bs : (idx + 1) * input_bs, :], max_tokens=max_tokens
                     )
-                    for res_idx in range(len(result)):
-                        if len(results) == len(result):
+                    num_result = len(result)
+                    for res_idx in range(num_result):
+                        if len(results) == num_result:
                             results[res_idx] = np.concatenate((results[res_idx], result[res_idx]))
                         else:
                             results.append(result[res_idx])
@@ -376,7 +376,8 @@ class GRPOExperienceMaker:
                 )
             logger.info(f"total step {self.make_exp_step} metrics: {metrics}")
 
-            for i in range(len(all_packed)):
+            num_data_packed = len(all_packed)
+            for i in range(num_data_packed):
                 prompt_completion_ids_temp = np.pad(
                     all_packed[i]["prompt_completion_ids"], ((0, 1),), "constant", constant_values=pad_token_id
                 ).astype(np.int32)
@@ -466,7 +467,8 @@ class GRPOExperienceMaker:
             )
         self.verifier_weight = np.array(verifier_weight, dtype=np.float32)
 
-    def _split_for_data_parallel(self, batch_inputs, data_parallel_size):
+    @staticmethod
+    def _split_for_data_parallel(batch_inputs, data_parallel_size):
         """
         split batch_inputs for data parallel
         """
@@ -478,7 +480,8 @@ class GRPOExperienceMaker:
         batch_inputs_for_this_rank = batch_inputs[start:stop]
         return batch_inputs_for_this_rank
 
-    def _remove_right_padding(self, token_ids, padding_token=0):
+    @staticmethod
+    def _remove_right_padding(token_ids, padding_token=0):
         """remove_right_padding"""
         begin_time = time.time()
         counts = np.sum(token_ids != padding_token, axis=1)
@@ -487,7 +490,8 @@ class GRPOExperienceMaker:
         logger.info(f"remove right padding time: {end_time - begin_time}")
         return trimmed_sequences
 
-    def _remove_left_padding(self, token_ids, padding_token=0):
+    @staticmethod
+    def _remove_left_padding(token_ids, padding_token=0):
         """remove_left_padding"""
         begin_time = time.time()
         counts = np.sum(token_ids != padding_token, axis=1)
@@ -496,7 +500,8 @@ class GRPOExperienceMaker:
         logger.info(f"remove left padding time: {end_time - begin_time}")
         return trimmed_sequences
 
-    def _construct_inputs_packing(self, all_packed, batch_size=None, idx=None):
+    @staticmethod
+    def _construct_inputs_packing(all_packed, batch_size=None, idx=None):
         """construct inputs for packing"""
         tmp_ids = []
         tmp_actual_seq_len = []
@@ -527,7 +532,8 @@ class GRPOExperienceMaker:
             pack_group.append(each_group)
         return pack_group
 
-    def pad_sequence_to_length(self, sequence, target_length, pad_value):
+    @staticmethod
+    def pad_sequence_to_length(sequence, target_length, pad_value):
         """Pad sequence to target length with specified pad value."""
         current_length = len(sequence)
         if current_length < target_length:
@@ -655,7 +661,7 @@ class GRPOExperienceMaker:
         data_dict_list = []
         bs = prompt_completion_ids.shape[0]
         advantages = advantages.reshape(-1)
-        print(f"#1 advantages shape: {advantages.shape}")
+        logger.info(f"#1 advantages shape: {advantages.shape}")
         for i in range(bs):
             sample_prompt_mask = prompts_mask[i]
             sample_response_mask = responses_mask[i]
@@ -682,12 +688,14 @@ class GRPOExperienceMaker:
             data_dict_list.append(data_dict)
         pack_group = self.create_pack_group(data_dict_list, pack_num)
         result = []
-        for i, pack_list in enumerate(pack_group):
+        for _, pack_list in enumerate(pack_group):
             packed = self.pack_grouped_data(pack_list, pack_num)
             result.append(packed)
         return result
 
-    def compute_advantages(self, rewards, eps=1e-4):
+    @staticmethod
+    def compute_advantages(rewards, eps=1e-4):
+        """compute reward advantage"""
         mean_grouped_rewards = rewards.mean()
         if rewards.shape[0] == 1:
             std_grouped_rewards = rewards.std()

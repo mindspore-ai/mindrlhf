@@ -147,7 +147,7 @@ class GRPOTrainer:
             self.tensor_writer,
             self.i_step,
         )
-        self.step_num = self.experience_maker.get_step_num()
+        self.step_num = self.experience_maker.step_num
 
         if self.infer.use_vllm == VllmMode.ORIGIN:
             self.infer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
