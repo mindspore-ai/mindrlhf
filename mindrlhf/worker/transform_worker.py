@@ -76,19 +76,19 @@ def match_func_dkv3(s1, s2):
 
 
 def match_func_policy2ref(s1, s2):
-    s1 = s1[s1.find(".") + 1 :]
-    s1 = s1[s1.find(".") + 1 :]
+    s1 = s1[s1.find(".") + 1:]
+    s1 = s1[s1.find(".") + 1:]
     return s1 == s2
 
 
 def match_func_vllm(s1, s2):
-    s1 = s1[s1.find(".") + 1 :]
+    s1 = s1[s1.find(".") + 1:]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
     tmp1 = s1[: s1.find(".")]
-    tmp2 = s1[s1.find(".model") + 6 :]
+    tmp2 = s1[s1.find(".model") + 6:]
     s1 = tmp1 + tmp2
-    s2 = s2[s2.find(".") + 1 :]
+    s2 = s2[s2.find(".") + 1:]
     return s1 == s2
 
 
@@ -96,13 +96,13 @@ def match_func_dkv3_vllm(s1, s2):
     """
     match_func_dkv3_vllm
     """
-    s1 = s1[s1.find(".") + 1 :]
+    s1 = s1[s1.find(".") + 1:]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
     tmp1 = s1[: s1.find(".")]
-    tmp2 = s1[s1.find(".model") + 6 :]
+    tmp2 = s1[s1.find(".model") + 6:]
     s1 = tmp1 + tmp2
-    s2 = s2[s2.find(".") + 1 :]
+    s2 = s2[s2.find(".") + 1:]
 
     def match_layout_num(s1, s2):
         split_s1 = s1.split(".")
