@@ -170,7 +170,6 @@ class CausalLMHybrid(BaseModel):
             logits_2d = self.lm_head(output_states)
         elif self.model_type == "deepseek_training":
             tokens = input_ids
-            # TODO: extra_loss=0.是否合理
             output_states, _ = self.backbone(tokens, extra_loss=0.)
             logits_2d = self.lm_head(output_states)
         else:

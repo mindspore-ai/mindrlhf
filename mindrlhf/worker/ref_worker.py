@@ -111,6 +111,7 @@ class RefWorker(Worker):
 
     @property
     def get_ref_ckpt_path(self):
+        """get ref ckpt path"""
         return self.ref_model_config.checkpoint_name_or_path
 
     def get_ref_dp(self):

@@ -15,9 +15,7 @@
 """Resharding Weight"""
 import gc
 import numpy as np
-
 from mindrlhf.utils.utils import enable_pynative_async
-
 import mindspore.log as logger
 from mindspore import ops, Tensor, Parameter, mint, context
 from mindspore.ops import operations as P

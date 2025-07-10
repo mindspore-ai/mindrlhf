@@ -475,6 +475,7 @@ def get_strategy(startegy_path, rank_id=None):
 
 
 def ckpt_transfer_for_generate(load_sft_checkpoint):
+    """ckpt transfer for generate"""
     transform_ckpt = TransformCkpt(
         rank_id=get_rank(), world_size=get_group_size(), transform_process_num=get_group_size()
     )

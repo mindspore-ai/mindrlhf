@@ -19,6 +19,7 @@ import argparse
 import jsonlines
 import numpy as np
 from mindformers.models.llama import LlamaTokenizerFast
+from mindformers import logger
 from mindspore.mindrecord import FileWriter
 from tqdm import tqdm
 
@@ -124,10 +125,10 @@ def write_mindrecord(args):
     for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
         count += 1
         writer.write_raw_data([sample])
-    print("Total number of samples: {}".format(count))
+    logger.info("Total number of samples: {}".format(count))
 
     writer.commit()
-    print("Transformation finished! Output file refer: {}".format(args.output_path))
+    logger.info("Transformation finished! Output file refer: {}".format(args.output_path))
 
 
 def get_args():
