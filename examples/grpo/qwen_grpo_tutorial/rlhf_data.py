@@ -21,7 +21,7 @@ import jsonlines
 from tqdm import tqdm
 from mindspore.mindrecord import FileWriter
 from mindformers import logger
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 
 
 def load_json_file(file_path):
@@ -106,7 +106,7 @@ def write_mindrecord(args):
 
     raw_data = load_json_file(args.file_path)
 
-    tokenizer = Qwen2Tokenizer(
+    tokenizer = Qwen2_5Tokenizer(
         args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False
     )
 

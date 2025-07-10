@@ -134,7 +134,7 @@ grpo_config = GRPOConfig()
 sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
 sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
 ref_model_config = LlamaConfig(**ref_config.model.model_config)
-tokenizer = Qwen2Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
+tokenizer = Qwen2_5Tokenizer(args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False)
 trainer = GRPOTrainer(
     grpo_config=grpo_config,
     sft_model_config_infer=sft_model_config_infer,
