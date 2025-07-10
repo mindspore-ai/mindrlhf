@@ -41,7 +41,7 @@ from mindrlhf.worker.old_policy_worker import OldPolicyWorker
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 
 
@@ -227,7 +227,7 @@ class GRPOTrainer:
         if args.custom_model_name == "qwen":
             args.vocab_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "vocab.json")
             args.merges_file_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "merges.txt")
-            self.tokenizer = Qwen2Tokenizer(
+            self.tokenizer = Qwen2_5Tokenizer(
                 args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False
             )
         elif args.custom_model_name == "deepseek":

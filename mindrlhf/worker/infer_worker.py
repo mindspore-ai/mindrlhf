@@ -35,7 +35,7 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.utils import transfer_from_str_to_bool, TimeConsumingCollector
-from mindrlhf.models.qwen2.qwen2_tokenizer import Qwen2Tokenizer
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors, enable_pynative_async
@@ -111,7 +111,7 @@ class InferWorker(Worker):
         self.dp_rank_id = get_dp_rank(self.sft_model_config_infer.parallel_config.data_parallel)
 
         if self.args.custom_model_name == "qwen":
-            self.tokenizer = Qwen2Tokenizer(
+            self.tokenizer = Qwen2_5Tokenizer(
                 self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
             )
         elif self.args.custom_model_name == "deepseek":
