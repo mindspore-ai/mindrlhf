@@ -491,6 +491,7 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
 
 
 def set_perf_stats(grpo_config: GRPOConfig):
+    """set performance stats"""
     global PERF_STATS
     if grpo_config.rl_config.performance_stats:
         logger.info("grpo performance statistics is on")

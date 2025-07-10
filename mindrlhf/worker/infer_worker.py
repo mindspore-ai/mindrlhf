@@ -378,14 +378,14 @@ class InferWorker(Worker):
         for i in range(num_sample):
             # only response
             if self.use_vllm == VllmMode.ORIGIN:
-                response = outputs[i][prompt_len[i] : prompt_len[i] + max_tokens]
+                response = outputs[i][prompt_len[i]: prompt_len[i] + max_tokens]
             else:
                 # vllm output without prompt
                 response = outputs[i].outputs[0].token_ids
             right_padding_responses[i, : len(response)] = response
 
             # right padding
-            left_padding_prompts[i, max_prompt_length - prompt_len[i] :] = input_ids_list[i][: prompt_len[i]]
+            left_padding_prompts[i, max_prompt_length - prompt_len[i]:] = input_ids_list[i][: prompt_len[i]]
 
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != pad_token_id).astype(np.int32)
