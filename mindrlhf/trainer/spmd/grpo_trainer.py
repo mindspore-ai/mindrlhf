@@ -23,6 +23,7 @@ import mindspore as ms
 from mindspore import Tensor
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
+from mindspore._c_expression import MSContext
 
 # mindformers
 from mindformers import logger
@@ -51,6 +52,12 @@ class GRPOTrainer:
     def __init__(self, no_patch_tensor_shape, args=None):
         """Initialize"""
         self.args = args
+        if MSContext.get_instance().get_ascend_soc_version() == "ascend910b":
+            os.environ["HCCL_OP_EXPANSION_MODE"] = "HOST"
+        elif MSContext.get_instance().get_ascend_soc_version() == "ascend910_93":
+            os.environ["HCCL_OP_EXPANSION_MODE"] = "AI_CPU"
+        else:
+            raise NotImplementedError("only support ascend910b and ascend910_93")
         self._init_grpo_configs(args)
         self._set_vllm_generation_config()
         self.no_patch_tensor_shape = no_patch_tensor_shape
