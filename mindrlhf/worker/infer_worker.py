@@ -443,14 +443,13 @@ class InferWorker(Worker):
         logger.info(f"after offload stf infer {ms.hal.memory_stats()}")
         self.on_device = False
 
-    def load(self):
+    def load(self, skip_kv_cache=False):
         """load stf infer"""
         if self.on_device:
             return
         logger.info(f"before load stf infer {ms.hal.memory_stats()}")
         with TimeConsumingCollector("load stf infer"):
-            skip_kv_cache = False
-            if self.use_vllm == VllmMode.VLLM:
+            if self.use_vllm == VllmMode.VLLM and not skip_kv_cache:
                 self._init_cache_engine()
                 skip_kv_cache = True
             for param in self.grpo_model_infer.grpo_model.get_parameters(expand=True):
@@ -459,6 +458,15 @@ class InferWorker(Worker):
                 # pylint: disable=W0212
                 param._load()
         logger.info(f"after load stf infer {ms.hal.memory_stats()}")
+        self.on_device = True
+
+    def load_kvcache(self):
+        """load stf infer kvcache"""
+        logger.info(f"before load stf infer kv cache {ms.hal.memory_stats()}")
+        with TimeConsumingCollector("load stf infer kvcache"):
+            if self.use_vllm == VllmMode.VLLM:
+                self._init_cache_engine()
+        logger.info(f"after load stf infer kv cache {ms.hal.memory_stats()}")
         self.on_device = True
 
     def load_checkpoint(self):
