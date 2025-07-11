@@ -187,9 +187,11 @@ class InferWorker(Worker):
                 tensor_model_parallel_size=self.sft_model_config_infer.parallel_config.model_parallel
             )
             vllm_start_time = time.time()
-            if self.load_ckpt_format not in  ["hf_safetensors", "ms_safetensors"]:
-                raise ValueError(f"For vllm {package_version}, "
-                                 f"the infer model load_ckpt_format must be hf_safetensors or ms_safetensors.")
+            if self.load_ckpt_format not in ["hf_safetensors", "ms_safetensors"]:
+                raise ValueError(
+                    f"For vllm {package_version}, "
+                    f"the infer model load_ckpt_format must be hf_safetensors or ms_safetensors."
+                )
             if self.grpo_config.generate_config.num_scheduler_steps > 1:
                 logger.warning(f"For VLLM V1, num_scheduler_steps > 1 is not supported, set it to 1.")
                 self.grpo_config.generate_config.num_scheduler_steps = 1
@@ -239,14 +241,15 @@ class InferWorker(Worker):
         return policy_model
 
     def model(self):
-        """return model"""
+        """Return model"""
         return self.grpo_model_infer
 
     def get_updated_grpo_config(self):
-        """update grpo config"""
+        """Get updated grpo config."""
         return self.grpo_config
 
     def get_infer_dp(self):
+        """Get infer dp."""
         return self.sft_model_config_infer.parallel_config.data_parallel
 
     def _allgather_data(self, batch_input, data_parallel_size, padding_length=128):
@@ -471,15 +474,21 @@ class InferWorker(Worker):
         if not os.path.exists(self.sft_ckpt_path_infer):
             raise ValueError(f"infer model checkpoint path: {self.sft_ckpt_path_infer} not exists")
 
-        if self.sft_ckpt_path_infer and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
+        if self.sft_ckpt_path_infer and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
             strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_policy_merged_strategy.ckpt")
             if self.use_vllm != VllmMode.ORIGIN:
                 return
             network = self.grpo_model_infer.grpo_model.policy_model.model
             prefix = "grpo_model.policy_model.model."
-            load_safetensors(self.sft_ckpt_path_infer, self.load_ckpt_format, network,
-                             self.grpo_model_infer.grpo_model.policy_model, prefix, strategy_path)
+            load_safetensors(
+                self.sft_ckpt_path_infer,
+                self.load_ckpt_format,
+                network,
+                self.grpo_model_infer.grpo_model.policy_model,
+                prefix,
+                strategy_path,
+            )
             return
         load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")

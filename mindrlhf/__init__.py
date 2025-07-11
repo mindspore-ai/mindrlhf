@@ -12,23 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
 """MindRLHF Init"""
-
-from mindrlhf import configs, models, wrapper, trainer, worker, utils, reward
-from mindrlhf.configs import *
-from mindrlhf.models import *
-from mindrlhf.reward import *
-from mindrlhf.wrapper import *
-from mindrlhf.trainer import *
-from mindrlhf.worker import *
-from mindrlhf.utils import *
-
-__all__ = []
-__all__.extend(configs.__all__)
-__all__.extend(models.__all__)
-__all__.extend(reward.__all__)
-__all__.extend(wrapper.__all__)
-__all__.extend(trainer.__all__)
-__all__.extend(worker.__all__)
-__all__.extend(utils.__all__)

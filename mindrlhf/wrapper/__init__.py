@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-
 """MindRLHF Init"""
-from .wrapper import (TrainOneStepWithLossScale, TrainPipelineWithLossScaleCell, TrainOneStepWithLossScaleGRPO,
-                      TrainPipelineWithLossScaleCellGRPO)
+__all__ = [
+    "TrainOneStepWithLossScale",
+    "TrainPipelineWithLossScaleCell",
+    "TrainOneStepWithLossScaleGRPO",
+    "TrainPipelineWithLossScaleCellGRPO",
+]
 
-
-__all__ = ['TrainOneStepWithLossScale',
-           'TrainPipelineWithLossScaleCell',
-           'TrainOneStepWithLossScaleGRPO',
-           'TrainPipelineWithLossScaleCellGRPO']
+from .wrapper import (
+    TrainOneStepWithLossScale,
+    TrainPipelineWithLossScaleCell,
+    TrainOneStepWithLossScaleGRPO,
+    TrainPipelineWithLossScaleCellGRPO,
+)

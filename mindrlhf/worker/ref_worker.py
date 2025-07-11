@@ -35,7 +35,7 @@ from mindrlhf.utils.utils import (
     record_last_ckpt_to_json,
     get_checkpoint_name,
     ensure_total_ckpt_is_less_than_limit,
-    load_safetensors
+    load_safetensors,
 )
 
 
@@ -107,6 +107,7 @@ class RefWorker(Worker):
         self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
     def model(self):
+        """Return ref model."""
         return self.ref_model
 
     @property
@@ -238,12 +239,13 @@ class RefWorker(Worker):
         if not os.path.exists(self.ref_ckpt_path):
             raise ValueError(f"old policy model checkpoint path: {self.ref_ckpt_path} not exists")
 
-        if self.ref_ckpt_path and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
+        if self.ref_ckpt_path and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
             strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "infer_ref_merged_strategy.ckpt")
             prefix = "model."
-            load_safetensors(self.ref_ckpt_path, self.load_ckpt_format, self.ref_model.model,
-                             self.ref_model, prefix, strategy_path)
+            load_safetensors(
+                self.ref_ckpt_path, self.load_ckpt_format, self.ref_model.model, self.ref_model, prefix, strategy_path
+            )
             return
         load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")

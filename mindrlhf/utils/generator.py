@@ -1,4 +1,4 @@
-# Copyright 2023 Huawei Technologies Co., Ltd
+# Copyright 2023-2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # ============================================================================
 
 """text generation"""
-__all__ = ['GeneratorMixin']
+__all__ = ["GeneratorMixin"]
 
 from typing import Optional, List, Union
 import numpy as np
@@ -26,7 +26,6 @@ from mindspore import context
 from mindformers.generation.streamers import BaseStreamer
 
 from mindrlhf.utils.utils import set_pipeline_parallel_context
-
 
 
 def topk_fun(logits, topk=5):
@@ -48,7 +47,7 @@ def batch_select(data, index):
     """bathc operation to sorted_logits[:, :top_p_num]"""
     output = []
     for i in range(data.shape[0]):
-        res = data[i, :index[i]]
+        res = data[i, : index[i]]
         output.append(res.reshape(1, -1))
     return np.concatenate(output, 0)
 
@@ -116,21 +115,21 @@ class GeneratorMixin:
         pass
 
     def _pad_inputs_using_max_length(self, origin_inputs, pad_token_id=0):
+        """Pad inputs to max length."""
         input_ids = pad_token_id * np.ones((len(origin_inputs), self.ppo_config.seq_length), dtype="int32")
         for i, origin_input in enumerate(origin_inputs):
             ilen = len(origin_input)
             if ilen > self.ppo_config.seq_length:
-                raise ValueError(f"origin_inputs size is {ilen}, you should increase the "
-                                 f"seq_length of the model {self.ppo_config.seq_length}.")
+                raise ValueError(
+                    f"origin_inputs size is {ilen}, you should increase the "
+                    f"seq_length of the model {self.ppo_config.seq_length}."
+                )
             input_ids[i, :ilen] = origin_input
         return input_ids
 
-    def _incremental_infer(self,
-                           input_ids,
-                           current_index,
-                           valid_length_each_example,
-                           is_first_iteration,
-                           attention_mask=None):
+    def _incremental_infer(
+        self, input_ids, current_index, valid_length_each_example, is_first_iteration, attention_mask=None
+    ):
         """model forward for incremental infer."""
         # Claim the first graph
         if is_first_iteration:
@@ -156,12 +155,12 @@ class GeneratorMixin:
             for i in range(len(current_index)):
                 current_index_tmp = int(current_index[i]) - i * input_ids.shape[1]  # multibatch by huangziling
                 # use numpy to slice array to avoid complie ascend slice op
-                inputs_tmp.append(input_ids[i][current_index_tmp:current_index_tmp + 1])
+                inputs_tmp.append(input_ids[i][current_index_tmp : current_index_tmp + 1])
             inputs_tmp = np.array(inputs_tmp, dtype=np.int32)
 
             attention_mask_tmp = None
             if attention_mask:
-                attention_mask_tmp = attention_mask[:, :, current_index_tmp:current_index_tmp + 1, :]
+                attention_mask_tmp = attention_mask[:, :, current_index_tmp : current_index_tmp + 1, :]
                 attention_mask_tmp = Tensor(attention_mask_tmp, mstype.float32)
 
             log_probs = self.policy_model(
@@ -176,15 +175,17 @@ class GeneratorMixin:
             )
         return log_probs
 
-    def _forward(self,
-                 origin_inputs,
-                 top_k,
-                 top_p,
-                 repetition_penalty,
-                 max_length,
-                 eos_token_id,
-                 streamer=None,
-                 pad_token_id=None):
+    def _forward(
+        self,
+        origin_inputs,
+        top_k,
+        top_p,
+        repetition_penalty,
+        max_length,
+        eos_token_id,
+        streamer=None,
+        pad_token_id=None,
+    ):
         """
         Text generation given the model and origin inputs
 
@@ -219,12 +220,19 @@ class GeneratorMixin:
         valid_length_each_example = np.array(valid_length_each_example)
         print("Get the valid for each example is: %s", valid_length_each_example)
         if np.max(valid_length_each_example) > max_length:
-            raise ValueError("The max_length set is smaller than the length in the input_ids. You shout set "
-                             f"max_length to {np.max(valid_length_each_example)}")
+            raise ValueError(
+                "The max_length set is smaller than the length in the input_ids. You shout set "
+                f"max_length to {np.max(valid_length_each_example)}"
+            )
 
-        target_length = [self.ppo_config.seq_length if valid_length_each_example[i] + self.ppo_config.max_decode_length
-                         > self.ppo_config.seq_length else valid_length_each_example[i] + \
-                            self.ppo_config.max_decode_length for i in range(batch_size)]
+        target_length = [
+            (
+                self.ppo_config.seq_length
+                if valid_length_each_example[i] + self.ppo_config.max_decode_length > self.ppo_config.seq_length
+                else valid_length_each_example[i] + self.ppo_config.max_decode_length
+            )
+            for i in range(batch_size)
+        ]
         print("max target_length is: %s", target_length)
         # A list of the frequency of each token
         frequency_list = None
@@ -233,7 +241,7 @@ class GeneratorMixin:
         print("pad the origin inputs from %s into shape: %s", origin_inputs.shape, input_ids.shape)
         input_mask = np.zeros_like(input_ids)
         for i in range(valid_length_each_example.shape[0]):
-            input_mask[i, :valid_length_each_example[i]] = 1
+            input_mask[i, : valid_length_each_example[i]] = 1
 
         # A single loop generates one token, loop until reaching target model_origin_max_length or generating eod token
         is_finished = [False] * batch_size
@@ -248,8 +256,11 @@ class GeneratorMixin:
                 break
             seq_length = input_ids.shape[1]
 
-            current_index = [(valid_length_each_example[i+j*batch_size] - 1 + i * seq_length)
-                             for i in range(batch_size) for j in range(self.ppo_config.inference_micro_size)]
+            current_index = [
+                (valid_length_each_example[i + j * batch_size] - 1 + i * seq_length)
+                for i in range(batch_size)
+                for j in range(self.ppo_config.inference_micro_size)
+            ]
             current_index = Tensor(current_index, mstype.int32)
             if self.policy_model.model.use_past:
                 is_first_iteration = self.policy_model.model.is_first_iteration
@@ -260,7 +271,7 @@ class GeneratorMixin:
                     attention_mask=attention_mask,
                     current_index=current_index,
                     valid_length_each_example=valid_length_each_example,
-                    is_first_iteration=is_first_iteration
+                    is_first_iteration=is_first_iteration,
                 )
             else:
                 log_probs = self.policy_model(Tensor(input_ids, mstype.int32), current_index)
@@ -277,8 +288,9 @@ class GeneratorMixin:
                 frequency_list = np.array([[0 for _ in range(vocab_size)]])
             log_probs_revised = log_probs.reshape(batch_size, vocab_size)
             if repetition_penalty != 1:
-                log_probs_revised = log_probs - frequency_list * repetition_penalty - \
-                    (frequency_list > 0) * repetition_penalty
+                log_probs_revised = (
+                    log_probs - frequency_list * repetition_penalty - (frequency_list > 0) * repetition_penalty
+                )
 
             p, p_args = sampler(log_probs_revised, top_p, top_k, use_pynative)
 
@@ -317,16 +329,18 @@ class GeneratorMixin:
             streamer.end()
         return output_ids
 
-    def generate(self,
-                 input_ids: Optional[Union[List[int], List[List[int]]]],
-                 do_sample: Optional[bool] = None,
-                 top_k: Optional[int] = None,
-                 top_p: Optional[float] = None,
-                 eos_token_id: Optional[int] = None,
-                 pad_token_id: Optional[int] = None,
-                 repetition_penalty: Optional[float] = None,
-                 max_length: Optional[int] = None,
-                 streamer: Optional[BaseStreamer] = None):
+    def generate(
+        self,
+        input_ids: Optional[Union[List[int], List[List[int]]]],
+        do_sample: Optional[bool] = None,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+        eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        max_length: Optional[int] = None,
+        streamer: Optional[BaseStreamer] = None,
+    ):
         """
         Generate the words according to the given the input ids.
 
@@ -392,14 +406,16 @@ class GeneratorMixin:
             top_k = 1
         # eval ops
 
-        output_ids = self._forward(origin_inputs=input_ids,
-                                   top_k=top_k,
-                                   top_p=top_p,
-                                   repetition_penalty=repetition_penalty,
-                                   max_length=max_length,
-                                   eos_token_id=eos_token_id,
-                                   pad_token_id=pad_token_id,
-                                   streamer=streamer)
+        output_ids = self._forward(
+            origin_inputs=input_ids,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            max_length=max_length,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            streamer=streamer,
+        )
         # set to original phase
-        self.policy_model.model.set_train(origin_phase == 'train')
+        self.policy_model.model.set_train(origin_phase == "train")
         return output_ids
