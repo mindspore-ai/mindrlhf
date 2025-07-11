@@ -518,6 +518,7 @@ def convert_index_json_total(load_checkpoint, converted_dir, convert_map_dict_ls
 
 
 def get_unique_filename(save_file_path):
+    """get the unique name of the save file."""
     root, ext = os.path.splitext(save_file_path)
     counter = 1
     while True:
@@ -590,6 +591,7 @@ def get_dp_rank(data_parallel):
 
 
 def add_metrics_to_tensorboard(tensor_writer, metrics, global_step):
+    """add training metrics to tensorboard."""
     for key, value in metrics.items():
         tensor_writer.add_scalar(key, value, global_step=global_step)
 
