@@ -15,6 +15,9 @@
 """Reward functions for GRPO training."""
 import re
 
+# mindformers
+from mindformers import logger
+
 
 def accuracy_reward(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
@@ -66,8 +69,8 @@ def accuracy_reward_2(completions, solution, **kwargs):
             extraction_mode="first_match",
             extraction_config=[LatexExtractionConfig()],
         )
-        # pylint: disable=C1801
-        if len(gold_parsed) != 0:
+        gold_parsed_len = len(gold_parsed)
+        if gold_parsed_len != 0:
             # We require the answer to be provided in correct latex (no malformed operators)
             answer_parsed = parse(
                 content,
@@ -90,16 +93,17 @@ def accuracy_reward_2(completions, solution, **kwargs):
             )
             # Reward 1 if the content is the same as the ground truth, 0 otherwise
             reward = float(verify(answer_parsed, gold_parsed))
-            if len(answer_parsed) == 0:
+            answer_len = len(answer_parsed)
+            if answer_len == 0:
                 answer_parsed_lst.append('NO ANSWER')
-            elif len(answer_parsed) == 1:
+            elif answer_len == 1:
                 answer_parsed_lst.append(answer_parsed[0])
             else:
                 answer_parsed_lst.append(answer_parsed[1])
         else:
             # If the gold solution is not parseable, we reward 1 to skip this example
             reward = 0.0
-            print("Failed to parse gold solution: ", sol)
+            logger.info(f"Failed to parse gold solution: {sol}")
             answer_parsed_lst.append('solution parse failed')
         rewards.append(reward)
 
