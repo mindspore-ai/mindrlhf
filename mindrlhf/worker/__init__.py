@@ -13,9 +13,11 @@
 # limitations under the License.
 # ============================================================================
 """MindRLHF workers."""
+
+__all__ = ['InferWorker', 'RefWorker', 'TrainWorker', 'TransformWorker', 'OldPolicyWorker']
+
 from .infer_worker import InferWorker
 from .ref_worker import RefWorker
 from .train_worker import TrainWorker
 from .transform_worker import TransformWorker
 from .old_policy_worker import OldPolicyWorker
-__all__ = ['InferWorker', 'RefWorker', 'TrainWorker', 'TransformWorker', 'OldPolicyWorker']

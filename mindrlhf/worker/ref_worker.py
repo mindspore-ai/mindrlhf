@@ -115,6 +115,7 @@ class RefWorker(Worker):
         return self.ref_model_config.checkpoint_name_or_path
 
     def get_ref_dp(self):
+        """Get reference model data parallel size"""
         return self.ref_dp
 
     def compile(self):
