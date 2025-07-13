@@ -41,7 +41,7 @@ from mindrlhf.utils.utils import (
     record_last_ckpt_to_json,
     get_checkpoint_name,
     ensure_total_ckpt_is_less_than_limit,
-    load_safetensors
+    load_safetensors,
 )
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.dataset import GRPOIteratorStore
@@ -133,6 +133,7 @@ class TrainWorker(Worker):
             )
 
     def model(self):
+        """Return train model."""
         return self.grpo_model_train
 
     def compile(self):
@@ -269,14 +270,20 @@ class TrainWorker(Worker):
         if not os.path.exists(self.sft_ckpt_path_train):
             raise ValueError(f"train model checkpoint path: {self.sft_ckpt_path_train} not exists")
 
-        if self.sft_ckpt_path_train and self.load_ckpt_format in  ["ms_safetensors", "hf_safetensors"]:
+        if self.sft_ckpt_path_train and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.model_on_device = True
             self.optimizer_on_device = True
             strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
             network = self.grpo_model_train.grpo_model_train.policy_model.model
             prefix = "grpo_model_train.policy_model.model."
-            load_safetensors(self.sft_ckpt_path_train, self.load_ckpt_format, network,
-                             self.grpo_model_train.grpo_model_train.policy_model, prefix, strategy_path)
+            load_safetensors(
+                self.sft_ckpt_path_train,
+                self.load_ckpt_format,
+                network,
+                self.grpo_model_train.grpo_model_train.policy_model,
+                prefix,
+                strategy_path,
+            )
             return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel}, {load_ckpt_func}")
@@ -513,6 +520,7 @@ class TrainWorker(Worker):
         self.model_on_device = False
 
     def push_to_store(self, data):
+        """Save date to global store."""
         self.store = data
 
     def save_checkpoints(self, epochs=0, steps=0, start_epoch=0, start_step=0, formats="ckpt"):

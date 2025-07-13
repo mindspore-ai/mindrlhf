@@ -20,7 +20,7 @@ from mindspore import Tensor
 no_patch_tensor_shape = Tensor.shape
 
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
-from mindrlhf import GRPOConfig
+from mindrlhf.configs import GRPOConfig
 
 
 def main(input_args):

@@ -13,6 +13,28 @@
 # limitations under the License.
 # ============================================================================
 """MindRLHF configs."""
-__all__ = ['GRPOConfig']
+__all__ = [
+    "ActorConfig",
+    "AscendConfig",
+    "Context",
+    "GRPOConfig",
+    "GenerateConfig",
+    "RefConfig",
+    "RewardConfig",
+    "RecomputeConfig",
+    "RLConfig",
+    "SamplingConfig",
+]
 
-from .grpo_configs import GRPOConfig
+from .grpo_configs import (
+    ActorConfig,
+    AscendConfig,
+    Context,
+    GRPOConfig,
+    GenerateConfig,
+    RefConfig,
+    RewardConfig,
+    RecomputeConfig,
+    RLConfig,
+    SamplingConfig,
+)

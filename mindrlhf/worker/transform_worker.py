@@ -31,6 +31,7 @@ from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 def match_func(s1, s2):
+    """Match func."""
     s1 = s1[s1.find(".") + 1 :]
     s2 = s2[s2.find(".") + 1 :]
     return s1 == s2
@@ -82,9 +83,7 @@ def match_func_policy2ref(s1, s2):
 
 
 def match_func_vllm(s1, s2):
-    """
-    Weight match_func_vllm for qwen 2.5
-    """
+    """Weight match_func_vllm for qwen 2.5."""
     s1 = s1[s1.find(".") + 1:]
     # get rid of the first 'model'
     # eg. policy_model.model.model.layer -> policy_model.model.layer
@@ -180,7 +179,7 @@ class TransformWorker(Worker):
                         os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
                     )
             else:
-                print("Waiting for main worker to merge strategies.")
+                logger.info("Waiting for main worker to merge strategies.")
                 time.sleep(10)
             ms.mint.distributed.barrier()
             model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""

@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""dataset.py"""
-__all__ = ["GRPOIteratorStore"]
+"""Dataset"""
 
 
 class GRPOIteratorStore:
-    """ iterator for storing data """
+    """iterator for storing data"""
+
     def __init__(self, store):
         self._index = 0
         self.length = len(store)
@@ -34,7 +34,7 @@ class GRPOIteratorStore:
             self.store[self._index].actual_sequence_length,
             self.store[self._index].sample_index,
             self.store[self._index].sample_valid_length,
-            self.store[self._index].old_per_token_logps
+            self.store[self._index].old_per_token_logps,
         )
         self._index += 1
         return item
