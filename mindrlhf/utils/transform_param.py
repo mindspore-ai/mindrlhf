@@ -15,7 +15,7 @@
 """Resharding Weight"""
 import gc
 import numpy as np
-from mindrlhf.utils.utils import enable_pynative_async
+
 import mindspore.log as logger
 from mindspore import ops, Tensor, Parameter, mint, context
 from mindspore.ops import operations as P
@@ -27,12 +27,15 @@ from mindspore.parallel._parallel_serialization import _build_searched_strategy,
 from mindspore.parallel.function.reshard_func import _redistribute
 from mindspore.parallel._cell_wrapper import _insert_virtual_pp_dim
 
+# pylint: disable=C0413
 ENABLE_PYNATIVE_REDIST = True
 try:
     from mindspore.parallel._tensor import _get_pipeline_operator_map, _get_resharding_operator_map
 except ImportError:
     logger.warning("MindSpore version is not compatible, can only run redistribution in graph mode")
     ENABLE_PYNATIVE_REDIST = False
+
+from mindrlhf.utils.utils import enable_pynative_async
 
 BROADCAST_GROUP_CACHE = []
 ALLGATHER_GROUP_CACHE = []
@@ -62,12 +65,11 @@ def _get_dev_mat_for_opt_shard(opt_shard, dev_mat, tensor_map):
     if opt_shard == 0:
         return dev_mat, -1, tensor_map, True
     used_dev_num = int(np.prod(np.array([dev_mat[len(dev_mat) - i - 1] if i != -1 else 1 for i in tensor_map])))
-    total_dev_num = int(np.prod(np.array(dev_mat)))
-    if opt_shard == -1 or used_dev_num * opt_shard == total_dev_num:
+    if opt_shard == -1 or used_dev_num * opt_shard == int(np.prod(np.array(dev_mat))):
         # 饱和切分不需要调整dev mat
         return dev_mat, -1, tensor_map, True
     # 非饱和根据场景调整dev mat
-    remain_dev_num = total_dev_num // (used_dev_num * opt_shard)
+    remain_dev_num = int(np.prod(np.array(dev_mat))) // (used_dev_num * opt_shard)
     real_remain_dev_num = 1
     used_dev_mat_mask = _get_used_dev_mat(dev_mat, tensor_map)
     counter = -1
@@ -114,12 +116,12 @@ def _get_tensor_map_for_opt_shard(dev_mat, tensor_map, full_opt_shard, counter, 
     else:
         unused_idx = []
         real_idx = 0
-        for i in range(len(used_dev_mat)):
-            if used_dev_mat[i]:
+        for i, used_dev_mat_idx in enumerate(used_dev_mat):
+            if used_dev_mat_idx:
                 continue
             if real_idx > counter:
                 unused_idx.append(len(used_dev_mat) - i - 1)
-            if not used_dev_mat[i]:
+            if not used_dev_mat_idx:
                 real_idx += 1
 
     opt_shard_dim = unused_idx
@@ -272,8 +274,10 @@ class TransformParametersD2D:
 
     @enable_pynative_async
     def transform(self, input_on_device_flag=(True, True)):
-        """transform the parameters from source network layout to dest network layout and assign the parameter to
-        dest network"""
+        """
+        transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network
+        """
         if not isinstance(input_on_device_flag, tuple) or len(input_on_device_flag) != 2:
             raise ValueError(f"The input_on_device_flag must be tuple, and its length must be 2."
                              f"But got {type(input_on_device_flag)}")
@@ -293,8 +297,10 @@ class TransformParametersD2D:
         return True
 
     def transform_graph(self, src_param_name_intersection, mem_opt_level):
-        """transform the parameters from source network layout to dest network layout and assign the parameter to
-        dest network"""
+        """
+        transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network
+        """
         for i, src_param in enumerate(src_param_name_intersection):
             if not isinstance(src_param, (Parameter, Tensor)):
                 continue
@@ -312,8 +318,10 @@ class TransformParametersD2D:
                 self._dst_param_name_intersection[i]._offload()
 
     def transform_hybrid(self, src_param_name_intersection, mem_opt_level, force_run_in_pynative=False):
-        """transform the parameters from source network layout to dest network layout and assign the parameter to
-        dest network"""
+        """
+        transform the parameters from source network layout to dest network layout and assign the parameter to
+        dest network
+        """
         parallel_mode = context.get_auto_parallel_context("parallel_mode")
         pp_stages = context.get_auto_parallel_context("pipeline_stages")
         context.set_auto_parallel_context(parallel_mode="stand_alone", device_num=get_group_size(), pipeline_stages=1)
@@ -334,9 +342,11 @@ class TransformParametersD2D:
 
     # pylint: disable=W0613
     def preprocess_for_src_param(self, input_on_device_flag):
+        """preprocess src param"""
         return self._src_param_name_intersection
 
-    def _log_not_in_intersection_param(self, param_intersection, all_param, debug_string):
+    @staticmethod
+    def _log_not_in_intersection_param(param_intersection, all_param, debug_string):
         """find the param in all_param but not in param_intersection"""
         param_intersection_name = [
             param.name for param in param_intersection]
@@ -345,7 +355,8 @@ class TransformParametersD2D:
                 logger.warning(f"The param {param_name} of {debug_string} is not in the intersection of src_network "
                                f"and dst_network.")
 
-    def _check_total_dev_num(self, src_stra_info, src_pp_stages, dst_stra_info, dst_pp_stages):
+    @staticmethod
+    def _check_total_dev_num(src_stra_info, src_pp_stages, dst_stra_info, dst_pp_stages):
         _, first_src_stra_info = next(iter(src_stra_info.items()))
         src_dev_num = np.prod(np.array(first_src_stra_info[0])) * src_pp_stages
         _, first_dst_stra_info = next(iter(dst_stra_info.items()))
@@ -354,7 +365,8 @@ class TransformParametersD2D:
             raise ValueError(f"src network device number must equal to dest network device number,"
                              f"but got src {src_dev_num}, dst {dst_dev_num}")
 
-    def _check_input_flag(self, input_on_device_flag):
+    @staticmethod
+    def _check_input_flag(input_on_device_flag):
         if input_on_device_flag[0] and input_on_device_flag[1]:
             return 0
         elif not (input_on_device_flag[0] or input_on_device_flag[1]):
@@ -418,7 +430,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
                     self._dst_param_name_intersection[i]._offload()
                 new_src_param_intersection.append("skip")
                 continue
-            elif "tok_embeddings" in src_param.name:
+            if "tok_embeddings" in src_param.name:
                 if mem_opt_level in [1]:
                     src_param._load()
                     self._dst_param_name_intersection[i]._load()
@@ -431,7 +443,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
                     self._dst_param_name_intersection[i]._offload()
                 new_src_param_intersection.append("skip")
                 continue
-            elif "attention.l2q_nope_proj.weight" in src_param.name:
+            if "attention.l2q_nope_proj.weight" in src_param.name:
                 self._redist_func("l2q_nope_proj", mem_opt_level, src_param, standalone_dtensor_info)
             elif "attention.l2q_pe_proj.weight" in src_param.name:
                 self._redist_func("l2q_pe_proj", mem_opt_level, src_param, standalone_dtensor_info)
@@ -513,9 +525,11 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
     def _transfer_train_to_infer(self, src_param, new_src_param_intersection):
         """Get two parts param in train, transfer them to infer"""
         value_merged = None
-        if (("attention.l2q_nope_proj.weight" in src_param.name or
-             "attention.l2q_pe_proj.weight" in src_param.name) and
-                self.l2q_nope_proj is not None and self.l2q_pe_proj is not None):
+        is_l2q = ("attention.l2q_nope_proj.weight" in src_param.name or
+                  "attention.l2q_pe_proj.weight" in src_param.name)
+        is_kv2l = ("attention.kv2l_k_pe.weight" in src_param.name or
+                   "attention.kv2l_latent_kv.weight" in src_param.name)
+        if is_l2q and self.l2q_nope_proj is not None and self.l2q_pe_proj is not None:
             value_nope = self.l2q_nope_proj
             value_pe = self.l2q_pe_proj
             value_nope = value_nope.reshape(self._n_head, self._qk_nope_head_dim, -1)
@@ -524,9 +538,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
             value_merged = value_merged.reshape(-1, value_merged.shape[-1])
             self.l2q_nope_proj = None
             self.l2q_pe_proj = None
-        elif ("attention.kv2l_k_pe.weight" in src_param.name or
-              "attention.kv2l_latent_kv.weight" in src_param.name) and \
-                self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
+        elif is_kv2l and self.kv2l_k_pe is not None and self.kv2l_latent_kv is not None:
             value_k_pe = self.kv2l_k_pe
             value_latent_kv = self.kv2l_latent_kv
             value_k_pe = value_k_pe.reshape(-1, value_k_pe.shape[-1])
@@ -537,6 +549,7 @@ class TransformParametersD2DForDSv3(TransformParametersD2D):
         else:
             new_src_param_intersection.append("skip")
         return value_merged
+
 
 def _transfer_layout_to_tuple(input_layout, input_shape):
     input_layout_dict = input_layout.to_dict()
@@ -649,7 +662,7 @@ def reshard(tensor, out_tensor, force_run_in_pynative=False):
     if from_layout_tuple == to_layout_tuple:
         logger.debug(f"from layout {from_layout_tuple} is equal to to layout {to_layout_tuple}")
         _check_shape_match(tensor, tensor._dtensor_info, out_tensor)
-        ops.assign(out_tensor, tensor)
+        ops.assign(out_tensor, tensor.astype(out_tensor.dtype))
         return True
     operator_map = _get_resharding_operator_map(from_layout_tuple, to_layout_tuple, get_rank())[get_rank()]
     tensor_name = tensor.name if isinstance(tensor, Parameter) else "tensor"
@@ -714,12 +727,12 @@ def _check_shape_match(tensor, src_dtensor_info, out_tensor):
     if out_tensor.shape != tensor.shape:
         try:
             src_layout = src_dtensor_info.layout.to_dict()
-        except:
+        except AttributeError:
             logger.error("Get src layout has error, src_layout will be set to None")
             src_layout = None
         try:
             dst_layout = out_tensor._dtensor_info.layout.to_dict()
-        except:
+        except AttributeError:
             logger.error("Get dst layout has error, dst_layout will be set to None")
             dst_layout = None
         raise ValueError(f"For param {out_tensor.name}, "
