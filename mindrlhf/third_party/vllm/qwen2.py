@@ -18,7 +18,7 @@
 """Qwen2 Sample Patch."""
 
 import os
-from typing import Optional
+from typing import Optional, Iterable, Set, Tuple
 import numpy as np
 
 from vllm.model_executor.layers.sampler import SamplerOutput
@@ -51,3 +51,9 @@ def sample(
     _pynative_executor.sync()
     runtime.synchronize()
     return next_tokens
+
+
+# pylint: disable=W0613
+def load_weights(cls, weights: Iterable[Tuple[str, Tensor]]) -> Set[str]:
+    """When resume training, skip vllm loading infer model weights"""
+    pass

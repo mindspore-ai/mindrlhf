@@ -167,6 +167,12 @@ class InferWorker(Worker):
         # pylint: disable=W0611
         from mindrlhf.third_party.vllm import package_version, LLM
         from vllm import SamplingParams
+        if self.args.resume_training:
+            logger.warning("Enable resume_training, skip loading infer model weights")
+            from vllm_mindspore.model_executor.models.mf_models.qwen2 import Qwen2ForCausalLM
+            from mindrlhf.third_party.vllm.qwen2 import load_weights
+            Qwen2ForCausalLM.load_weights = load_weights
+            self.sft_ckpt_path_infer = self.grpo_config.rl_config.tokenizer_dir
 
         self.tokenizer.max_token_id = max(self.tokenizer.get_vocab().values())
         # 初始化vllm
