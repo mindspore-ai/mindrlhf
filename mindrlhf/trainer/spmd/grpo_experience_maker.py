@@ -36,6 +36,8 @@ from mindrlhf.utils import (
     MetricData,
     get_dp_rank,
     add_metrics_to_tensorboard,
+    profiler_start,
+    profiler_step,
 )
 
 from mindrlhf.reward.reward_fn import accuracy_reward, format_reward, qwen_accuracy_reward
@@ -74,6 +76,7 @@ class GRPOExperienceMaker:
         self.total_processed_tokens = 0
         self.step_num = 0
         self.step_total_tokens = 0
+        self.profiler_iteration = 0
 
         self._init_grpo_experience_dataset()
         self._init_reward_fn()
@@ -625,40 +628,31 @@ class GRPOExperienceMaker:
         logger.info("ref_model load")
         ref_step_num = len(packed_samples) // total_ref_batch_size
         logger.info(f"ref model total steps: {ref_step_num}")
-        for idx in range(ref_step_num):
-            # responses_mask will be updated before ref model infer.
-            prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
-                packed_samples, batch_size=total_ref_batch_size, idx=idx
-            )
-
-            prompt_completion_ids = np.pad(
-                prompt_completion_ids, ((0, 0), (0, 1)), "constant", constant_values=pad_token_id
-            )
-            sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
-            input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
-            actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
-
-            start_time = time.time()
-            logger.info(
-                "reference model step {} start at {}-------------------------------".format(
-                    idx, time.strftime("%H:%M:%S", time.localtime(start_time))
+        with TimeConsumingCollector(f"reference model all steps {ref_step_num}"):
+            for idx in range(ref_step_num):
+                # responses_mask will be updated before ref model infer.
+                prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                    packed_samples, batch_size=total_ref_batch_size, idx=idx
                 )
-            )
 
-            ref_per_token_logps = self.ref.compute_ref_log_prob(
-                input_prompt_ids, None, samples=sampels_tensor, actual_sequence_length=actual_sequence_length
-            )
-            ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
-
-            end_time = time.time()
-            logger.info(
-                "reference model step {} end at {}, elapsed time {}-------------------------------".format(
-                    idx, time.strftime("%H:%M:%S", time.localtime(end_time)), end_time - start_time
+                prompt_completion_ids = np.pad(
+                    prompt_completion_ids, ((0, 0), (0, 1)), "constant", constant_values=pad_token_id
                 )
-            )
-            all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = (
-                ref_per_token_logps
-            )
+                sampels_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
+                input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
+                actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
+
+                logger.info("reference model step {} start".format(idx))
+                with TimeConsumingCollector(f"ref model step {idx}"):
+                    ref_per_token_logps = self.ref.compute_ref_log_prob(
+                        input_prompt_ids, None, samples=sampels_tensor, actual_sequence_length=actual_sequence_length
+                    )
+                    ref_per_token_logps = ref_per_token_logps.asnumpy().astype(np.float32)
+                logger.info("reference model step {} end".format(idx))
+
+                all_ref_per_token_logps[idx * total_ref_batch_size : (idx + 1) * total_ref_batch_size, :] = (
+                    ref_per_token_logps
+                )
 
         self.ref.offload()
         logger.info("ref_model offload")
@@ -728,7 +722,10 @@ class GRPOExperienceMaker:
         # Step 1: generate responses and masks.
         micro_bs = n_questions // self.infer_dp
         micro_num = num_rollouts * num_generations
+        generate_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_generate",
+                                           profiler_iteration=self.profiler_iteration)
         generate_results = self.generate_sequence(micro_bs, micro_num, prompt_tensors_full)
+        profiler_step(generate_profiler)
 
         # Step 2: calculate reward and advantages.
         with TimeConsumingCollector("calculate reward"):
@@ -745,12 +742,18 @@ class GRPOExperienceMaker:
         packed_samples = self.construct_packed_samples(generate_results, advantages, num_generations)
 
         # Step 3: compute ref log probs.
+        ref_log_prob_profiler = profiler_start(self.grpo_config.profiler_config, role="reference_log_prob",
+                                               profiler_iteration=self.profiler_iteration)
         all_ref_per_token_logps = self.compute_ref_log_probs(packed_samples)
+        profiler_step(ref_log_prob_profiler)
 
         # Step 4: generate old log probs
         all_old_per_token_logps = None
         if self.grpo_config.rl_config.num_iterations > 1:
+            old_log_prob_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_old_log_prob",
+                                                   profiler_iteration=self.profiler_iteration)
             all_old_per_token_logps = self._generate_old_logps(packed_samples)
+            profiler_step(old_log_prob_profiler)
 
         self.add_experience(packed_samples, all_ref_per_token_logps, all_old_per_token_logps)
 
@@ -764,4 +767,5 @@ class GRPOExperienceMaker:
             if get_rank() % 8 == 0:
                 self._save_grpoelement(save_data_file)
         self.make_exp_step += 1
+        self.profiler_iteration += 1
         logger.info("Make experience end")

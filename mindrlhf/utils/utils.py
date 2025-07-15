@@ -36,6 +36,9 @@ __all__ = [
     "load_param_to_net",
     "record_last_ckpt_to_json",
     "TimeConsumingCollector",
+    "profiler_start",
+    "profiler_step",
+    "mstx_timer_decorator"
 ]
 
 import os
@@ -46,6 +49,7 @@ import copy
 import stat
 from glob import glob
 from typing import Dict
+from functools import wraps
 
 import yaml
 from safetensors import safe_open
@@ -719,13 +723,152 @@ class TimeConsumingCollector:
         self.start_timestamp = None
         self.timer = timer
         self.duration = 0
+        self.mstx_id = None
 
     def __enter__(self):
         self.start_timestamp = time.perf_counter()
+        self.mstx_id = ms.profiler.mstx.range_start(self.func_name)
         return self
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         global PERF_STATS
         self.duration = time.perf_counter() - self.start_timestamp
+        if self.mstx_id is not None:
+            ms.profiler.mstx.range_end(self.mstx_id)
         if PERF_STATS:
             logger.info(f"Performance Statistics: {self.func_name}: duration={self.duration}")
+
+
+def get_grpo_profiler(profiler_config, role: str = None):
+    """
+    Get GRPO profiler instance.
+
+    Args:
+        profiler_config: Profiler configuration object
+        role (str, optional): Role name for profiling. Defaults to None.
+
+    Returns:
+        Profiler instance or None if profiling is disabled or not for this rank
+    """
+    args = profiler_config
+    if not args or not args.profile:
+        return None
+
+    profiler_this_rank = False
+    if args.profile_ranks == "all":
+        profiler_this_rank = True
+    else:
+        try:
+            ranks = list(args.profile_ranks)
+        except (TypeError, ValueError):
+            ranks = [0]
+        if ms.communication.get_rank() in ranks:
+            profiler_this_rank = True
+    if not profiler_this_rank:
+        return None
+
+    if args.profile_level == 'levelNone':
+        profiler_level = ms.profiler.ProfilerLevel.LevelNone
+    elif args.profile_level == 'level0':
+        profiler_level = ms.profiler.ProfilerLevel.Level0
+    elif args.profile_level == 'level1':
+        profiler_level = ms.profiler.ProfilerLevel.Level1
+    elif args.profile_level == 'level2':
+        profiler_level = ms.profiler.ProfilerLevel.Level2
+    else:
+        raise ValueError(f"profiler_level only supports level0,"
+                         f" 1, 2, and level_none, but gets {args.profile_level}")
+
+    base_path = args.profile_save_path
+    if role:
+        profile_save_path = os.path.join(base_path, role)
+    else:
+        profile_save_path = base_path
+
+    # pylint: disable=protected-access
+    experimental_config = ms.profiler._ExperimentalConfig(
+        aic_metrics=ms.profiler.AicoreMetrics.PipeUtilization,
+        profiler_level=profiler_level,
+        data_simplification=True,
+        mstx=args.mstx,
+    )
+
+    if args.stage == "all":
+        skip_first = args.profile_step_start - 1
+        active = args.profile_step_end - args.profile_step_start
+    else:
+        skip_first = 0
+        active = 1
+
+    activities = []
+    if args.profile_with_npu:
+        activities.append(ms.profiler.ProfilerActivity.NPU)
+    if args.profile_with_cpu:
+        activities.append(ms.profiler.ProfilerActivity.CPU)
+
+    prof = ms.profiler.profile(
+        start_profile=False,
+        with_stack=args.profile_with_stack,
+        profile_memory=args.profile_with_memory,
+        activities=activities,
+        schedule=ms.profiler.schedule(wait=0, warmup=0, active=active, repeat=1, skip_first=skip_first),
+        on_trace_ready=ms.profiler.tensorboard_trace_handler(profile_save_path, analyse_flag=args.profile_analysis),
+        experimental_config=experimental_config)
+
+    return prof
+
+
+def profiler_start(profiler_config, role="profiler", profiler_iteration=None):
+    """
+    Start profiler based on configuration.
+
+    Args:
+        profiler_config: Profiler configuration object
+        role (str): Role name for profiling. Defaults to "profiler".
+        profiler_iteration (int, optional): Current iteration number. Defaults to None.
+
+    Returns:
+        Started profiler instance or None if profiling is not needed
+    """
+    if not profiler_config:
+        return None
+    if profiler_iteration is not None and (
+            profiler_iteration < profiler_config.profile_step_start or
+            profiler_iteration >= profiler_config.profile_step_end):
+        return None
+    if profiler_config.stage != "all":
+        if isinstance(profiler_config.stage, str):
+            if role != profiler_config.stage:
+                return None
+        else:
+            try:
+                stages = list(profiler_config.stage)
+            except (TypeError, ValueError):
+                stages = []
+            if role not in stages:
+                return None
+    if profiler_config.stage == "all" and role != "grpo_all_stage":
+        return None
+    profiler = get_grpo_profiler(profiler_config, role)
+    if not profiler:
+        return None
+    profiler.start()
+    return profiler
+
+
+def profiler_step(profiler):
+    """Execute a profiler step if profiler exists."""
+    if profiler:
+        profiler.step()
+
+
+def mstx_timer_decorator(func):
+    """Decorator for MindSpore mstx timer profiling."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        mstx_id = ms.profiler.mstx.range_start(func.__qualname__)
+        result = func(*args, **kwargs)
+        ms.profiler.mstx.range_end(mstx_id)
+        return result
+
+    return wrapper

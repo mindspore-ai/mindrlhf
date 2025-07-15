@@ -33,7 +33,14 @@ from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
 # mindrlhf
-from mindrlhf.utils import transfer_from_str_to_bool, set_perf_stats, TimeConsumingCollector, convert_index_json_total
+from mindrlhf.utils import (
+    transfer_from_str_to_bool,
+    set_perf_stats,
+    TimeConsumingCollector,
+    convert_index_json_total,
+    profiler_start,
+    profiler_step,
+)
 
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
@@ -377,6 +384,7 @@ class GRPOTrainer:
         )
         np.set_printoptions(threshold=1024)
         while self.n_epoch < self.grpo_config.rl_config.epochs:
+            grpo_profiler = profiler_start(self.grpo_config.profiler_config, role="grpo_all_stage")
             while self.i_step < self.step_num:
                 if self.i_step % self.grpo_config.rl_config.save_ckpt_interval == 0:
                     self.train.save_checkpoints(
@@ -398,7 +406,10 @@ class GRPOTrainer:
                     with TimeConsumingCollector("load train model"):
                         self.train.load_model()
                     with TimeConsumingCollector("train model"):
+                        update_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_update",
+                                                         profiler_iteration=self.n_epoch)
                         self.train.train()
+                        profiler_step(update_profiler)
                     with TimeConsumingCollector("offload train optimizer"):
                         self.train.offload_optimizer()
                     with TimeConsumingCollector("reshard train to infer"):
@@ -417,6 +428,7 @@ class GRPOTrainer:
                     )
                 )
                 self.i_step += 1
+                profiler_step(grpo_profiler)
             self.i_step = 0
             self.n_epoch += 1
 

@@ -42,6 +42,9 @@ __all__ = [
     "load_param_to_net",
     "record_last_ckpt_to_json",
     "TimeConsumingCollector",
+    "profiler_start",
+    "profiler_step",
+    "mstx_timer_decorator",
 ]
 
 from .dataset import GRPOIteratorStore
@@ -69,6 +72,9 @@ from .utils import (
     set_pipeline_parallel_context,
     is_last_stage,
     is_first_stage,
+    profiler_start,
+    profiler_step,
+    mstx_timer_decorator,
 )
 from .adam import AdamWeightDecayOp
 from .transform_param import TransformParametersD2D, TransformParametersD2DForDSv3
