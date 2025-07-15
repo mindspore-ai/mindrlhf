@@ -65,6 +65,17 @@ def set_weight_decay(params, is_use_other_params=True):
 
 
 def combine_grpo_config(grpo_config, model_config):
+    """
+    combine grpo config and model config
+
+    Args:
+        grpo_config: Configuration of the GRPO algorithm
+        model_config: model_config
+
+    Returns:
+        Configure after combination.
+
+    """
     config_temp = asdict(grpo_config)
     for k, v in model_config.to_dict().items():
         if k not in config_temp:

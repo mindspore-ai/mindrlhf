@@ -77,6 +77,7 @@ def match_func_dkv3(s1, s2):
 
 
 def match_func_policy2ref(s1, s2):
+    """match_func_policy2ref"""
     s1 = s1[s1.find(".") + 1:]
     s1 = s1[s1.find(".") + 1:]
     return s1 == s2

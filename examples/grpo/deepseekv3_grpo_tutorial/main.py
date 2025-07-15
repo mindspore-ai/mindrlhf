@@ -19,6 +19,7 @@
 import argparse
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
+
 def main(input_args):
     """main process"""
     trainer = GRPOTrainer(input_args)
