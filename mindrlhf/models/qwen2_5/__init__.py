@@ -1,4 +1,4 @@
-# Copyright 2024 Huawei Technologies Co., Ltd
+# Copyright 2024-2025 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""qwen2."""
+"""Qwen2.5 related."""
 __all__ = ["Qwen2_5Tokenizer"]
 
-from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
+from .qwen2_5_tokenizer import Qwen2_5Tokenizer

@@ -39,61 +39,57 @@ def set_weight_decay(params, is_use_other_params=True):
     """
 
     def decay_filter(x):
-        return 'layernorm' not in x.name.lower() and "bias" not in x.name.lower()
+        return "layernorm" not in x.name.lower() and "bias" not in x.name.lower()
 
     decay_params = list(filter(decay_filter, params))
     other_params = list(filter(lambda x: not decay_filter(x), params))
     if is_use_other_params:
-        group_params = [{
-            'params': decay_params,
-            'weight_decay': 1e-1
-        }, {
-            'params': other_params,
-            'weight_decay': 0.0
-        }, {
-            'order_params': params
-        }]
+        group_params = [
+            {"params": decay_params, "weight_decay": 1e-1},
+            {"params": other_params, "weight_decay": 0.0},
+            {"order_params": params},
+        ]
     else:
         # use for deepseek
-        group_params = [{
-            'params': decay_params,
-            'weight_decay': 1e-1
-        }, {
-            'order_params': params
-        }]
+        group_params = [{"params": decay_params, "weight_decay": 1e-1}, {"order_params": params}]
     return group_params
 
 
 def combine_grpo_config(grpo_config, model_config):
     """
-    combine grpo config and model config
+    Combine grpo config and model config.
 
     Args:
-        grpo_config: Configuration of the GRPO algorithm
-        model_config: model_config
+        grpo_config: Configuration of the GRPO algorithm.
+        model_config: model_config.
 
     Returns:
         Configure after combination.
-
     """
     config_temp = asdict(grpo_config)
     for k, v in model_config.to_dict().items():
         if k not in config_temp:
             config_temp[k] = v
-    config_temp['max_prompt_length'] = config_temp['seq_length'] - config_temp['max_decode_length']
+    config_temp["max_prompt_length"] = config_temp["seq_length"] - config_temp["max_decode_length"]
     grpo_config_ = make_dataclass("GRPOConfig", [(key, type(value)) for key, value in config_temp.items()])
     return grpo_config_(**config_temp)
 
 
 def init_grpo_dataset(trainer):
     """
-    init grpo dataset
+    Init grpo dataset.
     """
     grpo_config = trainer.grpo_config
     sft_model_config = trainer.sft_model_config_train
-    column_names = ["prompt_completion_ids", "responses_mask",
-                    "ref_per_token_logps", "advantages",
-                    "actual_sequence_length", "sample_index", "sample_valid_length"]
+    column_names = [
+        "prompt_completion_ids",
+        "responses_mask",
+        "ref_per_token_logps",
+        "advantages",
+        "actual_sequence_length",
+        "sample_index",
+        "sample_valid_length",
+    ]
     if not trainer.store:
         dataset = MindDataset(dataset_files=grpo_config.save_data_file, shuffle=False)
         dataset = dataset.project(columns=column_names)
@@ -113,23 +109,29 @@ def init_grpo_dataset(trainer):
     if sft_model_config.parallel_config.pipeline_stage > 1:
         micro_batch_num = sft_model_config.parallel_config.micro_batch_num
     dataset = dataset.batch(
-        batch_size=grpo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num)
+        batch_size=grpo_config.batch_size * sft_model_config.parallel_config.data_parallel * micro_batch_num
+    )
     return dataset
 
 
 def init_grpo_network_and_optimizer(trainer):
-    '''init grpo network and optimizer'''
+    """init grpo network and optimizer"""
     sft_model_config = trainer.sft_model_config_train
     grpo_config = trainer.grpo_config
     if sft_model_config.parallel_config.pipeline_stage > 1:
-        grpo_with_loss_net = PipelineCell(MicroBatchInterleaved(trainer.grpo_model_train,
-                                                                grpo_config.micro_batch_interleaved),
-                                          sft_model_config.parallel_config.micro_batch_num)
+        grpo_with_loss_net = PipelineCell(
+            MicroBatchInterleaved(trainer.grpo_model_train, grpo_config.micro_batch_interleaved),
+            sft_model_config.parallel_config.micro_batch_num,
+        )
     else:
         grpo_with_loss_net = trainer.grpo_model_train
     grpo_with_loss = _VirtualDatasetCell(grpo_with_loss_net)
-    lr = LearningRate(learning_rate=grpo_config.start_lr, end_learning_rate=grpo_config.end_lr,
-                      warmup_steps=grpo_config.warmup_step, decay_steps=grpo_config.decay_steps)
+    lr = LearningRate(
+        learning_rate=grpo_config.start_lr,
+        end_learning_rate=grpo_config.end_lr,
+        warmup_steps=grpo_config.warmup_step,
+        decay_steps=grpo_config.decay_steps,
+    )
     params = grpo_with_loss.trainable_params()
     if trainer.sft_model_config_train.model_name == "deepseek_training":
         group_params = set_weight_decay(params, is_use_other_params=False)
@@ -139,20 +141,32 @@ def init_grpo_network_and_optimizer(trainer):
     if grpo_config.optimizer == "lamb":
         optimizer = nn.Lamb(group_params, learning_rate=lr)
     elif grpo_config.opt_offload:
-        optimizer = AdamWeightDecayOp(group_params, learning_rate=lr, eps=grpo_config.eps, beta1=grpo_config.beta1,
-                                      beta2=grpo_config.beta2, param_init_type=sft_model_config.param_init_type)
+        optimizer = AdamWeightDecayOp(
+            group_params,
+            learning_rate=lr,
+            eps=grpo_config.eps,
+            beta1=grpo_config.beta1,
+            beta2=grpo_config.beta2,
+            param_init_type=sft_model_config.param_init_type,
+        )
     else:
-        optimizer = FP32StateAdamWeightDecay(group_params, learning_rate=lr, beta1=grpo_config.beta1,
-                                             beta2=grpo_config.beta2, eps=grpo_config.eps)
+        optimizer = FP32StateAdamWeightDecay(
+            group_params, learning_rate=lr, beta1=grpo_config.beta1, beta2=grpo_config.beta2, eps=grpo_config.eps
+        )
 
     loss_scale_value = math.pow(2, 12)
-    update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value,
-                                             scale_factor=2, scale_window=1000)
+    update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value, scale_factor=2, scale_window=1000)
 
     if sft_model_config.parallel_config.pipeline_stage > 1:
-        grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(grpo_with_loss, optimizer=optimizer,
-                                                            config=sft_model_config, scale_update_cell=update_cell)
+        grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(
+            grpo_with_loss, optimizer=optimizer, config=sft_model_config, scale_update_cell=update_cell
+        )
     else:
-        grpo_with_grad = TrainOneStepWithLossScaleGRPO(grpo_with_loss, optimizer=optimizer, config=sft_model_config,
-                                                       scale_update_cell=update_cell, enable_global_norm=True)
+        grpo_with_grad = TrainOneStepWithLossScaleGRPO(
+            grpo_with_loss,
+            optimizer=optimizer,
+            config=sft_model_config,
+            scale_update_cell=update_cell,
+            enable_global_norm=True,
+        )
     return grpo_with_grad

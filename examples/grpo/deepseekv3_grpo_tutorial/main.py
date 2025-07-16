@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""
-    run grpo one stage
-"""
-
+"""Run grpo one stage."""
 import argparse
 from mindrlhf.trainer.spmd.grpo_trainer import GRPOTrainer
 
@@ -40,12 +37,12 @@ if __name__ == "__main__":
     parser.add_argument("--load_sft_checkpoint_infer", type=str, default=None, help="load checkpoint path")
     parser.add_argument("--load_sft_checkpoint_train", type=str, default=None, help="load checkpoint path")
     parser.add_argument("--load_ref_checkpoint", type=str, default=None, help="load checkpoint path")
-    parser.add_argument("--load_ckpt_format", type=str, default='ckpt', help="ckpt or safetensors")
+    parser.add_argument("--load_ckpt_format", type=str, default="ckpt", help="ckpt or safetensors")
     parser.add_argument("--enable_compile_cache", type=str, default=False, help="enable compile cache")
     parser.add_argument("--pre_num_generations", type=int, default=1, help="pre generate times")
     parser.add_argument("--pre_store_data", type=int, default=16, help="pre generate times")
-    parser.add_argument("--reward_funcs", nargs='*', type=str, help="reward_funcs")
-    parser.add_argument("--reward_weights", nargs='*', type=float, help="reward_weights")
+    parser.add_argument("--reward_funcs", nargs="*", type=str, help="reward_funcs")
+    parser.add_argument("--reward_weights", nargs="*", type=float, help="reward_weights")
     parser.add_argument("--save_strategy_dir", type=str, default="../../strategy/", help="save_strategy_dir")
     parser.add_argument("--custom_model_name", type=str, default="deepseek", help="model name")
     args = parser.parse_args()
