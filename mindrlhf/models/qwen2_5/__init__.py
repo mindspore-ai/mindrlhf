@@ -13,6 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """qwen2."""
-from .qwen2_5_tokenizer import *
-
 __all__ = ["Qwen2_5Tokenizer"]
+
+from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
