@@ -79,16 +79,16 @@ echo "========= Installing mindformers ========="
 mf_dir=mindformers-dev
 if [ ! -d "$mf_dir" ]; then
     git clone https://gitee.com/mindspore/mindformers.git -b dev "$mf_dir"
+    if [ ! -d "$mf_dir" ]; then
+        echo "Failed to git clone mindformers!"
+        exit 1
+    fi
     cd $mf_dir
     git reset --hard 6a52b43
     pip uninstall mindformers -y
     bash build.sh
 else
     echo "The $mf_dir folder already exists and will not be re-downloaded."
-fi
-if [ ! -d "$mf_dir" ]; then
-    echo "Failed to git clone mindformers!"
-    exit 1
 fi
 
 echo "All dependencies installed successfully!"
