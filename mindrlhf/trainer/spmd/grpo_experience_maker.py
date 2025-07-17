@@ -749,7 +749,7 @@ class GRPOExperienceMaker:
 
         # Step 4: generate old log probs
         all_old_per_token_logps = None
-        if self.grpo_config.rl_config.num_iterations > 1:
+        if self.grpo_config.rl_config.enable_oldpolicy:
             old_log_prob_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_old_log_prob",
                                                    profiler_iteration=self.profiler_iteration)
             all_old_per_token_logps = self._generate_old_logps(packed_samples)

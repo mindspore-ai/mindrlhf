@@ -41,56 +41,52 @@ class OldPolicyWorker(Worker):
 
     def __init__(self, grpo_config: GRPOConfig, sft_path_train, args):
         super().__init__()
+        logger.info("init OldPolicyWorker")
+        self.args = args
         self.grpo_config = grpo_config
         self.load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
-        if grpo_config.rl_config.num_iterations <= 1:
-            self.on_device = False
-            logger.info(f"num_iterations {grpo_config.rl_config.num_iterations} <= 1, OldPolicyWorker is not enalbled")
+        old_policy_config = MindFormerConfig(sft_path_train)
+        old_policy_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
+        old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
+        old_policy_config.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
+        logger.info(f"old_policy parallel_config:{old_policy_config.parallel_config}")
+        old_policy_config.recompute_config = grpo_config.actor_config.recompute_config.param_dict
+        logger.info(f"old_policy_config recompute_config:{old_policy_config.recompute_config}")
+        old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
+        old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
+        old_policy_config.model.model_config.offset = grpo_config.actor_config.offset
+        if args.custom_model_name in ["qwen", "llama"]:
+            old_policy_config.model.model_config.use_eod_attn_mask_compression = (
+                grpo_config.actor_config.use_eod_attn_mask_compression
+            )
+            old_policy_model_config = LlamaConfig(**old_policy_config.model.model_config)
+            old_policy_model_config.model_name = "llama"
+        elif args.custom_model_name == "deepseek":
+            old_policy_config.model.model_config.moe_config = old_policy_config.moe_config
+            old_policy_model_config = DeepseekV3Config(**old_policy_config.model.model_config)
+            old_policy_model_config.model_name = "deepseek_training"
         else:
-            logger.info("init OldPolicyWorker")
-            self.args = args
-            old_policy_config = MindFormerConfig(sft_path_train)
-            old_policy_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
-            old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
-            old_policy_config.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
-            logger.info(f"old_policy parallel_config:{old_policy_config.parallel_config}")
-            old_policy_config.recompute_config = grpo_config.actor_config.recompute_config.param_dict
-            logger.info(f"old_policy_config recompute_config:{old_policy_config.recompute_config}")
-            old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
-            old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
-            old_policy_config.model.model_config.offset = grpo_config.actor_config.offset
-            if args.custom_model_name in ["qwen", "llama"]:
-                old_policy_config.model.model_config.use_eod_attn_mask_compression = (
-                    grpo_config.actor_config.use_eod_attn_mask_compression
-                )
-                old_policy_model_config = LlamaConfig(**old_policy_config.model.model_config)
-                old_policy_model_config.model_name = "llama"
-            elif args.custom_model_name == "deepseek":
-                old_policy_config.model.model_config.moe_config = old_policy_config.moe_config
-                old_policy_model_config = DeepseekV3Config(**old_policy_config.model.model_config)
-                old_policy_model_config.model_name = "deepseek_training"
-            else:
-                raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
 
-            old_policy_model_config.checkpoint_name_or_path = grpo_config.actor_config.load
-            self.old_policy_ckpt_path = old_policy_model_config.checkpoint_name_or_path
-            old_policy_model_config.checkpoint_name_or_path = None
+        old_policy_model_config.checkpoint_name_or_path = grpo_config.actor_config.load
+        self.old_policy_ckpt_path = old_policy_model_config.checkpoint_name_or_path
+        old_policy_model_config.checkpoint_name_or_path = None
 
-            self.old_policy_pp_stage = old_policy_model_config.parallel_config.pipeline_stage or 1
-            self.old_policy_dp = old_policy_model_config.parallel_config.data_parallel
-            self.enable_parallel_optimizer = (
-                grpo_config.actor_config.enable_parallel_optimizer and self.old_policy_dp > 1
-            )
-            context.set_auto_parallel_context(
-                pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
-            )
-            self.old_policy_model_config = old_policy_model_config
-            self.old_policy_model = CausalLMHybrid(old_policy_model_config, grpo_config)
-            self.old_policy_model.model.set_train(False)
-            for name, param in self.old_policy_model.parameters_and_names():
-                param.name = name
-            self.on_device = True
-            self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
+        self.old_policy_pp_stage = old_policy_model_config.parallel_config.pipeline_stage or 1
+        self.old_policy_dp = old_policy_model_config.parallel_config.data_parallel
+        self.enable_parallel_optimizer = (
+            grpo_config.actor_config.enable_parallel_optimizer and self.old_policy_dp > 1
+        )
+        context.set_auto_parallel_context(
+            pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
+        )
+        self.old_policy_model_config = old_policy_model_config
+        self.old_policy_model = CausalLMHybrid(old_policy_model_config, grpo_config)
+        self.old_policy_model.model.set_train(False)
+        for name, param in self.old_policy_model.parameters_and_names():
+            param.name = name
+        self.on_device = True
+        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
     def get_old_policy_dp(self):
         """Get old policy model data parallel size"""
@@ -98,14 +94,10 @@ class OldPolicyWorker(Worker):
 
     def model(self):
         """Get old policy model"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return None
         return self.old_policy_model
 
     def compile(self):
         """compile and save strategy"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         self.old_policy_model.model.set_train(False)
         context.set_auto_parallel_context(
             pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
@@ -163,8 +155,6 @@ class OldPolicyWorker(Worker):
 
     def offload(self):
         """offload old policy model"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         if self.on_device is False:
             return
         logger.info(f"before offload old policy model {ms.hal.memory_stats()}")
@@ -177,8 +167,6 @@ class OldPolicyWorker(Worker):
 
     def load(self):
         """load old policy model"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         if self.on_device:
             return
         logger.info(f"before load old policy model {ms.hal.memory_stats()}")
@@ -191,8 +179,6 @@ class OldPolicyWorker(Worker):
 
     def load_checkpoint(self):
         """load checkpoint"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         if not self.old_policy_ckpt_path:
             return
 
@@ -231,8 +217,6 @@ class OldPolicyWorker(Worker):
 
     def check_not_on_device(self):
         """Check params not on device"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         if self.on_device:
             raise RuntimeError(
                 "when reshard_mem_opt_level is equal to 0, old policy model must not on device before transform param"
@@ -240,9 +224,53 @@ class OldPolicyWorker(Worker):
 
     def check_on_device(self):
         """Check params on device"""
-        if self.grpo_config.rl_config.num_iterations <= 1:
-            return
         if not self.on_device:
             raise RuntimeError(
                 "when reshard_mem_opt_level is equal to 0, old policy model must on device before transform param"
             )
+
+
+class DummyOldPolicyWorker(Worker):
+    # pylint: disable=W0231,W0613
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __getattr__(self, name):
+        def method(*args, **kwargs):
+            pass
+        return method
+
+
+def get_old_policy_worker(*args, **kwargs):
+    grpo_config = kwargs.get("grpo_config", None)
+    if grpo_config and grpo_config.rl_config.enable_oldpolicy:
+        return OldPolicyWorker(*args, **kwargs)
+    logger.info(f"enable_oldpolicy is {grpo_config.rl_config.enable_oldpolicy}, OldPolicyWorker is not enalbled")
+    return DummyOldPolicyWorker(*args, **kwargs)
+
+
+def set_enable_old_policy(grpo_config):
+    """ set enable_oldpolicy """
+    # calculate train batch size
+    micro_batch_num = 1
+    if grpo_config.actor_config.parallel_config.pipeline_stage > 1:
+        micro_batch_num = grpo_config.actor_config.parallel_config.micro_batch_num
+    train_bs = (
+        grpo_config.rl_config.batch_size
+        * grpo_config.actor_config.parallel_config.data_parallel
+        * micro_batch_num
+    )
+    # calculate global batch size
+    global_bs = (
+        grpo_config.rl_config.num_rollouts
+        * grpo_config.rl_config.num_generations
+        * grpo_config.rl_config.chunk_size
+        * grpo_config.generate_config.parallel_config.data_parallel
+    )
+    # set enable old policy
+    if train_bs == global_bs and grpo_config.rl_config.num_iterations == 1:
+        if grpo_config.rl_config.enable_oldpolicy:
+            logger.warning(f"enable_oldpolicy is set to False, because train batch size({train_bs}) is equal "
+                           f"to global batch size({global_bs}) and "
+                           f"num_iterations is {grpo_config.rl_config.num_iterations}.")
+        grpo_config.rl_config.enable_oldpolicy = False

@@ -175,7 +175,7 @@ class TransformWorker(Worker):
                     os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra
                 )
                 ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
-                if grpo_config.rl_config.num_iterations > 1:
+                if grpo_config.rl_config.enable_oldpolicy:
                     ms.merge_pipeline_strategys(
                         os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
                     )
@@ -237,7 +237,7 @@ class TransformWorker(Worker):
                 match_func=match_func_policy2ref,
                 reshard_mode=reshard_mode,
             )
-            if grpo_config.rl_config.num_iterations > 1:
+            if grpo_config.rl_config.enable_oldpolicy:
                 self.old_policy_param_policy2old = TransformParametersD2D(
                     sft_train_model,
                     old_policy_model,
@@ -265,7 +265,7 @@ class TransformWorker(Worker):
             raise ValueError("Key in input_on_device_flag_dict must be policy2infer, policy2ref or policy2old")
         with TimeConsumingCollector("reshard params"):
             self.reshard_param_policy2infer.transform(policy2infer_flag)
-            if self.grpo_config.rl_config.num_iterations > 1:
+            if self.grpo_config.rl_config.enable_oldpolicy:
                 self.old_policy_param_policy2old.transform(policy2old_flag)
             if self.sync_ref_model and ((step_num + 1) % self.ref_model_sync_steps == 0):
                 self.reshard_param_policy2ref.transform(policy2ref_flag)
