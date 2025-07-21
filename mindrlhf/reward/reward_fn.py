@@ -26,22 +26,22 @@ def accuracy_reward(completions, solution, **kwargs):
 
     for content, sol in zip(completions, solution):
         response = re.sub(r"(\d),(\d)", r"\1\2", content)
-        if kwargs.get('model_name') == 'qwen':
-            numbers = re.findall(r"boxed{([-+]?\d+)}", response)
+        if kwargs.get("model_name") == "qwen":
+            numbers = re.findall(r"boxed{([-+]?\d*\.?\d+)}", response)
         else:
-            numbers = re.findall(r"[-+]?\d*\.\d+|\d+", response)
+            numbers = re.findall(r"([-+]?\d+\.?\d*)", response)
         if numbers:
             predictions = numbers[-1]
         else:
             predictions = response
-        sol = str(re.findall(r'\d+', sol)[0])
-        ground_truth_answer = re.sub(r"(\d),(\d)", r"\1\2", sol)
+        sol = re.sub(r"(\d),(\d)", r"\1\2", sol)
+        ground_truth_answer = re.findall(r"([-+]?\d+\.?\d*)", sol)[0]
         reward = str(predictions).lower() == str(ground_truth_answer).lower()
         reward = 1.0 if reward else 0.0
         rewards.append(reward)
         predictions_len = len(str(predictions).lower())
         if predictions_len == 0:
-            answer_parsed_lst.append('NO ANSWER')
+            answer_parsed_lst.append("NO ANSWER")
         else:
             answer_parsed_lst.append(str(predictions).lower())
 
@@ -52,6 +52,7 @@ def accuracy_reward(completions, solution, **kwargs):
 def accuracy_reward_2(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
     import importlib
+
     latex2sympy2_extended = importlib.import_module("latex2sympy2_extended")
     # pylint: disable=C0103
     NormalizationConfig = latex2sympy2_extended.NormalizationConfig
@@ -64,11 +65,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
     rewards = []
     answer_parsed_lst = []
     for content, sol in zip(completions, solution):
-        gold_parsed = parse(
-            sol,
-            extraction_mode="first_match",
-            extraction_config=[LatexExtractionConfig()],
-        )
+        gold_parsed = parse(sol, extraction_mode="first_match", extraction_config=[LatexExtractionConfig()])
         gold_parsed_len = len(gold_parsed)
         if gold_parsed_len != 0:
             # We require the answer to be provided in correct latex (no malformed operators)
@@ -95,7 +92,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
             reward = float(verify(answer_parsed, gold_parsed))
             answer_len = len(answer_parsed)
             if answer_len == 0:
-                answer_parsed_lst.append('NO ANSWER')
+                answer_parsed_lst.append("NO ANSWER")
             elif answer_len == 1:
                 answer_parsed_lst.append(answer_parsed[0])
             else:
@@ -104,7 +101,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
             # If the gold solution is not parseable, we reward 1 to skip this example
             reward = 0.0
             logger.info(f"Failed to parse gold solution: {sol}")
-            answer_parsed_lst.append('solution parse failed')
+            answer_parsed_lst.append("solution parse failed")
         rewards.append(reward)
 
     return rewards, answer_parsed_lst
@@ -112,7 +109,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
 
 def qwen_accuracy_reward(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
-    rewards, answer_parsed_lst = accuracy_reward(completions, solution, model_name='qwen')
+    rewards, answer_parsed_lst = accuracy_reward(completions, solution, model_name="qwen")
     return rewards, answer_parsed_lst
 
 
