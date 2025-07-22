@@ -33,8 +33,8 @@ export PYTHONPATH=$MINDRLHF_PATH:$MINDFORMERS_PATH:$PYTHONPATH
 echo "PYTHONPATH is $PYTHONPATH"
 
 jsonl_path="$WORKDIR/qwen2_5/mini_gsm8k.jsonl"
-vocab_path="$WORKDIR/qwen2_5/vocab.json"
-merges_path="$WORKDIR/qwen2_5/merges.txt"
+vocab_path="$WORKDIR/qwen2_5_vllm/vocab.json"
+merges_path="$WORKDIR/qwen2_5_vllm/merges.txt"
 mkdir -p $WORKDIR/dataset/
 data_path="$WORKDIR/dataset/mini_gsm8k.mindrecord"
 
@@ -52,7 +52,7 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --config $YAML_PATH \
 --dataset_file $data_path \
 --save_checkpoint_dir $WORKDIR/ckpt/train \
---tokenizer_dir "$WORKDIR/qwen2_5/" \
+--tokenizer_dir "$WORKDIR/qwen2_5_vllm" \
 --actor_checkpoint_path "" \
 --ref_checkpoint_path "" \
 --generate_checkpoint_path "" \

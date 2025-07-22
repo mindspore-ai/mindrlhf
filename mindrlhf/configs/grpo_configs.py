@@ -218,6 +218,12 @@ class Context:
         "ascend_config": {"precision_mode": ascend_config.precision_mode},
     }
 
+@dataclass
+class MonitorConfig:
+    host_monitor_interval: float = -1.0
+    host_monitor_steps: list = None
+    host_memory_protection: bool = False
+    host_max_memory_threshold: float = 0.95
 
 @dataclass
 class RLConfig:
@@ -321,6 +327,7 @@ class GRPOConfig:
     reward_config = RewardConfig
     generate_config = GenerateConfig
     rl_config = RLConfig
+    monitor_config = MonitorConfig
     profiler_config = ProfilerConfig
     context = Context
 
