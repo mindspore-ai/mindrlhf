@@ -13,7 +13,7 @@
 # limitations under the License.
 # ============================================================================
 """MindRLHF models."""
-__all__ = ["Qwen2_5Tokenizer", "GRPOModel", "CausalLMHybrid"]
+__all__ = ["GRPOModel", "CausalLMHybrid", "TokenizerFactory"]
 
 from .grpo_models import GRPOModel, CausalLMHybrid
-from .qwen2_5 import Qwen2_5Tokenizer
+from .model_utils import TokenizerFactory

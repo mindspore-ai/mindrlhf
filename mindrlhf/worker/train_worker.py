@@ -31,6 +31,7 @@ from mindformers.core.callback.callback import TopkBiasBalanceCallback
 from mindformers import LlamaConfig
 from mindformers import logger
 from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
+
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.utils.adam import AdamWeightDecayOp
@@ -55,13 +56,13 @@ class TrainWorker(Worker):
     This class do GRPO train.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, sft_path_train, args):
+    def __init__(self, grpo_config: GRPOConfig, args):
         super().__init__()
         logger.info("init TrainWorker")
         self.args = args
         self.grpo_config = grpo_config
         self.load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
-        sft_config_train = MindFormerConfig(sft_path_train)
+        sft_config_train = MindFormerConfig(grpo_config.actor_config.model_config)
         sft_config_train.use_parallel = grpo_config.rl_config.use_parallel
         self.sft_config_train = sft_config_train
         sft_config_train.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
@@ -82,13 +83,13 @@ class TrainWorker(Worker):
 
         os.environ["RUN_MODE"] = sft_config_train.run_mode
         sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
-        if args.custom_model_name in ["qwen", "llama"]:
+        if args.model_name in ["qwen", "llama"]:
             sft_config_train.model.model_config.use_eod_attn_mask_compression = (
                 grpo_config.actor_config.use_eod_attn_mask_compression
             )
             sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
             sft_model_config_train.model_name = "llama"
-        elif args.custom_model_name == "deepseek":
+        elif args.model_name == "deepseek":
             sft_config_train.model.model_config.moe_config = sft_config_train.moe_config
             sft_model_config_train = DeepseekV3Config(**sft_config_train.model.model_config)
             sft_model_config_train.model_name = "deepseek_training"
@@ -101,7 +102,7 @@ class TrainWorker(Worker):
                 sft_model_config_train.parallel_config.micro_batch_num,
             )
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
         sft_model_config_train.checkpoint_name_or_path = grpo_config.actor_config.load
         self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
         sft_model_config_train.checkpoint_name_or_path = None
@@ -327,7 +328,7 @@ class TrainWorker(Worker):
             use_cosine=grpo_config.actor_config.lr_schedule.lr_decay_style == "cosine",
         )
         params = grpo_with_loss.trainable_params()
-        if self.args.custom_model_name == "deepseek":
+        if self.args.model_name == "deepseek":
             group_params = set_weight_decay(params, is_use_other_params=False)
         else:
             group_params = set_weight_decay(params)
@@ -441,7 +442,7 @@ class TrainWorker(Worker):
                             formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])
                         )
                     )
-                    if self.args.custom_model_name == "deepseek":
+                    if self.args.model_name == "deepseek":
                         if self.topk_bias_balance_callback.update_topk_bias_flag:
                             policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
                             # pylint: disable=W0212

@@ -12,27 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """ GRPO Trainer """
-
-# python
 import os
 import time
 import numpy as np
 
-# mindspore
 import mindspore as ms
 from mindspore import Tensor
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
 from mindspore._c_expression import MSContext
 
-# mindformers
 from mindformers import logger
-from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import MindFormerConfig
-from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 
-# mindrlhf
 from mindrlhf.utils import (
     transfer_from_str_to_bool,
     set_perf_stats,
@@ -49,7 +42,7 @@ from mindrlhf.worker.old_policy_worker import get_old_policy_worker, set_enable_
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
+from mindrlhf.models import TokenizerFactory
 from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 
 
@@ -65,7 +58,10 @@ class GRPOTrainer:
             os.environ["HCCL_OP_EXPANSION_MODE"] = "AI_CPU"
         else:
             raise NotImplementedError("only support ascend910b and ascend910_93")
-        self._init_grpo_configs(args)
+        self.grpo_config = self._init_grpo_configs(args)
+        self.tokenizer = TokenizerFactory.init_tokenizer(self.grpo_config)
+        if isinstance(self.grpo_config.rl_config.seed, int):
+            ms.set_seed(self.grpo_config.rl_config.seed)
         self._set_vllm_generation_config()
         self.no_patch_tensor_shape = no_patch_tensor_shape
 
@@ -97,14 +93,10 @@ class GRPOTrainer:
             reshard_optimizer.OPT_COMMUNICATION_GROUPS = self.reshard_optimizer.opt_communication_groups
 
         logger.info("GRPOTrainer: start init workers")
-        self.infer = InferWorker(grpo_config=self.grpo_config, sft_path_infer=self.sft_path_infer, args=self.args)
-
-        self.ref = RefWorker(grpo_config=self.grpo_config, sft_path_ref=self.sft_path_ref, args=self.args)
-
-        self.train = TrainWorker(grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args)
-        self.old_policy = get_old_policy_worker(
-            grpo_config=self.grpo_config, sft_path_train=self.sft_path_train, args=self.args
-        )
+        self.infer = InferWorker(grpo_config=self.grpo_config, args=self.args, tokenizer=self.tokenizer)
+        self.ref = RefWorker(grpo_config=self.grpo_config, args=self.args)
+        self.train = TrainWorker(grpo_config=self.grpo_config, args=self.args)
+        self.old_policy = get_old_policy_worker(grpo_config=self.grpo_config, args=self.args)
         logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
         if self.grpo_config.rl_config.packing:
             if self.grpo_config.rl_config.pack_num < 1:
@@ -209,6 +201,8 @@ class GRPOTrainer:
             grpo_config.rl_config.tensorboard = tensorboard
         if args.save_checkpoint_dir is not None:
             grpo_config.actor_config.save = args.save_checkpoint_dir
+        if args.model_name:
+            grpo_config.rl_config.model_name = args.model_name
         return grpo_config
 
     def _init_grpo_configs(self, args):
@@ -237,34 +231,11 @@ class GRPOTrainer:
                 f"Set save_prompt_completions_data to False."
             )
             grpo_config.rl_config.save_prompt_completions_data = False
+        return grpo_config
 
-        # for worker
-        if args.custom_model_name == "qwen":
-            args.vocab_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "vocab.json")
-            args.merges_file_path = os.path.join(grpo_config.rl_config.tokenizer_dir, "merges.txt")
-            self.tokenizer = Qwen2_5Tokenizer(
-                args.vocab_path, args.merges_file_path, add_bos_token=False, add_eos_token=False
-            )
-        elif args.custom_model_name == "deepseek":
-            args.tokenizer_path = grpo_config.rl_config.tokenizer_dir
-            self.tokenizer = LlamaTokenizerFast(
-                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
-            )
-        elif args.custom_model_name == "llama":
-            args.vocab_path = grpo_config.rl_config.tokenizer_dir
-            sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
-            sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
-            sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
-            self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
-        else:
-            raise ValueError(f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
-        self.grpo_config = grpo_config
-        self.use_parallel = transfer_from_str_to_bool(self.grpo_config.rl_config.use_parallel)
-        self.sft_path_infer = grpo_config.generate_config.model_config
-        self.sft_path_train = grpo_config.actor_config.model_config
-        self.sft_path_ref = grpo_config.ref_config.model_config
-        if isinstance(self.grpo_config.rl_config.seed, int):
-            ms.set_seed(self.grpo_config.rl_config.seed)
+    @property
+    def use_parallel(self):
+        return transfer_from_str_to_bool(self.grpo_config.rl_config.use_parallel)
 
     def _compile(self):
         """
@@ -408,8 +379,9 @@ class GRPOTrainer:
                     with TimeConsumingCollector("load train model"):
                         self.train.load_model()
                     with TimeConsumingCollector("train model"):
-                        update_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_update",
-                                                         profiler_iteration=self.n_epoch)
+                        update_profiler = profiler_start(
+                            self.grpo_config.profiler_config, role="actor_update", profiler_iteration=self.n_epoch
+                        )
                         self.train.train()
                         profiler_step(update_profiler)
                     with TimeConsumingCollector("offload train optimizer"):
