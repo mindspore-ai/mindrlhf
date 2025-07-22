@@ -44,13 +44,13 @@ class RefWorker(Worker):
     This class generates responses.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, sft_path_ref, args):
+    def __init__(self, grpo_config: GRPOConfig, args):
         super().__init__()
         logger.info("init RefWorker")
         self.args = args
         self.use_parallel = grpo_config.rl_config.use_parallel
         self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
-        ref_config = MindFormerConfig(sft_path_ref)
+        ref_config = MindFormerConfig(grpo_config.ref_config.model_config)
         ref_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
         ref_config.use_parallel = self.use_parallel
         ref_config.parallel_config = MindFormerConfig(**grpo_config.ref_config.parallel_config.param_dict)
@@ -64,18 +64,18 @@ class RefWorker(Worker):
         self.ref_config = ref_config
         self.ref_config.moe_config.num_experts = self.ref_config.moe_config.expert_num
         ref_config.model.model_config.use_past = False
-        if args.custom_model_name in ["qwen", "llama"]:
+        if args.model_name in ["qwen", "llama"]:
             ref_config.model.model_config.use_eod_attn_mask_compression = (
                 grpo_config.ref_config.use_eod_attn_mask_compression
             )
             ref_model_config = LlamaConfig(**ref_config.model.model_config)
             ref_model_config.model_name = "llama"
-        elif args.custom_model_name == "deepseek":
+        elif args.model_name == "deepseek":
             ref_config.model.model_config.moe_config = ref_config.moe_config
             ref_model_config = DeepseekV3Config(**ref_config.model.model_config)
             ref_model_config.model_name = "deepseek_training"
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
 
         # set pipeline stage
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)

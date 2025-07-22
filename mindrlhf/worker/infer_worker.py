@@ -29,13 +29,10 @@ from mindformers.trainer.utils import load_distributed_checkpoint
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.parallel_core.inference.utils import generate_state_dict
-from mindformers.models.llama import LlamaTokenizerFast
 from mindformers import logger
-from mindformers.models.build_tokenizer import build_tokenizer
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.utils import transfer_from_str_to_bool, TimeConsumingCollector
-from mindrlhf.models.qwen2_5.qwen2_5_tokenizer import Qwen2_5Tokenizer
 from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
 from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors, enable_pynative_async
@@ -53,12 +50,21 @@ class InferWorker(Worker):
     This class generates responses.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, sft_path_infer, args):
+    def __init__(self, grpo_config: GRPOConfig, args, **kwargs):
+        """
+        Init infer worker.
+
+        Args:
+            grpo_config (GRPOConfig): GRPO config instance.
+            args: Args will be removed in next release version.
+            **kwargs: Key word args.
+        """
         super().__init__()
         logger.info("init InferWorker")
         self.args = args
+        self.tokenizer = kwargs.get("tokenizer")
         self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
-        sft_config_infer = MindFormerConfig(sft_path_infer)
+        sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
         sft_config_infer.model.model_config.seq_length = grpo_config.rl_config.seq_length
         sft_config_infer.use_parallel = grpo_config.rl_config.use_parallel
         sft_config_infer.parallel_config = MindFormerConfig(**grpo_config.generate_config.parallel_config.param_dict)
@@ -91,15 +97,15 @@ class InferWorker(Worker):
         sft_config_infer.model.model_config.parallel_config = sft_config_infer.parallel_config
         logger.info(f"sft_config_infer:\n{sft_config_infer}")
 
-        if args.custom_model_name in ["qwen", "llama"]:
+        if args.model_name in ["qwen", "llama"]:
             sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
             sft_model_config_infer.model_name = "llama"
-        elif args.custom_model_name == "deepseek":
+        elif args.model_name == "deepseek":
             sft_config_infer.model.model_config.moe_config = sft_config_infer.moe_config
             sft_model_config_infer = DeepseekV3Config(**sft_config_infer.model.model_config)
             sft_model_config_infer.model_name = "deepseek_infer"
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.custom_model_name}")
+            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
 
         sft_model_config_infer.checkpoint_name_or_path = grpo_config.generate_config.load
 
@@ -110,21 +116,6 @@ class InferWorker(Worker):
         self.sft_model_config_infer = sft_model_config_infer
         self.dp_rank_id = get_dp_rank(self.sft_model_config_infer.parallel_config.data_parallel)
 
-        if self.args.custom_model_name == "qwen":
-            self.tokenizer = Qwen2_5Tokenizer(
-                self.args.vocab_path, self.args.merges_file_path, add_bos_token=False, add_eos_token=False
-            )
-        elif self.args.custom_model_name == "deepseek":
-            self.tokenizer = LlamaTokenizerFast(
-                tokenizer_file=args.tokenizer_path, add_bos_token=False, add_eos_token=False
-            )
-        elif args.custom_model_name == "llama":
-            sft_config_infer.processor.tokenizer.tokenizer_file = args.vocab_path
-            # bugfix to mindformers: cbee69bf
-            sft_config_infer.processor.tokenizer.vocab_file = args.vocab_path
-            self.tokenizer = build_tokenizer(sft_config_infer.processor.tokenizer)
-        else:
-            raise ValueError(f"model_name should in ['qwen', 'deepseek'], but get {args.custom_model_name}")
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         sim_level = os.getenv("MS_SIMULATION_LEVEL")
         if sim_level:
@@ -167,10 +158,12 @@ class InferWorker(Worker):
         # pylint: disable=W0611
         from mindrlhf.third_party.vllm import package_version, LLM
         from vllm import SamplingParams
+
         if self.args.resume_training:
             logger.warning("Enable resume_training, skip loading infer model weights")
             from vllm_mindspore.model_executor.models.mf_models.qwen2 import Qwen2ForCausalLM
             from mindrlhf.third_party.vllm.qwen2 import load_weights
+
             Qwen2ForCausalLM.load_weights = load_weights
             self.sft_ckpt_path_infer = self.grpo_config.rl_config.tokenizer_dir
 
@@ -389,14 +382,14 @@ class InferWorker(Worker):
         for i in range(num_sample):
             # only response
             if self.use_vllm == VllmMode.ORIGIN:
-                response = outputs[i][prompt_len[i]: prompt_len[i] + max_tokens]
+                response = outputs[i][prompt_len[i] : prompt_len[i] + max_tokens]
             else:
                 # vllm output without prompt
                 response = outputs[i].outputs[0].token_ids
             right_padding_responses[i, : len(response)] = response
 
             # right padding
-            left_padding_prompts[i, max_prompt_length - prompt_len[i]:] = input_ids_list[i][: prompt_len[i]]
+            left_padding_prompts[i, max_prompt_length - prompt_len[i] :] = input_ids_list[i][: prompt_len[i]]
 
         responses_mask = (right_padding_responses != pad_token_id).astype(np.int32)
         prompts_mask = (left_padding_prompts != pad_token_id).astype(np.int32)

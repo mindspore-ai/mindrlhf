@@ -27,12 +27,13 @@ from mindrlhf.configs.grpo_configs import VllmMode
 
 tokens = [
     [28084, 3867, 264, 2618, 23988, 65408, 304, 806, 12534, 13],
-    [28084, 3867, 264, 2618, 23988, 65408, 304, 806, 12534, 13]
+    [28084, 3867, 264, 2618, 23988, 65408, 304, 806, 12534, 13],
 ]
 
 
 class GRPOInferTest(GRPOTrainer):
-    """ Infercase """
+    """Infercase"""
+
     def __init__(self, args):
         self.args = args
         self._init_grpo_configs(args)
@@ -41,9 +42,8 @@ class GRPOInferTest(GRPOTrainer):
         ms.set_deterministic(True)
         ms.set_seed(seed)
         self._update_args(args)
-        self.inferwork = InferWorker(grpo_config=self.grpo_config,
-                                     sft_path_infer=args.model_config,
-                                     args=self.args)
+        self.grpo_config.generate_config.model_config = args.model_config
+        self.inferwork = InferWorker(grpo_config=self.grpo_config, args=self.args)
         self.inferwork.generate_strategy(None)
         ms.mint.distributed.barrier()
 
@@ -96,9 +96,7 @@ class GRPOInferTest(GRPOTrainer):
 
                 results = self.inferwork.generate(input_ids_numpy, max_tokens)
 
-        right_padding_responses, _, left_padding_prompts, _ = (
-            self.inferwork.post_process_infer_outputs(results)
-        )
+        right_padding_responses, _, left_padding_prompts, _ = self.inferwork.post_process_infer_outputs(results)
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
         no_padding_prompts = self._remove_left_padding(left_padding_prompts, padding_token=pad_token_id)
         no_padding_responses = self._remove_right_padding(right_padding_responses, padding_token=pad_token_id)
@@ -110,19 +108,19 @@ class GRPOInferTest(GRPOTrainer):
 
 
 def get_args():
-    """ get args """
+    """get args"""
     parser = argparse.ArgumentParser(description="grpo inference test")
     parser.add_argument("--config", type=str, default=None, help="configs path", required=True)
-    parser.add_argument("--custom_model_name", type=str, default='qwen', help="custom model name")
+    parser.add_argument("--model_name", type=str, default="qwen", help="custom model name")
     parser.add_argument("--dataset_file", type=str, default=None, help="dataset file for training")
-    parser.add_argument("--tokenizer_dir", type=str, default=None,
-                        help="the directory contain hf tokenizer files")
-    parser.add_argument("--actor_checkpoint_path", type=str, default=None,
-                        help="the actor model file path for loading")
-    parser.add_argument("--ref_checkpoint_path", type=str, default=None,
-                        help="the reference model file path for loading")
-    parser.add_argument("--generate_checkpoint_path", type=str, default=None,
-                        help="the generate model file path for loading")
+    parser.add_argument("--tokenizer_dir", type=str, default=None, help="the directory contain hf tokenizer files")
+    parser.add_argument("--actor_checkpoint_path", type=str, default=None, help="the actor model file path for loading")
+    parser.add_argument(
+        "--ref_checkpoint_path", type=str, default=None, help="the reference model file path for loading"
+    )
+    parser.add_argument(
+        "--generate_checkpoint_path", type=str, default=None, help="the generate model file path for loading"
+    )
     parser.add_argument("--verifier_function", type=str, default=None, help="verifier funcs")
     parser.add_argument("--verifier_weight", type=str, default=None, help="verifier weights")
     parser.add_argument("--tensorboard", type=str, default=None, help="enable tensorboard")
@@ -139,7 +137,7 @@ def get_args():
     return args
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args_ = get_args()
     infercase = GRPOInferTest(args_)
     infercase.infer_()
