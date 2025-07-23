@@ -106,6 +106,7 @@ class ActorConfig:
     enable_parallel_optimizer: bool = True
     enable_alltoall: bool = False
     use_eod_attn_mask_compression: bool = True
+    loss_scale_value: int = 1
     optimizer: Optimizer = Optimizer
     lr_schedule: LRSchedule = LRSchedule
 

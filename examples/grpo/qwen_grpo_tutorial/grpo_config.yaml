@@ -70,6 +70,7 @@ actor_config:
   enable_alltoall: False
   offset: 0
   use_eod_attn_mask_compression: True
+  loss_scale_value: 1
   parallel_config:
     data_parallel: 1  # need to be set
     model_parallel: 4  # need to be set

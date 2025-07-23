@@ -74,7 +74,7 @@ class CausalLMHybrid(BaseModel):
         self.expaned = P.ExpandDims().shard(((dp, mp),))
         self.dp = dp
 
-    def offset_actual_seq_length(self, data, offset):
+    def offset_actual_sequence_length(self, data, offset):
         """add offset to data"""
         bs = data.shape[0] // self.dp
         n = data.shape[1]
@@ -123,7 +123,7 @@ class CausalLMHybrid(BaseModel):
         use_past=False,
         # inputs for choosing the output branch
         samples=None,
-        actual_seq_length=None,
+        actual_sequence_length=None,
         return_full_logit=False,
         is_ref=False,
     ):
@@ -132,11 +132,12 @@ class CausalLMHybrid(BaseModel):
         """
         batch_size, seq_length = input_ids.shape
 
-        if actual_seq_length is not None:
-            if len(actual_seq_length.shape) > 1:
-                bsz, _ = actual_seq_length.shape
+        if actual_sequence_length is not None:
+            if len(actual_sequence_length.shape) > 1:
+                bsz, _ = actual_sequence_length.shape
                 if bsz > 1:
-                    actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
+                    actual_sequence_length = self.offset_actual_sequence_length(
+                        actual_sequence_length, input_ids.shape[1])
         if self.model_type == "llama":
             if self.model.phase == "train":
                 tokens = input_ids
@@ -159,7 +160,7 @@ class CausalLMHybrid(BaseModel):
                 None,
                 None,
                 None,
-                actual_seq_length,
+                actual_sequence_length,
             )
             logits_2d = self.lm_head(output_states)
         elif self.model_type == "deepseek_infer":
@@ -219,12 +220,12 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.cast = P.Cast()
         self.dump = P.TensorDump()
 
-    def masked_mean(self, data, mask, sample_index, pack_sample_num, sample_valid_len, dim=None):
+    def masked_mean(self, data, mask, sample_index, pack_sample_num, sample_valid_length, dim=None):
         """Masked mean"""
         if mask is None:
             return data.mean(axis=dim)
         deno = self.batch_unsorted_segment_sum((data * mask), sample_index, pack_sample_num)  # [bs, packed_sample_num]
-        nume = sample_valid_len  # [bs, packed_sample_num]
+        nume = sample_valid_length  # [bs, packed_sample_num]
         return deno / nume
 
     def compute_approx_kl(self, log_probs, log_probs_base):
@@ -253,7 +254,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         flat_sum = ops.unsorted_segment_sum(input_ids.view(-1), seg_off.view(-1), bs * num_segments)
         return flat_sum.view(bs, num_segments)
 
-    def offset_actual_seq_length(self, data, offset):
+    def offset_actual_sequence_length(self, data, offset):
         """add offset to data"""
         bs = data.shape[0] // self.dp
         n = data.shape[1]
@@ -270,25 +271,26 @@ class GRPOModel(nn.Cell, GeneratorMixin):
             responses_mask,  # [bs, seq_len]
             ref_per_token_logps, # [bs, seq_len]
             advantages,  # [bs, seq_len]
-            actual_seq_length,  # [bs, packed_sample_num]
+            actual_sequence_length,  # [bs, packed_sample_num]
             sample_index, # [bs, seq_len]
-            sample_valid_len,  # [bs, packed_sample_num]
+            sample_valid_length,  # [bs, packed_sample_num]
             old_per_token_logps  # [bs, seq_len]
         ):
         """ construct function for GRPOModel """
-        pack_sample_num = sample_valid_len.shape[1]
-        real_sample_num = ops.sum(sample_valid_len != 1, dtype=mstype.int32)
+        pack_sample_num = sample_valid_length.shape[1]
+        real_sample_num = ops.sum(sample_valid_length != 1, dtype=mstype.int32)
 
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
         samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
-        actual_seq_length = self.offset_actual_seq_length(actual_seq_length, input_ids.shape[1])
+        actual_sequence_length = self.offset_actual_sequence_length(actual_sequence_length, input_ids.shape[1])
         per_token_logps = self.policy_model(
-            input_ids, None, None, None, False, False, samples, actual_seq_length, False, False
+            input_ids, None, None, None, False, False, samples, actual_sequence_length, False, False
         )  # [bs, seq_len]
         per_token_logps = per_token_logps * responses_mask
         log_ratio = self.compute_approx_kl(per_token_logps, ref_per_token_logps)
 
-        kl_mean = self.masked_mean(log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_len, dim=-1)
+        kl_mean = self.masked_mean(
+            log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1)
         kl_loss = kl_mean.sum() / real_sample_num
 
         if not self.enable_oldpolicy:
@@ -302,7 +304,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         else:
             loss = -surr1
         actor_loss = (
-            self.masked_mean(loss, responses_mask, sample_index, pack_sample_num, sample_valid_len, dim=-1).sum()
+            self.masked_mean(loss, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1).sum()
             / real_sample_num
         )
 

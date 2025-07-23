@@ -17,7 +17,6 @@ MindRLHF config
 """
 __all__ = []
 
-import math
 from dataclasses import asdict, make_dataclass
 
 import mindspore
@@ -154,19 +153,21 @@ def init_grpo_network_and_optimizer(trainer):
             group_params, learning_rate=lr, beta1=grpo_config.beta1, beta2=grpo_config.beta2, eps=grpo_config.eps
         )
 
-    loss_scale_value = math.pow(2, 12)
+    loss_scale_value = grpo_config.actor_config.loss_scale_value
     update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value, scale_factor=2, scale_window=1000)
 
     if sft_model_config.parallel_config.pipeline_stage > 1:
         grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(
-            grpo_with_loss, optimizer=optimizer, config=sft_model_config, scale_update_cell=update_cell
+            grpo_with_loss,
+            optimizer=optimizer,
+            scale_sense=update_cell,
+            micro_batch_num=sft_model_config.parallel_config.micro_batch_num
         )
     else:
         grpo_with_grad = TrainOneStepWithLossScaleGRPO(
             grpo_with_loss,
             optimizer=optimizer,
-            config=sft_model_config,
-            scale_update_cell=update_cell,
-            enable_global_norm=True,
+            scale_sense=update_cell,
+            use_clip_grad=True
         )
     return grpo_with_grad
