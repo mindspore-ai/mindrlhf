@@ -13,7 +13,6 @@
 # limitations under the License.
 """Train Worker"""
 import os
-import math
 
 import mindspore as ms
 from mindspore import nn
@@ -165,13 +164,13 @@ class TrainWorker(Worker):
         advantages = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.float32
         )  # [bs, seq_len]
-        actual_seq_length = ms.Tensor(
+        actual_sequence_length = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
         sample_index = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.seq_length), dtype=ms.int32
         )  # [bs, seq_len]
-        sample_valid_len = ms.Tensor(
+        sample_valid_length = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.pack_num), dtype=ms.int32
         )  # [bs, packed_sample_num]
         old_per_token_logps = ms.Tensor(
@@ -189,16 +188,17 @@ class TrainWorker(Worker):
             )
             # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
             # use positional arguments instead of keyword arguments
-            self.grpo_with_grad.compile(
+            inputs = [
                 prompt_completion_ids,
                 responses_mask,
                 ref_per_token_logps,
                 advantages,
-                actual_seq_length,
+                actual_sequence_length,
                 sample_index,
-                sample_valid_len,
+                sample_valid_length,
                 old_per_token_logps,
-            )
+            ]
+            self.grpo_with_grad.compile(*inputs)
             stage_name = "other"
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
@@ -214,9 +214,9 @@ class TrainWorker(Worker):
                 responses_mask=responses_mask,
                 ref_per_token_logps=ref_per_token_logps,
                 advantages=advantages,
-                actual_seq_length=actual_seq_length,
+                actual_sequence_length=actual_sequence_length,
                 sample_index=sample_index,
-                sample_valid_len=sample_valid_len,
+                sample_valid_length=sample_valid_length,
                 old_per_token_logps=old_per_token_logps,
             )
             logger.info(f"dryrun finished")
@@ -353,22 +353,24 @@ class TrainWorker(Worker):
                 eps=grpo_config.actor_config.optimizer.eps,
             )
 
-        loss_scale_value = math.pow(2, 12)
+        loss_scale_value = grpo_config.actor_config.loss_scale_value
         update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value, scale_factor=2, scale_window=1000)
 
         if sft_model_config.parallel_config.pipeline_stage > 1:
             logger.info("pipeline cell")
             grpo_with_grad = TrainPipelineWithLossScaleCellGRPO(
-                grpo_with_loss, optimizer=optimizer, config=sft_model_config, scale_update_cell=update_cell
+                grpo_with_loss,
+                optimizer=optimizer,
+                scale_sense=update_cell,
+                micro_batch_num=sft_model_config.parallel_config.micro_batch_num
             )
         else:
             logger.info("non-pipeline cell")
             grpo_with_grad = TrainOneStepWithLossScaleGRPO(
                 grpo_with_loss,
                 optimizer=optimizer,
-                config=sft_model_config,
-                scale_update_cell=update_cell,
-                enable_global_norm=True,
+                scale_sense=update_cell,
+                use_clip_grad=True
             )
         return grpo_with_grad
 
@@ -436,10 +438,32 @@ class TrainWorker(Worker):
             for epoch in range(self.grpo_config.rl_config.num_iterations):
                 for step, databatch in enumerate(iterator):
                     with TimeConsumingCollector(f"train epoch {epoch} step {step}"):
-                        out = self.grpo_with_grad(**databatch)
+                        prompt_completion_ids = databatch['prompt_completion_ids']
+                        responses_mask = databatch['responses_mask']
+                        ref_per_token_logps = databatch['ref_per_token_logps']
+                        advantages = databatch['advantages']
+                        actual_sequence_length = databatch['actual_sequence_length']
+                        sample_index = databatch['sample_index']
+                        sample_valid_length = databatch['sample_valid_length']
+                        old_per_token_logps = databatch['old_per_token_logps']
+                        inputs = [
+                            prompt_completion_ids,
+                            responses_mask,
+                            ref_per_token_logps,
+                            advantages,
+                            actual_sequence_length,
+                            sample_index,
+                            sample_valid_length,
+                            old_per_token_logps,
+                        ]
+                        out = self.grpo_with_grad(*inputs)
                     logger.info(
-                        " loss: {} | lr: {} | is overflow: {} | loss scale: {}".format(
-                            formatter(out[0]), formatter(out[1]), formatter(out[2]), formatter(out[3])
+                        " loss: {} | lr: {} | is overflow: {} | loss scale: {} | grad norm: {}".format(
+                            formatter(out[0]),
+                            formatter(out[3]),
+                            formatter(out[1]),
+                            formatter(out[2]),
+                            formatter(out[4])
                         )
                     )
                     if self.args.model_name == "deepseek":
@@ -449,12 +473,15 @@ class TrainWorker(Worker):
                             self.topk_bias_balance_callback._update_topk_bias(policy_model)
                     if self.tensor_writer:
                         self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
-                        self.tensor_writer.add_scalar("lr", out[1].asnumpy(), global_step=self.global_training_step)
+                        self.tensor_writer.add_scalar("lr", out[3].asnumpy(), global_step=self.global_training_step)
                         self.tensor_writer.add_scalar(
-                            "overflow", out[2].asnumpy(), global_step=self.global_training_step
+                            "overflow", out[1].asnumpy(), global_step=self.global_training_step
                         )
                         self.tensor_writer.add_scalar(
-                            "loss-scale", out[3].asnumpy(), global_step=self.global_training_step
+                            "loss-scale", out[2].asnumpy(), global_step=self.global_training_step
+                        )
+                        self.tensor_writer.add_scalar(
+                            "grad-norm", out[4].asnumpy(), global_step=self.global_training_step
                         )
                     self.global_training_step += 1
 

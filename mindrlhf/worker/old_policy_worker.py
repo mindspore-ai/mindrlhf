@@ -121,7 +121,7 @@ class OldPolicyWorker(Worker):
                 }
             )
 
-    def offset_actual_seq_length(self, data, offset):
+    def offset_actual_sequence_length(self, data, offset):
         """Offset actual sequence length"""
         bs = data.shape[0] // self.old_policy_model.dp
         n = data.shape[1]
@@ -138,14 +138,15 @@ class OldPolicyWorker(Worker):
         context.set_auto_parallel_context(
             pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
-        actual_seq_length = self.offset_actual_seq_length(actual_sequence_length, prompt_completion_ids_tensor.shape[1])
+        actual_sequence_length = self.offset_actual_sequence_length(
+            actual_sequence_length, prompt_completion_ids_tensor.shape[1])
         logger.info(
             f"precision old policy model inputs are {prompt_completion_ids_tensor}, "
             f"{samples}, {actual_sequence_length}"
         )
 
         old_per_token_logps = self.old_policy_model(
-            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_seq_length, False, False
+            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_sequence_length, False, False
         )
 
         logger.info(f"old_logprobs precision is {old_per_token_logps}")

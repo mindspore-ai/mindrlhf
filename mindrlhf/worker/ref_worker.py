@@ -135,7 +135,8 @@ class RefWorker(Worker):
         )
         # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
         # use positional arguments instead of keyword arguments
-        self.ref_model.compile(fake_data, fake_data, samples=fake_data, actual_seq_length=actual_seq_data, is_ref=False)
+        self.ref_model.compile(
+            fake_data, fake_data, samples=fake_data, actual_sequence_length=actual_seq_data, is_ref=False)
         stage_name = "other"
         context.set_auto_parallel_context(
             strategy_ckpt_config={
@@ -156,7 +157,7 @@ class RefWorker(Worker):
             prompt_completion_ids_tensor,
             attention_mask_tensor,
             samples=samples,
-            actual_seq_length=actual_sequence_length,
+            actual_sequence_length=actual_sequence_length,
         )
         if self.ref_pp_stage > 1:
             ref_per_token_logps = self.all_reduce(ref_per_token_logps)
