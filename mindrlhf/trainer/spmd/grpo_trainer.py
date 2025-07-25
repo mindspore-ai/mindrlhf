@@ -34,7 +34,7 @@ from mindrlhf.utils import (
     profiler_start,
     profiler_step,
 )
-
+from mindrlhf.tools.host_monitor import ResourceMonitor
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
@@ -52,27 +52,20 @@ class GRPOTrainer:
     def __init__(self, no_patch_tensor_shape, args=None):
         """Initialize"""
         self.args = args
-        if MSContext.get_instance().get_ascend_soc_version() == "ascend910b":
-            os.environ["HCCL_OP_EXPANSION_MODE"] = "HOST"
-        elif MSContext.get_instance().get_ascend_soc_version() == "ascend910_93":
-            os.environ["HCCL_OP_EXPANSION_MODE"] = "AI_CPU"
-        else:
-            raise NotImplementedError("only support ascend910b and ascend910_93")
+        self._set_hccl_op_expansion_mode()
         self.grpo_config = self._init_grpo_configs(args)
         self.tokenizer = TokenizerFactory.init_tokenizer(self.grpo_config)
         if isinstance(self.grpo_config.rl_config.seed, int):
             ms.set_seed(self.grpo_config.rl_config.seed)
         self._set_vllm_generation_config()
         self.no_patch_tensor_shape = no_patch_tensor_shape
-
-        # ================== Initial Tensorboard ==================
-        if self.grpo_config.rl_config.tensorboard and self.grpo_config.rl_config.tensorboard_dir:
-            self.grpo_config.rl_config.tensorboard_dir = os.path.join(
-                self.grpo_config.rl_config.tensorboard_dir, f"rank_{get_rank()}"
-            )
-            _set_tensorboard_writer(self.grpo_config.rl_config)
-        self.tensor_writer = get_tensorboard_writer()
+        self.tensor_writer = self._init_tensorboard()
         setattr(self.args, "tensor_writer", self.tensor_writer)
+        self.host_monitor = ResourceMonitor(self.grpo_config.monitor_config.host_monitor_interval,
+                                            self.grpo_config.monitor_config.host_monitor_steps,
+                                            self.grpo_config.monitor_config.host_memory_protection,
+                                            self.grpo_config.monitor_config.host_max_memory_threshold)
+        self.host_monitor.start()
 
         self.reshard_optimizer = None
         if self.grpo_config.rl_config.enable_reshard_optimizer:
@@ -162,6 +155,27 @@ class GRPOTrainer:
         self.ref.ref_model.model.set_train(False)
 
         self.infer.refresh_policy_model_phase()
+
+    @staticmethod
+    def _set_hccl_op_expansion_mode():
+        """set communication algorithm environment variables to avoid allreduce timeouts"""
+        if MSContext.get_instance().get_ascend_soc_version() == "ascend910b":
+            os.environ["HCCL_OP_EXPANSION_MODE"] = "HOST"
+        elif MSContext.get_instance().get_ascend_soc_version() == "ascend910_93":
+            os.environ["HCCL_OP_EXPANSION_MODE"] = "AI_CPU"
+        else:
+            raise NotImplementedError("only support ascend910b and ascend910_93")
+
+    def _init_tensorboard(self):
+        """init tensorboard"""
+        if self.grpo_config.rl_config.tensorboard and self.grpo_config.rl_config.tensorboard_dir:
+            self.grpo_config.rl_config.tensorboard_dir = os.path.join(
+                self.grpo_config.rl_config.tensorboard_dir, f"rank_{get_rank()}"
+            )
+            _set_tensorboard_writer(self.grpo_config.rl_config)
+        tensor_writer = get_tensorboard_writer()
+        return tensor_writer
+
 
     def _set_vllm_generation_config(self):
         os.environ["MINDFORMERS_MODEL_CONFIG"] = self.grpo_config.generate_config.model_config
@@ -366,7 +380,7 @@ class GRPOTrainer:
                     self.ref.save_checkpoints(
                         epochs=self.n_epoch, steps=self.i_step, start_epoch=self.start_epoch, start_step=self.start_step
                     )
-
+                self.host_monitor.update_current_step(self.i_step)
                 logger.info(f"epoch: {self.n_epoch}, step: {self.i_step} start")
                 with TimeConsumingCollector(f"whole epoch {self.n_epoch} train stage") as perf_collector:
                     with TimeConsumingCollector("make_experience"):
@@ -410,6 +424,7 @@ class GRPOTrainer:
             with TimeConsumingCollector("load train model"):
                 self.train.load_model()
             self.train.save_checkpoints(epochs=self.grpo_config.rl_config.epochs, steps=self.step_num)
+        self.host_monitor.stop()
         logger.info("run grpo train end")
 
     def rename_safetensors_weights(self):

@@ -47,7 +47,10 @@ def test_qwen_grpo_vllm():
         "total_ref_batch_size: ref_model_batch_size * ref_dp, 2 * 4 = 8",
     ]
 
-    check_log(log_path, check_pair, check_values)
+    device_memory = [62370, 32089, 41682]
+    host_memory = [24, 230]
+    check_log(log_path, check_pair, check_values, device_memory, host_memory)
+
 
 
 @arg_mark(plat_marks=["platform_ascend910b"], level_mark="level1", card_mark="allcards", essential_mark="essential")

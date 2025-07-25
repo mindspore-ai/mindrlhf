@@ -195,7 +195,7 @@ class GRPOTrainerArgs:
     model_name: str = "qwen"
     dataset_file: str = ""
     resume_training: bool = False
-    tokenizer_dir: str = os.path.join(WORKDIR, "qwen2_5")
+    tokenizer_dir: str = os.path.join(WORKDIR, "qwen2_5_vllm")
     actor_checkpoint_path: str = ""
     ref_checkpoint_path: str = ""
     generate_checkpoint_path: str = ""

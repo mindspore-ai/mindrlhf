@@ -15,7 +15,7 @@
 # ============================================================================
 
 export MS_ENABLE_LCCL=off
-export GLOG_v=3
+export GLOG_v=2
 
 WORKDIR="$(realpath "$(dirname "$0")")"
 echo "WORKDIR is $WORKDIR"
@@ -29,10 +29,10 @@ echo "PYTHONPATH is $PYTHONPATH"
 export vLLM_MODEL_BACKEND=MindFormers
 export HCCL_EXEC_TIMEOUT=7200
 export MS_JIT_MODULES=vllm_mindspore,research
-
+export MS_MEMORY_STATISTIC=1
 jsonl_path="$WORKDIR/qwen2_5/mini_gsm8k.jsonl"
-vocab_path="$WORKDIR/qwen2_5/vocab.json"
-merges_path="$WORKDIR/qwen2_5/merges.txt"
+vocab_path="$WORKDIR/qwen2_5_vllm/vocab.json"
+merges_path="$WORKDIR/qwen2_5_vllm/merges.txt"
 mkdir -p $WORKDIR/dataset/
 data_path="$WORKDIR/dataset/mini_gsm8k.mindrecord"
 
@@ -50,8 +50,8 @@ msrun --worker_num=8 --local_worker_num=8 --master_addr=127.0.0.1 \
 --config ./qwen2_5_vllm/grpo_config_st.yaml \
 --dataset_file $data_path \
 --save_checkpoint_dir $WORKDIR/ckpt/train \
---tokenizer_dir "$WORKDIR/qwen2_5/" \
+--tokenizer_dir "$WORKDIR/qwen2_5_vllm" \
 --vllm_test \
 --actor_checkpoint_path "" \
 --ref_checkpoint_path "" \
---generate_checkpoint_path "./qwen2_5_vllm/"
+--generate_checkpoint_path "$WORKDIR/qwen2_5_vllm"
