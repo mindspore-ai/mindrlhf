@@ -567,6 +567,7 @@ class TrainWorker(Worker):
             self.load_model()
             append_dict = {"epoch_num": epochs, "step_num": steps}
             # ensure ckpt number is less than `keep_checkpoint_max` after saving
+            self.grpo_model_train.grpo_model_train.policy_model.init_parameters_data()
             ms.save_checkpoint(
                 self.grpo_model_train.grpo_model_train.policy_model,
                 ckpt_file,
@@ -585,6 +586,7 @@ class TrainWorker(Worker):
                 optimizer_save_dir, prefix="optimizer", epoch_num=epochs, step_num=steps, formats=formats
             )
             self.load_optimizer()
+            self.grpo_with_grad.optimizer.init_parameters_data()
             ms.save_checkpoint(self.grpo_with_grad.optimizer, ckpt_file_opt, integrated_save=False, format=formats)
             self.offload_optimizer()
             ensure_total_ckpt_is_less_than_limit(
