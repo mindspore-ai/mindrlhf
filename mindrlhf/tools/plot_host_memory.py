@@ -13,7 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """plot_host_memory"""
-
 import re
 import argparse
 import matplotlib.pyplot as plt
@@ -51,13 +50,13 @@ def plot_memory_usage(virtual_memory, process_memory, title="Memory Usage Over T
     print(f"The chart is saved to: {output_file}")
 
 
-
 def main():
     parser = argparse.ArgumentParser(description="Parse log files and chart memory usage")
     parser.add_argument("--log", "-l", required=True, help="Log file path")
     args = parser.parse_args()
     virtual_memory, process_memory = parse_log_file(args.log)
     plot_memory_usage(virtual_memory, process_memory)
+
 
 if __name__ == "__main__":
     main()
