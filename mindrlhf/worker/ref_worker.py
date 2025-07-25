@@ -238,7 +238,7 @@ class RefWorker(Worker):
             return
 
         if not os.path.exists(self.ref_ckpt_path):
-            raise ValueError(f"old policy model checkpoint path: {self.ref_ckpt_path} not exists")
+            raise ValueError(f"ref model checkpoint path: {self.ref_ckpt_path} not exists")
 
         if self.ref_ckpt_path and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True

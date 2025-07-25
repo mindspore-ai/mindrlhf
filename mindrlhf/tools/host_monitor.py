@@ -13,7 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """Host resource monitor for tracking system resource usage during training."""
-
 import os
 import threading
 import time
