@@ -219,12 +219,14 @@ class Context:
         "ascend_config": {"precision_mode": ascend_config.precision_mode},
     }
 
+
 @dataclass
 class MonitorConfig:
     host_monitor_interval: float = -1.0
     host_monitor_steps: list = None
     host_memory_protection: bool = False
     host_max_memory_threshold: float = 0.95
+
 
 @dataclass
 class RLConfig:
@@ -277,19 +279,6 @@ class RLConfig:
     num_generations: int = 8
     num_rollouts: int = 4
     chunk_size: int = 1
-    init_kl_coef: float = 0.1
-    kl_coef: float = 0.02
-    target: float = 6.0
-    horizon: int = 10000
-    gamma: float = 1.0
-    lam: float = 0.95
-    cliprange: float = 0.2
-    cliprange_value: float = 0.2
-    vf_coef: float = 1.0
-    pretrain_coef: float = 0.9
-    scale_reward: bool = None
-    ref_mean: bool = False
-    ref_std: bool = False
     gen_experience_kwargs: bool = False
     # clip higher
     num_iterations: int = 1
@@ -302,6 +291,7 @@ class RLConfig:
 @dataclass
 class ProfilerConfig:
     """profiler config"""
+
     profile: bool = False
     mstx: bool = False
     stage: str = "all"
