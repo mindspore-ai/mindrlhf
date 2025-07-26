@@ -38,19 +38,6 @@ rl_config:
   num_generations: 40
   num_rollouts: 10
   chunk_size: 10
-  init_kl_coef: 0.01
-  kl_coef: 0.002
-  target: 60.0
-  horizon: 100000
-  gamma: 10.0
-  lam: 0.095
-  cliprange: 0.02
-  cliprange_value: 0.02
-  vf_coef: 10.0
-  pretrain_coef: 0.09
-  scale_reward: 1
-  ref_mean: True
-  ref_std: True
   gen_experience_kwargs: True
   # clip higher
   num_iterations: int = 10
