@@ -16,7 +16,7 @@
 import numpy as np
 import mindspore.common.dtype as mstype
 import mindspore.nn as nn
-from mindspore import Tensor, ops, mint
+from mindspore import Tensor, ops, mint, Parameter
 from mindspore.ops import operations as P
 from mindformers.models.utils import lazy_inline
 from mindformers import logger
@@ -73,6 +73,10 @@ class CausalLMHybrid(BaseModel):
 
         self.expaned = P.ExpandDims().shard(((dp, mp),))
         self.dp = dp
+        self.old_log_ratio = Parameter(Tensor(0, mstype.float32), name="old_log_ratio", requires_grad=False)
+        self.kl_loss = Parameter(Tensor(0, mstype.float32), name="kl_loss", requires_grad=False)
+        self.actor_loss = Parameter(Tensor(0, mstype.float32), name="actor_loss", requires_grad=False)
+        self.clipfrac = Parameter(Tensor(0, mstype.float32), name="clipfrac", requires_grad=False)
 
     def offset_actual_sequence_length(self, data, offset):
         """add offset to data"""
@@ -205,6 +209,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         self.pad_token_id = Tensor(grpo_config.generate_config.sampling_config.pad_token_id, mstype.int32)
         self.policy_model = policy_model
         self.enable_oldpolicy = self.grpo_config.rl_config.enable_oldpolicy
+        self.enable_full_monitor = self.grpo_config.rl_config.enable_full_monitor
         self.epsilon_high = self.grpo_config.rl_config.epsilon_high
         self.epsilon_low = self.grpo_config.rl_config.epsilon_low
         logger.info(
@@ -265,6 +270,38 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         actual_seq_lenth = self.cast(ops.reshape(data, (-1,)), data_type)
         return actual_seq_lenth
 
+    def get_ratio(self):
+        """get ratio"""
+        return self.old_log_ratio.value()
+
+    def get_clipfrac(self):
+        """get clip fraction"""
+        return self.clipfrac.value()
+
+    def get_klloss(self):
+        """get KL loss"""
+        return self.kl_loss.value()
+
+    def get_actor_loss(self):
+        """get actor loss"""
+        return self.actor_loss.value()
+
+    def set_klloss(self):
+        """set KL loss"""
+        ops.assign(self.kl_loss, Parameter(Tensor(0, mstype.float32), name="kl_loss", requires_grad=False))
+
+    def set_actor_loss(self):
+        """set actor loss"""
+        ops.assign(self.actor_loss, Parameter(Tensor(0, mstype.float32), name="actor_loss", requires_grad=False))
+
+    def set_ratio(self):
+        """set ratio"""
+        ops.assign(self.old_log_ratio, Parameter(Tensor(0, mstype.float32), name="old_log_ratio", requires_grad=False))
+
+    def set_clipfrac(self):
+        """set clip fraction"""
+        ops.assign(self.clipfrac, Parameter(Tensor(0, mstype.float32), name="clipfrac", requires_grad=False))
+
     def construct(
             self,
             prompt_completion_ids, # [bs, seq_len]
@@ -296,20 +333,42 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         if not self.enable_oldpolicy:
             old_per_token_logps = ops.stop_gradient(per_token_logps)
         ratio = self.exp(per_token_logps - old_per_token_logps)
+        if self.enable_full_monitor:
+            old_log_ratio = self.masked_mean(
+                ratio,
+                responses_mask,
+                sample_index,
+                pack_sample_num,
+                sample_valid_length,
+                dim=-1
+            ).mean()
+            ops.assign_add(self.old_log_ratio, old_log_ratio)
         surr1 = ratio * advantages
         if self.enable_oldpolicy:
             surr2 = mint.clamp(ratio, min=(1.0 - self.epsilon_low), max=(1.0 + self.epsilon_high)) * advantages
             loss = -mint.min(surr1, surr2)
+            if self.enable_full_monitor:
+                clipfrac = mint.gt(surr1, surr2)
+                clipfrac = self.masked_mean(
+                    clipfrac,
+                    responses_mask,
+                    sample_index,
+                    pack_sample_num,
+                    sample_valid_length,
+                    dim=-1
+                ).mean()
+                ops.assign_add(self.clipfrac, clipfrac)
         else:
             loss = -surr1
         actor_loss = (
             self.masked_mean(loss, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1).sum()
             / real_sample_num
         )
-
+        if self.enable_full_monitor:
+            ops.assign_add(self.kl_loss, kl_loss)
+            ops.assign_add(self.actor_loss, actor_loss)
         loss = actor_loss + kl_loss * self.beta
         return loss
-
 
 class GRPOModelInfer(nn.Cell):
     def __init__(self, grpo_config: GRPOConfig, policy_model):
