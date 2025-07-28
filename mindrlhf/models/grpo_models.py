@@ -62,6 +62,7 @@ class CausalLMHybrid(BaseModel):
         self.logsoftmax_1 = P.LogSoftmax().shard(((dp * mp * cp, 1),))
         self.logsoftmax_2 = P.LogSoftmax().shard(((dp, 1, 1),))
         self.expaned = P.ExpandDims().shard(((dp, mp),))
+        self.lsf_dtype = mstype.float32
 
         self.pow = P.Pow().shard(((dp, 1), ()))
         self.argmax_no_shard = P.Argmax(-1).shard(((1, 1),))
@@ -103,6 +104,7 @@ class CausalLMHybrid(BaseModel):
         """
         Calculate the log value of the label
         """
+        logits = self.cast(logits, self.lsf_dtype)
         bs, seq_len = samples.shape
         logprobs = self.logsoftmax(logits)  # [bs*seq_len, vocab_size]
         samples = self.expaned(samples, -1)

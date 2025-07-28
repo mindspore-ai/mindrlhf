@@ -556,7 +556,7 @@ class GRPOExperienceMaker:
         x = x.reshape((num_generations, -1, seq)).transpose((1, 0, 2))
         return x.reshape((-1, seq))
 
-    def compute_advantages(self, all_rewards, metrics, num_generations, eps=1e-4):
+    def compute_advantages(self, all_rewards, metrics, num_generations, eps=1e-6):
         """compute_advantages"""
         all_mean_grouped_rewards = []
         total_size = all_rewards.shape[0]
