@@ -217,6 +217,16 @@ class GRPOTrainer:
             grpo_config.actor_config.save = args.save_checkpoint_dir
         if args.model_name:
             grpo_config.rl_config.model_name = args.model_name
+        if args.tokenizer_type:
+            if args.model_name and args.model_name != args.tokenizer_type:
+                logger.warning(f"tokenizer_type [{args.tokenizer_type}] is different from "
+                               f"model_name [{args.model_name}], tokenizer init will use "
+                               f"tokenizer_type [{args.tokenizer_type}]")
+            grpo_config.rl_config.tokenizer_type = args.tokenizer_type
+        else:
+            logger.info("tokenizer_type is unset, "
+                        f"set tokenizer_type as model_name [{grpo_config.rl_config.model_name}]")
+            grpo_config.rl_config.tokenizer_type = grpo_config.rl_config.model_name
         return grpo_config
 
     def _init_grpo_configs(self, args):

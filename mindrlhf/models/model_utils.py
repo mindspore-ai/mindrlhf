@@ -53,20 +53,27 @@ class TokenizerFactory:
             Tokenizer, tokenizer.
         """
         tokenizer_dir = grpo_config.rl_config.tokenizer_dir
-        model_name = grpo_config.rl_config.model_name
+        tokenizer_type = grpo_config.rl_config.tokenizer_type
         if not os.path.exists(tokenizer_dir):
             raise FileNotFoundError(f"{tokenizer_dir} is not existed.")
         if not os.path.isdir(tokenizer_dir):
             raise NotADirectoryError(f"{tokenizer_dir} is not a directory.")
-        if model_name == "qwen":
+        if tokenizer_type == "qwen":
+            # For Qwen Model
             vocab_path = os.path.join(tokenizer_dir, "vocab.json")
             merges_file_path = os.path.join(tokenizer_dir, "merges.txt")
             return Qwen2_5Tokenizer(vocab_path, merges_file_path, add_bos_token=False, add_eos_token=False)
-        if model_name == "deepseek":
-            return LlamaTokenizerFast(tokenizer_file=tokenizer_dir, add_bos_token=False, add_eos_token=False)
-        if model_name == "llama":
+        if tokenizer_type == "deepseek":
+            # For Deepseek Distill Model
+            # e.g. When using Distill-Qwen Model,
+            #      user should set model_name as 'qwen' and tokenizer_type as 'deepseek'
+            return LlamaTokenizerFast(vocab_file=os.path.join(tokenizer_dir, "tokenizer.json"),
+                                      tokenizer_file=os.path.join(tokenizer_dir, "tokenizer.json"),
+                                      add_bos_token=False, add_eos_token=False)
+        if tokenizer_type == "llama":
+            # For Llama Model
             sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
             sft_config_infer.processor.tokenizer.tokenizer_file = tokenizer_dir
             sft_config_infer.processor.tokenizer.vocab_file = tokenizer_dir
             return build_tokenizer(sft_config_infer.processor.tokenizer)
-        raise ValueError(f"model_name should in [qwen, deepseek, llama], but get {model_name}")
+        raise ValueError(f"tokenizer_type should in [qwen, deepseek, llama], but get {tokenizer_type}")

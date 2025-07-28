@@ -4,6 +4,7 @@ rl_config:
   deterministic: "ON"
   align_type: 'train_stages'
   dataset_file: "/path/test.mindrecord"
+  tokenizer_type: 'qwen'
   tokenizer_dir: "/path/to/"
   epochs: 100
   batch_size: 10

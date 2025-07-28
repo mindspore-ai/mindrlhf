@@ -4,6 +4,7 @@ rl_config:
   deterministic: "OFF"
   align_type: 'rlhf_stages'
   dataset_file: "/path/train.mindrecord"
+  tokenizer_type: 'qwen'
   tokenizer_dir: "/path/"
   epochs: 10
   batch_size: 1

@@ -113,6 +113,7 @@ def get_args():
     parser.add_argument("--config", type=str, default=None, help="configs path", required=True)
     parser.add_argument("--model_name", type=str, default="qwen", help="custom model name")
     parser.add_argument("--dataset_file", type=str, default=None, help="dataset file for training")
+    parser.add_argument("--tokenizer_type", type=str, default="qwen", help="custom tokenizer type")
     parser.add_argument("--tokenizer_dir", type=str, default=None, help="the directory contain hf tokenizer files")
     parser.add_argument("--actor_checkpoint_path", type=str, default=None, help="the actor model file path for loading")
     parser.add_argument(
