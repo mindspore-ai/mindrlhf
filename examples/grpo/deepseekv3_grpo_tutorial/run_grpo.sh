@@ -19,37 +19,32 @@ export PYTHONPATH=/path/to/mindrlhf/:$PYTHONPATH
 export PYTHONPATH=/path/to/mindformers/:$PYTHONPATH
 # use for vllm
 export vLLM_MODEL_BACKEND=MindFormers
+export MINDFORMERS_MODEL_CONFIG="path/to/predict_deepseek3_671b.yaml"
 # 性能优化
 export MS_DEV_RUNTIME_CONF="parallel_dispatch_kernel:True"
-export MS_ALLOC_CONF=enable_vmm:true
-export ASCEND_TOTAL_MEMORY_GB=64
-export vLLM_MODEL_MEMORY_USE_GB=50
+export MS_ALLOC_CONF="enable_vmm:true"
 export ENABLE_LAZY_INLINE_NO_PIPELINE=1
 export MS_DEV_RUNTIME_CONF="multi_stream:true"
 #ray组网相关
 export GLOO_SOCKET_IFNAME=enp189s0f0
 export TP_SOCKET_IFNAME=enp189s0f0
-#通信下发
-export HCCL_OP_EXPANSION_MODE=AIV
 # 关闭多机lccl
 export MS_ENABLE_LCCL=off
+export MS_DEV_HOST_BLOCKING_RUN=1
 
 master_ip=127.0.0.1
 node_rank=$1
 
-bash scripts/msrun_launcher.sh "examples/grpo/deepseekv3_grpo_tutorial/main.py \
+msrun --worker_num=512 --local_worker_num=16 \
+--master_addr=$master_ip --node_rank=$node_rank --master_port=9887 \
+--join=True --log_dir=./prof_vllm_log \
+examples/grpo/deepseekv3_grpo_tutorial/main.py \
 --config examples/grpo/deepseekv3_grpo_tutorial/grpo_config.yaml \
---sft_path_infer ./model_configs/deepseek_v3_config/predict_deepseek3_671b.yaml \
---sft_path_ref ./model_configs/deepseek_v3_config/ref_deepseek3_671b.yaml \
---sft_path_train ./model_configs/deepseek_v3_config/finetune_deepseek3_671b.yaml \
---tokenizer_path ./tokenizer.json \
---mind_dataset_dir ./output.mindrecord \
---use_parallel True \
---load_sft_checkpoint_infer /path/to/ckpt/infer \
---load_sft_checkpoint_train /path/to/ckpt/train/ \
---load_ref_checkpoint /path/to/ckpt/infer \
---load_ckpt_format ckpt \
---save_data_file ./grpo_1024.mindrecord \
---save_ckpt_dir /path/to/ckpt/train \
---enable_compile_cache False" \
-16 16 $master_ip 8118 $node_rank output/msrun_log False 7200
+--tokenizer_dir /path/to/tokenizer.json  \
+--dataset_file /path/to/dkv3.mindrecord \
+--save_checkpoint_dir /path/to/save/ckpt \
+--actor_checkpoint_path /path/to/train/ckpt \
+--ref_checkpoint_path /path/to/train/ckpt \
+--generate_checkpoint_path /path/to/infer/ckpt \
+--verifier_function "accuracy_reward,format_reward" \
+--verifier_weight "1.0,1.0" > vllm.log 2>&1 &

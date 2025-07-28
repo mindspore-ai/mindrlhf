@@ -107,7 +107,8 @@ class OldPolicyWorker(Worker):
             stage_name = "old_policy"
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
-                    "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt"
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt",
+                    "only_trainable_params": True
                 },
                 pipeline_stages=self.old_policy_pp_stage,
             )
@@ -117,7 +118,8 @@ class OldPolicyWorker(Worker):
             stage_name = "other"
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
-                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
+                    "only_trainable_params": True
                 }
             )
 

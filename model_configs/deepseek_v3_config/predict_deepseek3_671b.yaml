@@ -1,40 +1,5 @@
-seed: 0
-output_dir: './output' # path to save checkpoint/strategy
 run_mode: 'predict'
-use_parallel: True
-
-load_checkpoint: "/path/to/deepseekv3/model.safetensors"
 load_ckpt_format: "safetensors"
-auto_trans_ckpt: True # If true, auto transform load_checkpoint to load in distributed model
-
-# trainer config
-trainer:
-  type: CausalLanguageModelingTrainer
-  model_name: 'DeepSeekV3'
-
-# default parallel of device num = 32 for Atlas 800T A2
-parallel_config:
-  model_parallel: 16
-  pipeline_stage: 1
-  expert_parallel: 1
-  vocab_emb_dp: False
-
-# mindspore context init config
-context:
-  mode: 0 # 0--Graph Mode; 1--Pynative Mode
-  max_device_memory: "59GB"
-  device_id: 0
-  affinity_cpu_list: None
-
-kernel_launch_group:
-  thread_num: 4
-  kernel_group_num: 16
-
-# parallel context config
-parallel:
-  parallel_mode: "STAND_ALONE" # use 'STAND_ALONE' mode for inference with parallelism in frontend
-  full_batch: False
-  strategy_ckpt_save_file: "./ckpt_strategy.ckpt"
 
 # model config
 model:
@@ -44,7 +9,7 @@ model:
     batch_size: 1 # add for incre predict
     seq_length: 4096
     hidden_size: 7168
-    num_layers: 3
+    num_layers: 61
     num_heads: 128
     max_position_embeddings: 163840
     intermediate_size: 18432
@@ -59,6 +24,7 @@ model:
     bos_token_id: 0
     eos_token_id: [1]
     pad_token_id: 1
+    temperature: 0
     ignore_token_id: -100
     compute_dtype: "bfloat16"
     layernorm_compute_type: "bfloat16"
@@ -76,12 +42,13 @@ model:
     use_past: True
     extend_method: "YARN"
     use_flash_attention: True
-    block_size: 16
+    block_size: 32
     num_blocks: 512
     offset: 0
     checkpoint_name_or_path: ""
     repetition_penalty: 1
-    max_decode_length: 1024
+    max_decode_length: 2048
+    min_decode_length: 2
     top_k: 1
     top_p: 1
     theta: 10000.0
@@ -89,7 +56,6 @@ model:
     is_dynamic: True
     qkv_concat: False
     ffn_concat: False
-    temperature: 1
     auto_map:
       AutoConfig: deepseek3_config.DeepseekV3Config
       AutoModel: deepseek3.DeepseekV3ForCausalLM
