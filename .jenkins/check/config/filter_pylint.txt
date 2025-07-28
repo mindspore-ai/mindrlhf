@@ -52,3 +52,4 @@
 "mindrlhf/mindrlhf/wrapper/wrapper.py"                                                                          "bad-continuation"
 "mindrlhf/mindrlhf/models/qwen2_5/qwen2_5_tokenizer.py"                                                         "invalid-name"
 "mindrlhf/mindrlhf/models/grpo_models.py"                                                                       "bad-continuation"
+"mindrlhf/tests/ut/test_reward_functions.py"                                                                    "wrong-import-position"

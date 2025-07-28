@@ -722,8 +722,9 @@ class GRPOExperienceMaker:
         # Step 1: generate responses and masks.
         micro_bs = n_questions // self.infer_dp
         micro_num = num_rollouts * num_generations
-        generate_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_generate",
-                                           profiler_iteration=self.profiler_iteration)
+        generate_profiler = profiler_start(
+            self.grpo_config.profiler_config, role="actor_generate", profiler_iteration=self.profiler_iteration
+        )
         generate_results = self.generate_sequence(micro_bs, micro_num, prompt_tensors_full)
         profiler_step(generate_profiler)
 
@@ -731,10 +732,7 @@ class GRPOExperienceMaker:
         with TimeConsumingCollector("calculate reward"):
             right_padding_responses, _, left_padding_prompts, _ = generate_results
             all_rewards, metrics = self.compute_rewards(
-                left_padding_prompts,
-                right_padding_responses,
-                repeat_solution_ids,
-                sample_size
+                left_padding_prompts, right_padding_responses, repeat_solution_ids, sample_size
             )
 
         advantages = self.compute_advantages(all_rewards, metrics, num_generations)
@@ -742,16 +740,18 @@ class GRPOExperienceMaker:
         packed_samples = self.construct_packed_samples(generate_results, advantages, num_generations)
 
         # Step 3: compute ref log probs.
-        ref_log_prob_profiler = profiler_start(self.grpo_config.profiler_config, role="reference_log_prob",
-                                               profiler_iteration=self.profiler_iteration)
+        ref_log_prob_profiler = profiler_start(
+            self.grpo_config.profiler_config, role="reference_log_prob", profiler_iteration=self.profiler_iteration
+        )
         all_ref_per_token_logps = self.compute_ref_log_probs(packed_samples)
         profiler_step(ref_log_prob_profiler)
 
         # Step 4: generate old log probs
         all_old_per_token_logps = None
         if self.grpo_config.rl_config.enable_oldpolicy:
-            old_log_prob_profiler = profiler_start(self.grpo_config.profiler_config, role="actor_old_log_prob",
-                                                   profiler_iteration=self.profiler_iteration)
+            old_log_prob_profiler = profiler_start(
+                self.grpo_config.profiler_config, role="actor_old_log_prob", profiler_iteration=self.profiler_iteration
+            )
             all_old_per_token_logps = self._generate_old_logps(packed_samples)
             profiler_step(old_log_prob_profiler)
 
