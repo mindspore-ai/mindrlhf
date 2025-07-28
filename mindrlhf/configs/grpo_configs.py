@@ -236,6 +236,7 @@ class RLConfig:
     deterministic: str = "OFF"
     align_type: str = "rlhf_stages"
     dataset_file: str = "/path/train.mindrecord"
+    tokenizer_type: str = "qwen"
     tokenizer_dir: str = "/path/"
     epochs: int = 10
     batch_size: int = 1

@@ -29,6 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--sft_path_infer", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--sft_path_ref", type=str, default=None, help="sft model path", required=True)
     parser.add_argument("--sft_path_train", type=str, default=None, help="sft model path", required=True)
+    parser.add_argument("--tokenizer_type", type=str, default="deepseek", help="tokenizer type")
     parser.add_argument("--tokenizer_path", required=True, help="path to tokenizer.json")
     parser.add_argument("--save_data_file", type=str, default=None, help="save_data_file")
     parser.add_argument("--mind_dataset_dir", type=str, default=None, help="mind_dataset_dir", required=True)
