@@ -113,7 +113,8 @@ class OldPolicyWorker(Worker):
                 pipeline_stages=self.old_policy_pp_stage,
             )
             self.old_policy_model.compile(
-                fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False
+                fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False,
+                calculate_entropy=self.grpo_config.rl_config.calculate_entropy
             )
             stage_name = "other"
             context.set_auto_parallel_context(
@@ -147,12 +148,19 @@ class OldPolicyWorker(Worker):
             f"{samples}, {actual_sequence_length}"
         )
 
-        old_per_token_logps = self.old_policy_model(
-            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_sequence_length, False, False
+        results = self.old_policy_model(
+            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_sequence_length, False, False,
+            calculate_entropy=self.grpo_config.rl_config.calculate_entropy
         )
 
+        if self.grpo_config.rl_config.calculate_entropy:
+            entropy, old_per_token_logps = results
+        else:
+            entropy = ms.Tensor([0.0])
+            old_per_token_logps = results
+
         logger.info(f"old_logprobs precision is {old_per_token_logps}")
-        return old_per_token_logps
+        return entropy, old_per_token_logps
 
     def offload(self):
         """offload old policy model"""
@@ -268,6 +276,15 @@ def set_enable_old_policy(grpo_config):
         * grpo_config.generate_config.parallel_config.data_parallel
     )
     # set enable old policy
+    if grpo_config.rl_config.calculate_entropy:
+        logger.warning(
+            f"enable_oldpolicy is set to True, because "
+            f"calculate_entropy is "
+            f"{grpo_config.rl_config.calculate_entropy}."
+        )
+        grpo_config.rl_config.enable_oldpolicy = True
+        return
+
     if train_bs == global_bs and grpo_config.rl_config.num_iterations == 1:
         if grpo_config.rl_config.enable_oldpolicy:
             logger.warning(
