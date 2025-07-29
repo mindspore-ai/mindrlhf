@@ -61,8 +61,6 @@ class RefWorker(Worker):
         ref_config.model.model_config.parallel_config = ref_config.parallel_config
         ref_config.model.model_config.parallel_config.recompute = ref_config.recompute_config
         self.ref_pp_stage = ref_config.parallel_config.pipeline_stage
-        self.ref_config = ref_config
-        self.ref_config.moe_config.num_experts = self.ref_config.moe_config.expert_num
         ref_config.model.model_config.use_past = False
         if args.model_name in ["qwen", "llama"]:
             ref_config.model.model_config.use_eod_attn_mask_compression = (
