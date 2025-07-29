@@ -71,7 +71,8 @@ actor_config:
     use_seq_parallel: False
     micro_batch_num: 16
     vocab_emb_dp: False
-    context_parallel: 32
+    expert_parallel: 32
+    context_parallel: 1
   recompute_config:
     recompute: True
     select_recompute: False
@@ -109,6 +110,7 @@ ref_config:
     model_parallel: 128  # need to be set
     pipeline_stage: 1  # need to be set
     context_parallel: 1
+    expert_parallel: 1
 
 
 # reward config
