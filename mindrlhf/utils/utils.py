@@ -683,8 +683,13 @@ def load_safetensors(safetensors_path, load_ckpt_format, network, grpo_model, pr
                     for k in f.keys():
                         name_map.update({f"{prefix}{k}": k})
                         param_name_map_dict[f"{prefix}{k}"] = os.path.basename(checkpoint_file)
-            with open(os.path.join(safetensors_path, "param_name_map.json"), "w", encoding="utf-8") as f:
-                json.dump(param_name_map_dict, f, ensure_ascii=False, indent=4)
+            if get_rank() == 0:
+                with open(os.path.join(safetensors_path, 'param_name_map.json'), "w", encoding="utf-8") as f:
+                    json.dump(param_name_map_dict, f, ensure_ascii=False, indent=4)
+            else:
+                # wait for rank 0 to finish
+                time.sleep(10)
+            ms.mint.distributed.barrier()
     except Exception as e:
         raise TypeError(f"Please complete abstract function obtain_name_map. Details: {e}") from e
 

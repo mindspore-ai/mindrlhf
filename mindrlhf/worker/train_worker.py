@@ -96,10 +96,8 @@ class TrainWorker(Worker):
             self.topk_bias_balance_callback = TopkBiasBalanceCallback(
                 sft_model_config_train.moe_config.balance_via_topk_bias,
                 sft_model_config_train.moe_config.topk_bias_update_rate,
-                sft_model_config_train.num_layers,
-                sft_model_config_train.mtp_depth,
                 sft_model_config_train.moe_config.expert_num,
-                sft_model_config_train.parallel_config.micro_batch_num,
+                sft_model_config_train.parallel_config.micro_batch_num
             )
         else:
             raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
@@ -183,7 +181,8 @@ class TrainWorker(Worker):
             strategy_path = self.save_strategy_dir
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
-                    "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                    "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
+                    "only_trainable_params": True
                 },
                 pipeline_stages=self.train_pp_stage,
             )
@@ -203,7 +202,8 @@ class TrainWorker(Worker):
             stage_name = "other"
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
-                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt"
+                    "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
+                    "only_trainable_params": True
                 }
             )
 

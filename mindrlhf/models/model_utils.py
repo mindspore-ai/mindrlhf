@@ -67,9 +67,14 @@ class TokenizerFactory:
             # For Deepseek Distill Model
             # e.g. When using Distill-Qwen Model,
             #      user should set model_name as 'qwen' and tokenizer_type as 'deepseek'
-            return LlamaTokenizerFast(vocab_file=os.path.join(tokenizer_dir, "tokenizer.json"),
-                                      tokenizer_file=os.path.join(tokenizer_dir, "tokenizer.json"),
-                                      add_bos_token=False, add_eos_token=False)
+            sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
+            tokenizer = LlamaTokenizerFast(os.path.join(tokenizer_dir, "tokenizer.json"),
+                                           os.path.join(tokenizer_dir, "tokenizer.json"),
+                                           unk_token=sft_config_infer.processor.tokenizer.unk_token,
+                                           bos_token=sft_config_infer.processor.tokenizer.bos_token,
+                                           eos_token=sft_config_infer.processor.tokenizer.eos_token,
+                                           fast_tokenizer=True, trust_remote_code=True)
+            return tokenizer
         if tokenizer_type == "llama":
             # For Llama Model
             sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)

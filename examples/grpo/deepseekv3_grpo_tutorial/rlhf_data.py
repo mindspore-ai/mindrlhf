@@ -15,13 +15,14 @@
 """
     data process
 """
+import os
 import argparse
 import jsonlines
 import numpy as np
-from mindformers.models.llama import LlamaTokenizerFast
-from mindformers import logger
-from mindspore.mindrecord import FileWriter
 from tqdm import tqdm
+from mindformers import MindFormerConfig, logger
+from mindformers.models.llama import LlamaTokenizerFast
+from mindspore.mindrecord import FileWriter
 
 
 def load_json_file(file_path):
@@ -33,7 +34,8 @@ def load_json_file(file_path):
     return raw_data
 
 
-def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
+def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id,
+                 dataset_type):
     """
     process_data
     """
@@ -44,9 +46,14 @@ def process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_i
         sample = {}
         prompt = template.format_map(
             {"prompt": item["question"], "response": ""})
-        response = template.format_map(
-            {"prompt": item["question"], "response": item["answer"]}
-        )
+        if dataset_type == 'gsm8k':
+            response = item['answer'].split("#### ")[-1]
+        elif dataset_type == 'openR1math':
+            response = item['answer']
+        else:
+            response = template.format_map(
+                {"prompt": item["question"], "response": item["answer"]}
+            )
 
         prompt_dict = tokenizer(
             prompt,
@@ -99,11 +106,15 @@ def write_mindrecord(args):
     """
 
     raw_data = load_json_file(args.file_path)
-
-    tokenizer = LlamaTokenizerFast(
-        tokenizer_file=args.tokenizer_file, add_bos_token=False, add_eos_token=False
-    )
-    tokenizer.pad_token_id = 100001
+    config = MindFormerConfig(args.config)
+    tokenizer_json = os.path.join(args.tokenizer_file, "tokenizer.json")
+    tokenizer = LlamaTokenizerFast(tokenizer_json,
+                                   tokenizer_json,
+                                   unk_token=config.processor.tokenizer.unk_token,
+                                   bos_token=config.processor.tokenizer.bos_token,
+                                   eos_token=config.processor.tokenizer.eos_token,
+                                   fast_tokenizer=True, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.eos_token
     max_prompt_length = int(args.max_prompt_length)
     seq_length = int(args.seq_length)
     if args.pad_token_id is None:
@@ -122,7 +133,8 @@ def write_mindrecord(args):
     writer.add_schema(schema)
 
     count = 0
-    for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id):
+    for sample in process_data(tokenizer, raw_data, max_prompt_length, seq_length, pad_token_id,
+                               args.dataset_type):
         count += 1
         writer.write_raw_data([sample])
     logger.info("Total number of samples: {}".format(count))
@@ -136,6 +148,8 @@ def get_args():
     get args
     """
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True,
+                        help="path to config yaml")
     parser.add_argument("--tokenizer_file", required=True,
                         help="path to tokenizer.json")
     parser.add_argument("--file_path", required=True,
@@ -149,6 +163,8 @@ def get_args():
     parser.add_argument("--seq_length", default=4096,
                         help="encoded sequence length.")
     parser.add_argument("--pad_token_id", default=None, help="pad token id.")
+    parser.add_argument("--dataset_type", default=None,
+                        help="your dataset type.")
     args_opt = parser.parse_args()
     return args_opt
 
