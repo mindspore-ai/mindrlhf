@@ -271,6 +271,7 @@ class RLConfig:
     tensorboard: bool = False
     tensorboard_dir: str = "/tmp/"
     tensorboard_queue_size: int = 10
+    enable_full_monitor: bool = False
 
     save_checkpoint_dir: str = "/tmp/"
     performance_stats: bool = False

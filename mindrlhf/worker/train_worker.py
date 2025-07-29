@@ -456,14 +456,29 @@ class TrainWorker(Worker):
                             old_per_token_logps,
                         ]
                         out = self.grpo_with_grad(*inputs)
+                        if self.grpo_config.rl_config.enable_full_monitor:
+                            ratio = float(self.grpo_model_train.grpo_model_train.get_ratio()) \
+                                / self.sft_model_config_train.parallel_config.micro_batch_num
+                            kl_loss = float(self.grpo_model_train.grpo_model_train.get_klloss())
+                            actor_loss = float(self.grpo_model_train.grpo_model_train.get_actor_loss())
+                            clipfrac = float(self.grpo_model_train.grpo_model_train.get_clipfrac()) \
+                                / self.sft_model_config_train.parallel_config.micro_batch_num
+                            logger.info(f"old_log_ps ratio of parameter: {ratio}")
+                            logger.info(f"kl_loss of parameter: {kl_loss}")
+                            logger.info(f"actor_loss of parameter: {actor_loss}")
+                            logger.info(f"clipfrac of parameter: {clipfrac}")
+
+                            self.grpo_model_train.grpo_model_train.set_klloss()
+                            self.grpo_model_train.grpo_model_train.set_actor_loss()
+                            self.grpo_model_train.grpo_model_train.set_ratio()
+                            self.grpo_model_train.grpo_model_train.set_clipfrac()
+
                     logger.info(
-                        " loss: {} | lr: {} | is overflow: {} | loss scale: {} | grad norm: {}".format(
-                            formatter(out[0]),
-                            formatter(out[3]),
-                            formatter(out[1]),
-                            formatter(out[2]),
-                            formatter(out[4])
-                        )
+                        f"loss: {formatter(out[0])} | "
+                        f"lr: {formatter(out[3])} | "
+                        f"is overflow: {formatter(out[1])} | "
+                        f"loss scale: {formatter(out[2])} | "
+                        f"grad norm: {formatter(out[4])}"
                     )
                     if self.args.model_name == "deepseek":
                         if self.topk_bias_balance_callback.update_topk_bias_flag:
@@ -471,17 +486,32 @@ class TrainWorker(Worker):
                             # pylint: disable=W0212
                             self.topk_bias_balance_callback._update_topk_bias(policy_model)
                     if self.tensor_writer:
-                        self.tensor_writer.add_scalar("loss", out[0].asnumpy(), global_step=self.global_training_step)
-                        self.tensor_writer.add_scalar("lr", out[3].asnumpy(), global_step=self.global_training_step)
                         self.tensor_writer.add_scalar(
-                            "overflow", out[1].asnumpy(), global_step=self.global_training_step
+                            "Training_loss/total_loss", out[0].asnumpy(), global_step=self.global_training_step
                         )
                         self.tensor_writer.add_scalar(
-                            "loss-scale", out[2].asnumpy(), global_step=self.global_training_step
+                            "Training_others/lr", out[3].asnumpy(), global_step=self.global_training_step
                         )
                         self.tensor_writer.add_scalar(
-                            "grad-norm", out[4].asnumpy(), global_step=self.global_training_step
+                            "Training_others/loss_scale", out[2].asnumpy(), global_step=self.global_training_step
                         )
+                        self.tensor_writer.add_scalar(
+                            "Training_others/grad_norm", out[4].asnumpy(), global_step=self.global_training_step
+                        )
+
+                        if self.grpo_config.rl_config.enable_full_monitor:
+                            self.tensor_writer.add_scalar(
+                                "Training_loss/actor_loss", actor_loss, global_step=self.global_training_step
+                            )
+                            self.tensor_writer.add_scalar(
+                                "Training_loss/kl_loss", kl_loss, global_step=self.global_training_step
+                            )
+                            self.tensor_writer.add_scalar(
+                                "Training_grpo/old_policy_ratio", ratio, global_step=self.global_training_step
+                            )
+                            self.tensor_writer.add_scalar(
+                                "Training_grpo/clipfrac", clipfrac, global_step=self.global_training_step
+                            )
                     self.global_training_step += 1
 
     def offload_optimizer(self):
