@@ -30,11 +30,12 @@ from mindformers.core.callback.callback import TopkBiasBalanceCallback
 from mindformers import LlamaConfig
 from mindformers import logger
 from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
+from mindformers.core.optim import AdamW
 
 from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 from mindrlhf.utils.adam import AdamWeightDecayOp
-from mindrlhf.utils.utils import LearningRate, FP32StateAdamWeightDecay, TimeConsumingCollector
+from mindrlhf.utils.utils import LearningRate, TimeConsumingCollector
 from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLossScaleCellGRPO
 from mindrlhf.utils.utils import (
     load_param_to_net,
@@ -345,13 +346,11 @@ class TrainWorker(Worker):
                 param_init_type=sft_model_config.param_init_type,
             )
         else:
-            optimizer = FP32StateAdamWeightDecay(
+            optimizer = AdamW(
                 group_params,
                 learning_rate=lr,
-                beta1=grpo_config.actor_config.optimizer.adam_beta1,
-                beta2=grpo_config.actor_config.optimizer.adam_beta2,
-                eps=grpo_config.actor_config.optimizer.eps,
-            )
+                betas=(grpo_config.actor_config.optimizer.adam_beta1, grpo_config.actor_config.optimizer.adam_beta2),
+                eps=grpo_config.actor_config.optimizer.eps)
 
         loss_scale_value = grpo_config.actor_config.loss_scale_value
         update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value, scale_factor=2, scale_window=1000)
@@ -491,10 +490,10 @@ class TrainWorker(Worker):
             return
         logger.info(f"before offload train {ms.hal.memory_stats()}")
         with TimeConsumingCollector("offload train optimizer"):
-            for param in self.grpo_with_grad.optimizer.moments1:
+            for param in self.grpo_with_grad.optimizer.exp_avg:
                 # pylint: disable=W0212
                 param._offload()
-            for param in self.grpo_with_grad.optimizer.moments2:
+            for param in self.grpo_with_grad.optimizer.exp_avg_sq:
                 # pylint: disable=W0212
                 param._offload()
             if self.train_pp_stage > 1:
@@ -510,10 +509,10 @@ class TrainWorker(Worker):
             return
         logger.info(f"before load train optimizer {ms.hal.memory_stats()}")
         with TimeConsumingCollector("load train optimizer"):
-            for param in self.grpo_with_grad.optimizer.moments1:
+            for param in self.grpo_with_grad.optimizer.exp_avg:
                 # pylint: disable=W0212
                 param._load()
-            for param in self.grpo_with_grad.optimizer.moments2:
+            for param in self.grpo_with_grad.optimizer.exp_avg_sq:
                 # pylint: disable=W0212
                 param._load()
             if self.train_pp_stage > 1:
