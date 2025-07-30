@@ -36,7 +36,7 @@ def parse_log_file(log_file_path):
     return virtual_memory, process_memory
 
 
-def plot_memory_usage(virtual_memory, process_memory, title="Memory Usage Over Time"):
+def plot_memory_usage(virtual_memory, process_memory, output_file, title="Memory Usage Over Time"):
     """plot_memory_usage"""
     plt.figure(figsize=(10, 6))
     plt.plot(virtual_memory, label='Virtual Memory (GB)', marker='o')
@@ -52,10 +52,11 @@ def plot_memory_usage(virtual_memory, process_memory, title="Memory Usage Over T
 
 def main():
     parser = argparse.ArgumentParser(description="Parse log files and chart memory usage")
-    parser.add_argument("--log", "-l", required=True, help="Log file path")
+    parser.add_argument("--log", type=str, required=True, help="Log file path")
+    parser.add_argument("--output_file", type=str, required=True, help="Log file path")
     args = parser.parse_args()
     virtual_memory, process_memory = parse_log_file(args.log)
-    plot_memory_usage(virtual_memory, process_memory)
+    plot_memory_usage(virtual_memory, process_memory, args.output_file)
 
 
 if __name__ == "__main__":
