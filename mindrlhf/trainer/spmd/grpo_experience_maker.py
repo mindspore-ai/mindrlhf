@@ -196,14 +196,17 @@ class GRPOExperienceMaker:
         """construct inputs for packing"""
         tmp_ids = []
         tmp_actual_seq_len = []
+        tmp_responses_mask = []
         if batch_size:
             for i in range(batch_size):
                 tmp_ids.append(packed_samples[i + idx * batch_size]["prompt_completion_ids"])
                 tmp_actual_seq_len.append(packed_samples[i + idx * batch_size]["actual_sequence_length"])
+                tmp_responses_mask.append(packed_samples[i + idx * batch_size]["responses_mask"])
 
         tmp_ids = np.array(tmp_ids)
         tmp_actual_seq_len = np.array(tmp_actual_seq_len)
-        return tmp_ids, tmp_actual_seq_len
+        tmp_responses_mask = np.array(tmp_responses_mask)
+        return tmp_ids, tmp_actual_seq_len, tmp_responses_mask
 
     def create_pack_group(self, data_dict_list, pack_num):
         """create pack group"""
@@ -308,7 +311,13 @@ class GRPOExperienceMaker:
         all_old_per_token_logps = np.zeros(
             (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
         )
-
+        if self.grpo_config.rl_config.calculate_entropy:
+            all_entropy = np.zeros(
+                (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
+            )
+            all_responses_mask = np.zeros(
+                (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
+            )
         self.old_policy.load()
         logger.info("old_policy load")
 
@@ -318,7 +327,7 @@ class GRPOExperienceMaker:
         logger.info(f"old policy model total steps: {step_num}")
         with TimeConsumingCollector(f"old_policy model all steps {step_num}"):
             for idx in range(step_num):
-                prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                prompt_completion_ids, actual_sequence_length, responses_mask = self._construct_inputs_packing(
                     packed_samples, batch_size=batch_size, idx=idx
                 )
 
@@ -328,26 +337,42 @@ class GRPOExperienceMaker:
                     "constant",
                     constant_values=self.grpo_config.generate_config.sampling_config.pad_token_id,
                 )
+                responses_mask = np.pad(
+                    responses_mask,
+                    ((0, 0), (0, 1)),
+                    "constant",
+                    constant_values=0,
+                )
+
                 samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
                 input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
                 actual_sequence_length = Tensor(actual_sequence_length, dtype=ms.int32)
+                responses_mask = Tensor(responses_mask[:, 1:], dtype=ms.int32)
 
                 # Step 2: run old policy model.
                 logger.info("old policy model step {} start".format(idx))
                 with TimeConsumingCollector(f"old policy model step {idx}"):
-                    old_per_token_logps = self.old_policy.compute_old_log_prob(
+                    generation_entropy, old_per_token_logps = self.old_policy.compute_old_log_prob(
                         input_prompt_ids, samples=samples_tensor, actual_sequence_length=actual_sequence_length
                     )
                     old_per_token_logps = old_per_token_logps.asnumpy().astype(np.float32)
+                    generation_entropy = generation_entropy.asnumpy().astype(np.float32)
                 logger.info("old policy model step {} end".format(idx))
 
                 start_index = idx * batch_size
                 end_index = (idx + 1) * batch_size
                 all_old_per_token_logps[start_index:end_index, :] = old_per_token_logps
-
+                if self.grpo_config.rl_config.calculate_entropy:
+                    all_entropy[start_index: end_index, :] = generation_entropy
+                    all_responses_mask[start_index: end_index, :] = responses_mask
+        if self.grpo_config.rl_config.calculate_entropy:
+            generation_entropy_mean = np.sum(
+                all_entropy * all_responses_mask) / (np.sum(all_responses_mask) + 1e-8)
+        else:
+            generation_entropy_mean = None
         self.old_policy.offload()
         logger.info("old_policy offload")
-        return all_old_per_token_logps
+        return generation_entropy_mean, all_old_per_token_logps
 
     def pack_grpo_data(self, prompt_completion_ids, prompts_mask, responses_mask, advantages):
         """pack grpo data"""
@@ -631,7 +656,7 @@ class GRPOExperienceMaker:
         with TimeConsumingCollector(f"reference model all steps {ref_step_num}"):
             for idx in range(ref_step_num):
                 # responses_mask will be updated before ref model infer.
-                prompt_completion_ids, actual_sequence_length = self._construct_inputs_packing(
+                prompt_completion_ids, actual_sequence_length, _ = self._construct_inputs_packing(
                     packed_samples, batch_size=total_ref_batch_size, idx=idx
                 )
 
@@ -663,10 +688,12 @@ class GRPOExperienceMaker:
         grpo_rl_elements = []
         pad_token_id = self.grpo_config.generate_config.sampling_config.pad_token_id
         num_data_packed = len(packed_samples)
+
         if all_old_per_token_logps is None:
             all_old_per_token_logps = np.zeros(
                 (num_data_packed, self.grpo_config.rl_config.seq_length), dtype=np.float32
             )
+
         for i in range(num_data_packed):
             prompt_completion_ids_temp = np.pad(
                 packed_samples[i]["prompt_completion_ids"], ((0, 1),), "constant", constant_values=pad_token_id
@@ -750,9 +777,19 @@ class GRPOExperienceMaker:
         all_old_per_token_logps = None
         if self.grpo_config.rl_config.enable_oldpolicy:
             old_log_prob_profiler = profiler_start(
-                self.grpo_config.profiler_config, role="actor_old_log_prob", profiler_iteration=self.profiler_iteration
+                self.grpo_config.profiler_config, role="actor_old_log_prob",
+                profiler_iteration=self.profiler_iteration
             )
-            all_old_per_token_logps = self._generate_old_logps(packed_samples)
+            generation_entropy, all_old_per_token_logps = self._generate_old_logps(packed_samples)
+            if self.grpo_config.rl_config.calculate_entropy:
+                logger.info(f"generation_entropy is {generation_entropy}")
+                if self.tensor_writer:
+                    self.tensor_writer.add_scalar(
+                        "Training_grpo/generation-entropy",
+                        generation_entropy,
+                        global_step=self.make_exp_step
+                    )
+
             profiler_step(old_log_prob_profiler)
 
         self.add_experience(packed_samples, all_ref_per_token_logps, all_old_per_token_logps)

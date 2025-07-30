@@ -79,6 +79,13 @@ class CausalLMHybrid(BaseModel):
         self.actor_loss = Parameter(Tensor(0, mstype.float32), name="actor_loss", requires_grad=False)
         self.clipfrac = Parameter(Tensor(0, mstype.float32), name="clipfrac", requires_grad=False)
 
+        self.softmax = P.Softmax(axis=-1).shard(((dp * mp * cp, 1),))
+        self.reducemax = P.ReduceMax(keep_dims=True).shard(((dp * mp * cp, 1),))
+        self.reducesum = P.ReduceSum(keep_dims=False).shard(((dp * mp * cp, 1),))
+        self.exp = P.Exp().shard(((dp * mp * cp, 1),))
+        self.log = P.Log().shard(((dp * mp * cp,),))
+        self.mul = P.Mul().shard(((dp * mp * cp,), (dp * mp * cp,)))
+
     def offset_actual_sequence_length(self, data, offset):
         """add offset to data"""
         bs = data.shape[0] // self.dp
@@ -117,6 +124,24 @@ class CausalLMHybrid(BaseModel):
         logprobs = self.reshape(logprobs, (bs, seq_len))
         return logprobs  # [bs, seq_len-1]
 
+    def entropy_from_logits(self, logits):
+        """Calculate entropy from logits"""
+        pb = self.softmax(logits)
+        mul_res = self.mul(pb, logits)
+        sum_res = self.reducesum(mul_res, axis=-1)
+        entropy = self.logsumexp(logits, dim=-1) - sum_res
+        return entropy
+
+    def logsumexp(self, x, dim, keep_dims=False):
+        """Calculate log_sum_exp"""
+        x_max = self.reducemax(x, dim)
+        x_exp = self.exp(x - x_max)
+        x_sumexp = self.reducesum(x_exp, axis=-1)
+        x_logsumexp = self.log(x_sumexp)
+        if not keep_dims:
+            x_max = self.squeeze_no_shard_1(x_max)
+        return x_logsumexp + x_max
+
     def construct(
         self,
         # inputs for the llm
@@ -132,6 +157,7 @@ class CausalLMHybrid(BaseModel):
         actual_sequence_length=None,
         return_full_logit=False,
         is_ref=False,
+        calculate_entropy=False
     ):
         """
         construct function for CausalLMHybrid
@@ -190,6 +216,10 @@ class CausalLMHybrid(BaseModel):
             if is_ref:
                 return logits
             logprobs_labels = self.logprobs_of_labels(logits, samples)
+            if calculate_entropy:
+                entropy = self.entropy_from_logits(logits)
+                entropy = entropy.reshape(batch_size, seq_length)
+                return entropy, logprobs_labels
             return logprobs_labels
         # used in generate
         if not return_full_logit:

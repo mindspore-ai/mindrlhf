@@ -38,7 +38,10 @@ from mindrlhf.tools.host_monitor import ResourceMonitor
 from mindrlhf.worker.infer_worker import InferWorker
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
-from mindrlhf.worker.old_policy_worker import get_old_policy_worker, set_enable_old_policy
+from mindrlhf.worker.old_policy_worker import (
+    get_old_policy_worker,
+    set_enable_old_policy,
+)
 from mindrlhf.worker.transform_worker import TransformWorker
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
