@@ -63,16 +63,16 @@ pip install -e .
 |--------|------------------------------------------------------------|
 | 固件&驱动  | 24.1.RC3.3                                                 |
 | CANN   | 8.1                                                        |
-| Python | 3.10                                                       |
+| Python | 3.10 or 3.11.9                                             |
 | MindSpore | master, commit id：8f35b18d992cacea735567ab011e91f83a074731 |
-| MindFormers | dev, commit id：6a52b43    |
+| MindFormers | dev, commit id：6a52b43                                     |
 | MindRLHF | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
 | vLLM   | master, commit id：8f35b18d992cacea735567ab011e91f83a074731 |
-| vLLM_MindSpore | dev, commit id：6a52b43    |
+| vLLM_MindSpore | dev, commit id：6a52b43                                     |
 | msadapter      | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
 | mindspore_gs      | master, commit id：0cd0874559d5658e5987ba11718a920384691c59 |
 
-用户可直接执行bash install.sh安装相关依赖，如果安装失败，可参考[安装指导](docs/install)。其中MindRLHF和MindFormers需要通过指定PYTHONPATH使用。
+用户可直接执行bash install.sh安装相关依赖，如果安装失败，可参考[安装指导](./docs/install.md)。其中MindRLHF和MindFormers需要通过指定PYTHONPATH使用。
 
 ### 镜像安装
 
