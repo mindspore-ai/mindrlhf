@@ -3,11 +3,11 @@
 script_dir=$(cd "$(dirname $0)"; pwd)
 yaml_file="$script_dir/.jenkins/test/config/dependent_packages.yaml"
 work_dir="install_depend_pkgs"
-
 if [ ! -f "$yaml_file" ]; then
-    echo "$yaml_file does not exist."
-    exit 1
+echo "========= Installing PyYAML ========="
+pip install pyyaml || { echo "Failed to install PyYAML"; exit 1; }
 fi
+
 
 if [ ! -d "$work_dir" ]; then
     mkdir -p "$work_dir"
@@ -37,13 +37,12 @@ except Exception as e:
 
 
 python_v="cp$(python3 --version 2>&1 | grep -oP 'Python \K\d+\.\d+' | tr -d .)"
-echo "========= Installing vLLM and ray ========="
+echo "========= Installing vLLM ========="
 vllm_path=$(get_yaml_value "$yaml_file" "vllm")
 vllm_name="vllm-0.8.4.dev0+g296c657.d20250514.empty-py3-none-any.whl"
 vllm_pkg="${vllm_path}any/${vllm_name}"
 wget "$vllm_pkg" --no-check-certificate || { echo "Failed to download vllm"; exit 1; }
 pip uninstall vllm -y && pip install "$vllm_name" || { echo "Failed to install vllm"; exit 1; }
-pip install ray
 pip uninstall torch torch-npu torchvision torchaudio -y
 
 
@@ -70,25 +69,32 @@ pip uninstall mindspore_gs -y && pip install "$mindspore_gs_name" || { echo "Fai
 
 echo "========= Installing mindspore ========="
 mindspore_path=$(get_yaml_value "$yaml_file" "mindspore")
-mindspore_name="mindspore-2.7.0-${python_v}-${python_v}-linux_$(arch).whl"
+mindspore_name="mindspore-2.7.0rc1-${python_v}-${python_v}-linux_$(arch).whl"
 mindspore_pkg="${mindspore_path}unified/$(arch)/${mindspore_name}"
 wget "$mindspore_pkg" --no-check-certificate || { echo "Failed to download mindspore"; exit 1; }
 pip uninstall mindspore -y && pip install "$mindspore_name" || { echo "Failed to install mindspore"; exit 1; }
 
 echo "========= Installing mindformers ========="
-mf_dir=mindformers-dev
+mf_dir=mindformers
 if [ ! -d "$mf_dir" ]; then
-    git clone https://gitee.com/mindspore/mindformers.git -b dev "$mf_dir"
+    git clone https://gitee.com/mindspore/mindformers.git -b r1.6.0 "$mf_dir"
     if [ ! -d "$mf_dir" ]; then
         echo "Failed to git clone mindformers!"
         exit 1
     fi
     cd $mf_dir
-    git reset --hard 6a52b43
+    git reset --hard 051d6
     pip uninstall mindformers -y
     bash build.sh
 else
     echo "The $mf_dir folder already exists and will not be re-downloaded."
 fi
 
+requirements_file="$script_dir/requirements.txt"
+echo "========= Installing requirements from $requirements_file ========="
+if [ -f "$requirements_file" ]; then
+    pip install -r "$requirements_file" || { echo "Failed to install requirements.txt"; exit 1; }
+else
+    echo "Warning: $requirements_file not found. Skipping."
+fi
 echo "All dependencies installed successfully!"
