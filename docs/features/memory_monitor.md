@@ -116,5 +116,5 @@ monitor.stop()
 如果需要绘制内存变化图，可通过一下命令：
 
 ```shell
-python /mindrlhf/tools/plot_host_memory.py --log /path/to/worker_0.log
+python /mindrlhf/tools/plot_host_memory.py --log /path/to/worker_0.log --output_file /path/to/host_memory.png
 ```
