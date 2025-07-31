@@ -227,6 +227,7 @@ class RefWorker(Worker):
             meta_path = os.path.join(src_ckpt_file, "meta.json")
             if not os.path.exists(meta_path):
                 raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+            os.environ["LOCAL_DEFAULT_PATH"] = self.ref_ckpt_path
             resume_ckpt = get_resume_checkpoint_by_meta(self.ref_ckpt_path, formats)
             ckpt_path = os.path.join(src_ckpt_file, resume_ckpt)
             param_dict = ms.load_checkpoint(ckpt_path, format=formats)
