@@ -234,6 +234,7 @@ class TrainWorker(Worker):
             meta_path = os.path.join(src_ckpt_file, "meta.json")
             if not os.path.exists(meta_path):
                 raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+            os.environ["LOCAL_DEFAULT_PATH"] = self.sft_ckpt_path_train
             resume_ckpt = get_resume_checkpoint_by_meta(self.sft_ckpt_path_train, formats)
             ckpt_path = os.path.join(src_ckpt_file, resume_ckpt)
 
@@ -254,6 +255,7 @@ class TrainWorker(Worker):
                 meta_path = os.path.join(src_opt_ckpt_file, "meta.json")
                 if not os.path.exists(meta_path):
                     raise ValueError(f"Could not find meta.json in directory {src_ckpt_file} {meta_path}")
+                os.environ["LOCAL_DEFAULT_PATH"] = optimizer_dir
                 resume_ckpt = get_resume_checkpoint_by_meta(optimizer_dir, formats)
                 ckpt_path = os.path.join(src_opt_ckpt_file, resume_ckpt)
                 param_dict_opt = ms.load_checkpoint(ckpt_path, format=formats)
