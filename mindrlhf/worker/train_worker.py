@@ -182,7 +182,7 @@ class TrainWorker(Worker):
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": True
+                    "only_trainable_params": False
                 },
                 pipeline_stages=self.train_pp_stage,
             )
@@ -203,7 +203,7 @@ class TrainWorker(Worker):
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": True
+                    "only_trainable_params": False
                 }
             )
 
