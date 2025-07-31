@@ -129,8 +129,10 @@ class RefWorker(Worker):
         stage_name = "infer"
         strategy_path = self.grpo_config.rl_config.save_strategy_dir
         context.set_auto_parallel_context(
-            strategy_ckpt_config={"save_file": f"{strategy_path}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt",
-                                  "only_trainable_params": True}
+            strategy_ckpt_config={
+                "save_file": f"{strategy_path}/{stage_name}_ref_strategy/strategy_{get_rank()}.ckpt",
+                "only_trainable_params": False
+            }
         )
         # To avoid mindspore compiler's unpacking bug and prevent duplicate compilation,
         # use positional arguments instead of keyword arguments
