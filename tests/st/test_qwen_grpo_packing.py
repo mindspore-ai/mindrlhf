@@ -23,6 +23,7 @@ from mindspore import Tensor
 
 no_patch_tensor_shape = Tensor.shape
 import pytest
+from omegaconf import OmegaConf
 
 WORKDIR = os.path.dirname(os.path.abspath(__file__))
 print(f"WORKDIR is {WORKDIR}")
@@ -192,10 +193,6 @@ class GRPOTrainerArgs:
     """Fake GRPOTrainerArgs."""
 
     config: str = os.path.join(WORKDIR, "qwen2_5/grpo_config_st.yaml")
-    model_name: str = "qwen"
-    dataset_file: str = ""
-    resume_training: bool = False
-    tokenizer_type: str = "qwen"
     tokenizer_dir: str = os.path.join(WORKDIR, "qwen2_5_vllm")
     actor_checkpoint_path: str = ""
     ref_checkpoint_path: str = ""
@@ -203,7 +200,6 @@ class GRPOTrainerArgs:
     verifier_function: str = "accuracy_reward,format_reward"
     verifier_weight: str = "1.0,1.0"
     tensorboard: str = None
-    save_checkpoint_dir: str = None
 
 
 class TestGRPOTrainer:
@@ -285,14 +281,14 @@ class TestGRPOTrainer:
         mock_rename_sf_weights,
     ):
         """A unit test example for GRPO Trainer."""
-        args = self.qwen2_5_args
-
+        config_from_yaml = OmegaConf.load("qwen2_5/grpo_config_st.yaml")
+        config_from_yaml.rl_config.tokenizer_dir = os.path.join(WORKDIR, "qwen2_5_vllm")
         mock_ref_worker.return_value.get_ref_dp.return_value = self.dp
         mock_infer_worker.return_value.get_infer_dp.return_value = self.dp
         mock_get_dp_rank.return_value = 0
         mock_train_get_rank.return_value = 0
         mock_train_grpo_model.return_value = ms.nn.Cell()
-        grpo_trainer = GRPOTrainer(no_patch_tensor_shape=no_patch_tensor_shape, args=args)
+        grpo_trainer = GRPOTrainer(config_from_yaml=config_from_yaml, no_patch_tensor_shape=no_patch_tensor_shape)
         grpo_trainer.grpo_config.rl_config.save_prompt_completions_data = False
         grpo_trainer.grpo_config.rl_config.pack_num = self.pack_num
         grpo_trainer.grpo_config.rl_config.seq_length = self.seq_length

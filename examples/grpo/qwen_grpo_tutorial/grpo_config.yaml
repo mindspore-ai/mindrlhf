@@ -1,169 +1,353 @@
 # RL config
 rl_config:
-  model_name: 'qwen2.5'
+  # model_name is used to select model.
+  model_name: "qwen2.5"
+  # Global random seed.
+  seed: 1
+  # Enable deterministic compute, options "ON" or "OFF"
   deterministic: "OFF"
-  align_type: 'rlhf_stages'
-  dataset_file: "/path/train.mindrecord"
-  tokenizer_type: 'qwen'
-  tokenizer_dir: "/path/"
-  epochs: 10
+  # FIXME: reserved?
+  align_type: "rlhf_stages"
+  # Dataset file path.
+  dataset_file: ""
+  # tokenizer_type is used to select tokenizer, it's same to model_name by default.
+  tokenizer_type: "qwen2.5"
+  # Tokenizer path.
+  tokenizer_dir: ""
+
+  # Epoch number.
+  epochs: 1
+  # Batch size number.
   batch_size: 1
-  sink_size: 1
+  # Sequence length for train and inference.
   seq_length: 8192
+  # Enable parallel training and inference.
   use_parallel: True
+  # Checkpoints format. Options: "hf_safetensors", "ms_safetensors".
   load_ckpt_format: "hf_safetensors"
+  # MindSpore parallel mode. Options: "semi_auto_parallel", "auto_parallel".
   parallel_mode: "semi_auto_parallel"
-  enable_compile_cache: False
-  save_strategy_dir: "./strategy/"  # need to be set
-  save_data_file: "/tmp/grpo.mindrecord"
-
-  packing: True
-  pack_num: 1
-
-  save_prompt_completions_data: True
-  save_prompt_completions_interval: 1
-  save_prompt_completions_dir: "/tmp/"
-
-  reshard_mem_opt_level: 0
-  save_ckpt_interval: 5
+  # Distributed strategy saved path.
+  save_strategy_dir: "./strategy"
+  # Save checkpoints interval.
+  save_ckpt_interval: 500
+  # Max number of saved checkpoints.
   save_max_ckpt_num: 5
-  save_ckpt_format: "safetensors" # format support safetensors/ckpt
-  enable_reshard_optimizer: False
+  # Resume training.
+  resume_training: False
 
-  tensorboard: False
-  tensorboard_dir: '/tmp/'
-  tensorboard_queue_size: 10
-
-  performance_stats: False
+  # Pack number for pack training.
+  pack_num: 1
+  # Micro batch interleaved number for pipeline parallel.
   micro_batch_interleaved: 1
 
-  beta: 0.01 # KL coefficient
+  # KL coefficient.
+  beta: 0.0
+  # Number of generations.
   num_generations: 8
-  num_rollouts: 4
+  # Number of rollouts.
+  num_rollouts: 1
+  # TODO: ?
   chunk_size: 1
-  gen_experience_kwargs: False
-  # clip higher
-  num_iterations: 1
-  epsilon_low: 0.2
-  epsilon_high: 0.2
+
+  # Enable old policy model.
   enable_oldpolicy: True
-  seed: 0
+
+  # Clip higher related setting.
+  # Number of iterations.
+  num_iterations: 1
+  # Low epsilon.
+  epsilon_low: 0.2
+  # High epsilon.
+  epsilon_high: 0.2
+
+  # Reshard memory optimization level.
+  # 0: do not optimize mem during resharding.
+  # 1: offload all src and dst param during resharding.
+  reshard_mem_opt_level: 0
+  # Reshard mode.
+  # 0: run reshard in PYNATIVE mode.
+  # 1: run reshard in GRAPH mode.
+  reshard_mode: 0
+  # Enable reshard optimizer.
+  enable_reshard_optimizer: False
+
+  # Enable MindSpore compile cache. Only used by inference, move it to Context?
+  enable_compile_cache: False
+  # Compile cache saved path.
+  compile_cache_path: "./compile_cache"
+
+  # Save internal data to MindRecord path(feed in train data).
+  save_data_file: ""
+
+  # Enable save prompt completions data to json(raw train data).
+  save_prompt_completions_data: False
+  # Save prompt completions data interval.
+  save_prompt_completions_interval: 1
+  # Save prompt completions data path.
+  save_prompt_completions_dir: ""
+
+  # Enable clip frac, KL loss, actor loss monitoring.
+  enable_full_monitor: False
+  # Whether calculate entropy.
+  calculate_entropy: False
+
+  # Enable performance collector.
+  performance_stats: False
+
+  # Enable tensorboard.
+  tensorboard: False
+  # Tensorboard dir.
+  tensorboard_dir: ""
+  # Tensorboard queue size.
+  tensorboard_queue_size: 10
 
 
+# Host memory monitor setting.
 monitor_config:
+  # Monitor sampling interval.
   host_monitor_interval: -1.0
+  # Monitor sampling steps.
   host_monitor_steps: [ ]
+  # Enable host memory protection.
   host_memory_protection: False
+  # The process will be stopped when host memory usage reach
+  # 'host_max_memory_threshold' when 'host_memory_protection' is True.
   host_max_memory_threshold: 0.95
 
-# actor model config
+# Actor model config
 actor_config:
+  # Actor model path.
   load: ""
-  save: "/tmp/"
-  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml"  # need to be set
-  enable_alltoall: False
+  # Checkpoints saved path. Enable checkpoints saving when it's not empty.
+  save: ""
+  # Actor model config.
+  model_config: ""
+  # FIXME: what means?
   offset: 0
-  use_eod_attn_mask_compression: True
+  # Enable use EOD attention mask compression.
+  use_eod_attn_mask_compression: False
+  # Loss scale.
   loss_scale_value: 1
+  # Enable actor model parallel optimizer.
+  enable_parallel_optimizer: False
+  # Actor model parallel config.
   parallel_config:
-    data_parallel: 1  # need to be set
-    model_parallel: 4  # need to be set
-    pipeline_stage: 2  # need to be set
+    # Data parallel.
+    data_parallel: 1
+    # Model parallel.
+    model_parallel: 4
+    # Pipeline parallel.
+    pipeline_stage: 2
+    # Expert parallel.
+    expert_parallel: 1
+    # Enable sequence parallel.
     use_seq_parallel: False
+    # Micro batch number.
     micro_batch_num: 2
-    vocab_emb_dp: False
+    # Enable vocab embedding shard on dp dimension.
+    vocab_emb_dp: True
+    # Context parallel(Long sequence parallel).
     context_parallel: 1
-  recompute_config:
-    recompute: True
-    select_recompute: False
-  enable_parallel_optimizer: True
 
+  # Actor model recompute config.
+  recompute_config:
+    # Enable recompute.
+    recompute: False
+    # Enable select recompute.
+    select_recompute: False
+    # Enable communication select recompute.
+    select_comm_recompute: False
+    # Enable optimizer parallel communication recompute.
+    parallel_optimizer_comm_recompute: False
+    # Enable model parallel communication recompute.
+    mp_comm_recompute: True
+    # Enable slice activation recompute.
+    recompute_slice_activation: False
+
+  # Actor model optimizer config.
   optimizer:
+    # Optimizer.
     type: 'adamw'
+    # Adam beta1.
     adam_beta1: 0.9
+    # Adam beta2.
     adam_beta2: 0.95
+    # Eps.
     eps: 1.0e-8
+    # Weight decay.
     weight_decay: 0.01
+    # Optimizer offload.
     opt_offload: False
 
+  # Actor model learning rate scheduler.
   lr_schedule:
-    lr_decay_style: 'cosine'
+    # LR decay style.
+    lr_decay_style: "cosine"
+    # LR.
     lr: 5.0e-7
+    # Min LR.
     min_lr: 1.0e-10
+    # Warmup steps.
     warmup_step: 10
+    # Decay steps.
     decay_steps: 200000
 
+  # FIXME: reserved?
+  enable_alltoall: False
 
 # reference model config
 ref_config:
-  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml"  # need to be set
+  # Ref model config.
+  model_config: ""
+  # Ref model path.
   load: ""
-  ref_model_batch_size: 2
+  # Ref model batch size.
+  ref_model_batch_size: 1
+  # Ref model offset.
   offset: 0
-  use_eod_attn_mask_compression: True
+  # Enable use EOD attention mask compression.
+  use_eod_attn_mask_compression: False
+
   # Whether to synchronize the reference model with the actor model every `ref_model_sync_steps`"
   sync_ref_model: False
+  # Ref model sync steps.
   ref_model_sync_steps: 50
 
   parallel_config:
-    data_parallel: 2  # need to be set
-    model_parallel: 4  # need to be set
-    pipeline_stage: 1  # need to be set
+    # Data parallel.
+    data_parallel: 2
+    # Model parallel.
+    model_parallel: 4
+    # Pipeline parallel.
+    pipeline_stage: 1
+    # Expert parallel.
+    expert_parallel: 1
+    # Enable sequence parallel.
+    use_seq_parallel: False
+    # Micro batch number.
+    micro_batch_num: 1
+    # Enable vocab embedding shard on dp dimension.
+    vocab_emb_dp: True
+    # Context parallel(Long sequence parallel).
     context_parallel: 1
+
+  # Ref model recompute config.
+  recompute_config:
+    # Enable recompute.
+    recompute: False
+    # Enable select recompute.
+    select_recompute: False
+    # Enable communication select recompute.
+    select_comm_recompute: False
+    # Enable optimizer parallel communication recompute.
+    parallel_optimizer_comm_recompute: False
+    # Enable model parallel communication recompute.
+    mp_comm_recompute: True
+    # Enable slice activation recompute.
+    recompute_slice_activation: False
 
 
 # reward config
 reward_config:
-  verifier_function: ["accuracy_reward", "format_reward"]
+  verifier_function: ["qwen_accuracy_reward", "format_reward"]
   verifier_weight: [1.0, 1.0]
 
 
 # generate config
 generate_config:
-  model_config: "./model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml"  # need to be set
+  # Model config.
+  model_config: ""
+  # Model path.
   load: ""
-  infer_model_batch_size: 2
+  # Inference model batch size.
+  infer_model_batch_size: 1
+  # Offset.
+  offset: 0
+  # Enable use EOD attention mask compression.
+  use_eod_attn_mask_compression: False
+  # Inference mode.
+  # 0: MindFormers.
+  # 1: VLLM.
+  # 2: DEBUG mode. Init model with vllm, but generate with mindformers
+  use_vllm: 1
 
   parallel_config:
-    data_parallel: 2  # need to be set
-    model_parallel: 4  # need to be set
-    pipeline_stage: 1  # need to be set
+    # Data parallel.
+    data_parallel: 2
+    # Model parallel.
+    model_parallel: 4
+    # Pipeline parallel.
+    pipeline_stage: 1
+    # Expert parallel.
+    expert_parallel: 1
+    # Enable sequence parallel.
+    use_seq_parallel: False
+    # Micro batch number.
+    micro_batch_num: 1
+    # Enable vocab embedding shard on dp dimension.
+    vocab_emb_dp: True
+    # Context parallel(Long sequence parallel).
     context_parallel: 1
 
-  use_vllm: 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode; init model with vllm, but generate with mindformers
-  hf_config_path: "./config.json"   # vllm config path
+  # vLLM setting.
   block_size: 16
-  max_model_len: 32768
-  max_num_batched_tokens: 32768
+  max_model_len: 25536
+  max_num_batched_tokens: 25536
   max_num_seqs: 1024
   max_prompt_length: 2048
   num_scheduler_steps: 32
-  gpu_memory_utilization: 0.5
+  gpu_memory_utilization: 0.8
+  trust_remote_code: True
 
+  # vLLM post-process setting.
   sampling_config:
-    max_tokens: 512  # max_decode_length
-    min_tokens: 2  # min_decode_length
-    temperature: 0.8
-    repetition_penalty: 1.05
-    top_p: 0.8
-    top_k: 20
+    # BOS token id.
     bos_token_id: 151643
-    eos_token_id: [151645, 151643]
+    # Pad token id.
     pad_token_id: 151643
+    # EOS token id.
+    eos_token_id: [151645, 151643]
+    # Max decode length.
+    max_tokens: 512
+    # Min decode length.
+    min_tokens: 2
+    # Temperature.
+    temperature: 1.0
+    # Repetition penalty.
+    repetition_penalty: 1.0
+    # Top P.
+    top_p: 1.0
+    # Top K.
+    top_k: -1
+    # Detokenize.
     detokenize: False
+    # Log probs.
+    logprobs: 1
+    # Min p.
+    min_p: 0.01
 
 
 # context
 context:
-  mode: 0 # 0--Graph Mode; 1--Pynative Mode
+  # MindSpore run mode.
+  # 0: Graph Mode.
+  # 1: Pynative Mode.
+  mode: 0
+  # Run device.
   device_target: "Ascend"
+  # Max nested cells depth.
   max_call_depth: 10000
-  max_device_memory: "58GB"
+  # Max device memory.
+  max_device_memory: "55GB"
+  # Save graphs.
   save_graphs: False
-  save_graphs_path: "./graph/"
-  device_id: 0
+  # Save graphs path.
+  save_graphs_path: "./graph"
+  # JIT config.
   jit_config:
     jit_level: "O0"
+  # Device memory optimize level.
   memory_optimize_level: "O0"
   ascend_config:
     precision_mode: "must_keep_origin_dtype"

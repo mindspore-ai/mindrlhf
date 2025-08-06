@@ -13,9 +13,10 @@
 # limitations under the License
 # ============================================================================
 """GRPO model"""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-import yaml
+
+from omegaconf import DictConfig, OmegaConf
 
 
 class VllmMode(Enum):
@@ -24,61 +25,71 @@ class VllmMode(Enum):
     DEBUG = 2  # DEBUG mode: init model with vllm, but generate with mindformers
 
 
+def _gen_default_verifier_weight():
+    """Generate default verifier weight."""
+    return [1.0, 1.0]
+
+
+def _gen_default_verifier_func():
+    """Generate default verifier weight."""
+    return ["qwen_accuracy_reward", "format_reward"]
+
+
 @dataclass
 class ParallelConfig:
     """parallel config"""
 
+    # Data parallel.
     data_parallel: int = 1
+    # Model parallel.
     model_parallel: int = 4
+    # Pipeline parallel.
     pipeline_stage: int = 2
+    # Expert parallel.
     expert_parallel: int = 1
-    use_seq_parallel: bool = True
-    micro_batch_num: int = 4
-    vocab_emb_dp: bool = False
+    # Enable sequence parallel.
+    use_seq_parallel: bool = False
+    # Micro batch number.
+    micro_batch_num: int = 2
+    # Enable vocab embedding shard on dp dimension.
+    vocab_emb_dp: bool = True
+    # Context parallel(Long sequence parallel).
     context_parallel: int = 1
-
-    param_dict = {
-        "data_parallel": data_parallel,
-        "model_parallel": model_parallel,
-        "pipeline_stage": pipeline_stage,
-        "expert_parallel": expert_parallel,
-        "use_seq_parallel": use_seq_parallel,
-        "micro_batch_num": micro_batch_num,
-        "vocab_emb_dp": vocab_emb_dp,
-        "context_parallel": context_parallel,
-    }
 
 
 @dataclass
 class RecomputeConfig:
     """recompute config"""
 
+    # Enable recompute.
     recompute: bool = False
+    # Enable select recompute.
     select_recompute: bool = False
+    # Enable communication select recompute.
     select_comm_recompute: bool = False
+    # Enable optimizer parallel communication recompute.
     parallel_optimizer_comm_recompute: bool = False
+    # Enable model parallel communication recompute.
     mp_comm_recompute: bool = True
+    # Enable slice activation recompute.
     recompute_slice_activation: bool = False
-
-    param_dict = {
-        "recompute": recompute,
-        "select_recompute": select_recompute,
-        "select_comm_recompute": select_comm_recompute,
-        "parallel_optimizer_comm_recompute": parallel_optimizer_comm_recompute,
-        "mp_comm_recompute": mp_comm_recompute,
-        "recompute_slice_activation": recompute_slice_activation,
-    }
 
 
 @dataclass
 class Optimizer:
     """optimizer"""
 
+    # Optimizer.
     type: str = "adamw"
+    # Adam beta1.
     adam_beta1: float = 0.9
+    # Adam beta2.
     adam_beta2: float = 0.95
+    # Eps.
     eps: float = 1.0e-8
+    # Weight decay.
     weight_decay: float = 0.01
+    # Optimizer offload.
     opt_offload: bool = False
 
 
@@ -86,78 +97,137 @@ class Optimizer:
 class LRSchedule:
     """lr schedule"""
 
-    lr: float = 5.0e-7
-    min_lr: float = 1.0e-10
-    warmup_step: int = 10
-    decay_steps: int = 200000
+    # LR decay style.
     lr_decay_style: str = "cosine"
+    # LR.
+    lr: float = 5.0e-7
+    # Min LR.
+    min_lr: float = 1.0e-10
+    # Warmup steps.
+    warmup_step: int = 10
+    # Decay steps.
+    decay_steps: int = 200000
 
 
 @dataclass
 class ActorConfig:
-    """actor model config"""
+    """Actor model config."""
 
-    load: str = "/path/"
-    save: str = "/tmp/"
-    model_config: str = "/path/finetune.yaml"
-    parallel_config: ParallelConfig = ParallelConfig
-    recompute_config: RecomputeConfig = RecomputeConfig
+    # Actor model path.
+    load: str = ""
+    # Checkpoints saved path. Enable checkpoints saving when it's not empty.
+    save: str = ""
+    # Actor model config.
+    model_config: str = ""
+    # FIXME: what means?
     offset: int = 0
-    enable_parallel_optimizer: bool = True
-    enable_alltoall: bool = False
-    use_eod_attn_mask_compression: bool = True
+    # Enable use EOD attention mask compression.
+    use_eod_attn_mask_compression: bool = False
+    # Loss scale.
     loss_scale_value: int = 1
-    optimizer: Optimizer = Optimizer
-    lr_schedule: LRSchedule = LRSchedule
+    # Enable actor model parallel optimizer.
+    enable_parallel_optimizer: bool = False
+    # Actor model parallel config.
+    parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
+    # Actor model recompute config.
+    recompute_config: RecomputeConfig = field(default_factory=RecomputeConfig)
+    # Actor model optimizer config.
+    optimizer: Optimizer = field(default_factory=Optimizer)
+    # Actor model learning rate scheduler.
+    lr_schedule: LRSchedule = field(default_factory=LRSchedule)
+    # moe_config: DictConfig = field(default_factory=OmegaConf.create)
+    enable_alltoall: bool = False
+    # Built-in attr. Non-public.
+    reconstructed_model_config: DictConfig = field(default_factory=OmegaConf.create)
 
 
 @dataclass
 class RefConfig:
     """reference model config"""
 
-    model_config: str = "/path/finetune.yaml"
-    load: str = "/path/"
-    ref_model_batch_size: int = 2
+    # Ref model config.
+    model_config: str = ""
+    # Ref model path.
+    load: str = ""
+    # Ref model batch size.
+    ref_model_batch_size: int = 1
+    # Ref model offset.
+    offset: int = 0
+    # Enable use EOD attention mask compression.
+    use_eod_attn_mask_compression: bool = False
+
     # Whether to synchronize the reference model with the policy model every `ref_model_sync_steps`
     sync_ref_model: bool = False
+    # Ref model sync steps.
     ref_model_sync_steps: int = 50
-    parallel_config: ParallelConfig = ParallelConfig
-    recompute_config: RecomputeConfig = RecomputeConfig
-    offset: int = 0
-    use_eod_attn_mask_compression: bool = True
+
+    # Ref model parallel config.
+    parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
+    # Ref model recompute config.
+    recompute_config: RecomputeConfig = field(default_factory=RecomputeConfig)
+    # Built-in attr. Non-public.
+    reconstructed_model_config: DictConfig = field(default_factory=OmegaConf.create)
+
+
+def _gen_default_eos_token_id():
+    """Generate default eos token ids."""
+    return [151645, 151643]
 
 
 @dataclass
 class SamplingConfig:
-    """sampling config"""
+    """Sampling config."""
 
-    temperature: float = 0.8
-    repetition_penalty: float = 1.05
-    top_p: float = 0.8
-    top_k: int = 20
-    bos_token_id: int = 153643
-    eos_token_id: list = None
-    pad_token_id: int = 153643
-    detokenize: bool = False
-    logprobs: float = 1
+    # BOS token id.
+    bos_token_id: int = 151643
+    # Pad token id.
+    pad_token_id: int = 151643
+    # EOS token id.
+    eos_token_id: list = field(default_factory=_gen_default_eos_token_id)
+    # Max decode length.
     max_tokens: int = 512
+    # Min decode length.
     min_tokens: int = 2
+    # Temperature.
+    temperature: float = 1.0
+    # Repetition penalty.
+    repetition_penalty: float = 1.0
+    # Top P.
+    top_p: float = 1.0
+    # Top K.
+    top_k: int = -1
+    # Detokenize.
+    detokenize: bool = False
+    # Log probs.
+    logprobs: float = 1
+    # Min p.
     min_p: float = 0.01
 
 
 @dataclass
 class GenerateConfig:
-    """generate model config"""
+    """Generate model config."""
 
-    model_config: str = "/path/predict.yaml"
-    load: str = "/path/"
-    infer_model_batch_size: int = 2
-    parallel_config: ParallelConfig = ParallelConfig
+    # Model config.
+    model_config: str = ""
+    # Model path.
+    load: str = ""
+    # Inference model batch size.
+    infer_model_batch_size: int = 1
+    # Offset.
     offset: int = 0
-    use_eod_attn_mask_compression: bool = True
-    # generate config
-    use_vllm: int = 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode: init model with vllm, but generate with mindformers
-    hf_config_path: str = "config.json"  # vllm config path
+    # Enable use EOD attention mask compression.
+    use_eod_attn_mask_compression: bool = False
+    # Inference mode.
+    # 0: MindFormers.
+    # 1: VLLM.
+    # 2: DEBUG mode. Init model with vllm, but generate with mindformers
+    use_vllm: VllmMode = VllmMode.VLLM
+
+    # Parallel config.
+    parallel_config: ParallelConfig = field(default_factory=ParallelConfig)
+
+    # vLLM setting.
     block_size: int = 16
     max_model_len: int = 25536
     max_num_batched_tokens: int = 25536
@@ -166,129 +236,176 @@ class GenerateConfig:
     num_scheduler_steps: int = 32
     gpu_memory_utilization: float = 0.8
     trust_remote_code: bool = True
-    sampling_config: SamplingConfig = SamplingConfig
+    # vLLM post-process setting.
+    sampling_config: SamplingConfig = field(default_factory=SamplingConfig)
+    # Built-in attr. Non-public.
+    reconstructed_model_config: DictConfig = field(default_factory=OmegaConf.create)
 
 
 @dataclass
 class RewardConfig:
-    """grpo reward config"""
+    """GRPO reward config."""
 
-    verifier_function: list = None
-    verifier_weight: list = None
-
-
-@dataclass
-class JitConfig:
-    """jit config"""
-
-    jit_level: str = "O0"
+    verifier_function: list = field(default_factory=_gen_default_verifier_func)
+    verifier_weight: list = field(default_factory=_gen_default_verifier_weight)
 
 
-@dataclass
-class AscendConfig:
-    """Ascend config"""
+def _gen_default_jit_config():
+    """Generate default jit_config."""
+    return OmegaConf.create({"jit_level": "O0"})
 
-    precision_mode: str = "must_keep_origin_dtype"
+
+def _gen_default_ascend_config():
+    """Generate default ascend_config."""
+    return OmegaConf.create({"precision_mode": "must_keep_origin_dtype"})
 
 
 @dataclass
-class Context:
+class ContextConfig:
     """context"""
 
-    mode: int = 0  # 0--Graph Mode; 1--Pynative Mode
+    # MindSpore run mode.
+    # 0: Graph Mode.
+    # 1: Pynative Mode.
+    mode: int = 0
+    # Run device.
     device_target: str = "Ascend"
+    # Max nested cells depth.
     max_call_depth: int = 10000
+    # Max device memory.
     max_device_memory: str = "55GB"
+    # Save graphs.
     save_graphs: bool = False
+    # Save graphs path.
     save_graphs_path: str = "./graph"
-    device_id: int = 0
-    jit_config: JitConfig = JitConfig
+    # JIT config.
+    jit_config: DictConfig = field(default_factory=_gen_default_jit_config)
+    # Device memory optimize level.
     memory_optimize_level: str = "O0"
-    ascend_config: AscendConfig = AscendConfig
-
-    param_dict = {
-        "mode": mode,
-        "device_target": device_target,
-        "max_call_depth": max_call_depth,
-        "max_device_memory": max_device_memory,
-        "save_graphs": save_graphs,
-        "save_graphs_path": save_graphs_path,
-        "device_id": device_id,
-        "jit_config": {"jit_level": jit_config.jit_level},
-        "memory_optimize_level": memory_optimize_level,
-        "ascend_config": {"precision_mode": ascend_config.precision_mode},
-    }
+    # Ascend config.
+    ascend_config: DictConfig = field(default_factory=_gen_default_ascend_config)
 
 
 @dataclass
 class MonitorConfig:
+    """Host memory monitor setting."""
+
+    # Monitor sampling interval.
     host_monitor_interval: float = -1.0
-    host_monitor_steps: list = None
+    # Monitor sampling steps.
+    host_monitor_steps: list = field(default_factory=list)
+    # Enable host memory protection.
     host_memory_protection: bool = False
+    # The process will be stopped when host memory usage reach
+    # 'host_max_memory_threshold' when 'host_memory_protection' is True.
     host_max_memory_threshold: float = 0.95
 
 
 @dataclass
 class RLConfig:
-    """rl config"""
+    """Define RL config dataclass."""
 
+    # model_name is used to select model.
     model_name: str = "qwen2.5"
+    # Global random seed.
+    seed: int = 1
+    # Enable deterministic compute, options 'ON' or 'OFF'
     deterministic: str = "OFF"
+    # FIXME: reserved?
     align_type: str = "rlhf_stages"
-    dataset_file: str = "/path/train.mindrecord"
-    tokenizer_type: str = "qwen"
-    tokenizer_dir: str = "/path/"
-    epochs: int = 10
+    # Dataset file path.
+    dataset_file: str = ""
+    # tokenizer_type is used to select tokenizer, it's same to model_name by default.
+    tokenizer_type: str = "qwen2.5"
+    # Tokenizer path.
+    tokenizer_dir: str = ""
+
+    # Epoch number.
+    epochs: int = 1
+    # Batch size number.
     batch_size: int = 1
-    sink_size: int = 2
-    seq_length: int = 4096
+    # Sequence length for train and inference.
+    seq_length: int = 8192
+    # Enable parallel training and inference.
     use_parallel: bool = True
+    # Checkpoints format, it's "hf_safetensors" by default. Options: "hf_safetensors", "ms_safetensors".
     load_ckpt_format: str = "hf_safetensors"
+    # MindSpore parallel mode, it's "semi_auto_parallel" by default. Options: "semi_auto_parallel", "auto_parallel".
     parallel_mode: str = "semi_auto_parallel"
-    enable_compile_cache: bool = False
-    save_strategy_dir: str = "./strategy/"
-    save_data_file: str = "/tmp/"
-
-    packing: bool = True
-    pack_num: int = 1
-
-    save_prompt_completions_data: bool = True
-    save_prompt_completions_interval: int = 1
-    save_prompt_completions_dir: str = "/tmp/"
-
-    # 0: do not optimize mem during resharding
-    # 1: offload all src and dst param during resharding
-    reshard_mem_opt_level: int = 0
-    # 0: run reshard in PYNATIVE mode
-    # 1: run reshard in GRAPH mode
-    # 2: run reshard in HYBRID mode
-    reshard_mode: int = 0
-    save_ckpt_interval: int = 1
+    # Distributed strategy saved path.
+    save_strategy_dir: str = "./strategy"
+    # Save checkpoints interval.
+    save_ckpt_interval: int = 500
+    # Max number of saved checkpoints.
     save_max_ckpt_num: int = 5
-    save_ckpt_format: str = "safetensors"  # format support safetensors/ckpt
-    enable_reshard_optimizer: bool = False
+    # Resume training.
+    resume_training: bool = False
 
-    tensorboard: bool = False
-    tensorboard_dir: str = "/tmp/"
-    tensorboard_queue_size: int = 10
-    enable_full_monitor: bool = False
-    calculate_entropy: bool = False
-
-    save_checkpoint_dir: str = "/tmp/"
-    performance_stats: bool = False
+    # Pack number for pack training.
+    pack_num: int = 1
+    # Micro batch interleaved number for pipeline parallel.
     micro_batch_interleaved: int = 1
 
-    beta: float = 0.01  # KL coefficient
+    # KL coefficient.
+    beta: float = 0.0
+    # Number of generations.
     num_generations: int = 8
-    num_rollouts: int = 4
+    # Number of rollouts.
+    num_rollouts: int = 1
+    # TODO: ?
     chunk_size: int = 1
-    gen_experience_kwargs: bool = False
-    # clip higher
-    num_iterations: int = 1
-    epsilon_low: float = 0.2
-    epsilon_high: float = 0.2
+
+    # Enable old policy model.
     enable_oldpolicy: bool = True
-    seed: int = None
+
+    # Clip higher related setting.
+    # Number of iterations.
+    num_iterations: int = 1
+    # Low epsilon.
+    epsilon_low: float = 0.2
+    # High epsilon.
+    epsilon_high: float = 0.2
+
+    # Reshard memory optimization level.
+    # 0: do not optimize mem during resharding.
+    # 1: offload all src and dst param during resharding.
+    reshard_mem_opt_level: int = 0
+    # Reshard mode.
+    # 0: run reshard in PYNATIVE mode.
+    # 1: run reshard in GRAPH mode.
+    reshard_mode: int = 0
+    # Enable reshard optimizer.
+    enable_reshard_optimizer: bool = False
+
+    # Enable MindSpore compile cache. Only used by inference, move it to Context?
+    enable_compile_cache: bool = False
+    # Compile cache saved path.
+    compile_cache_path: str = "./compile_cache"
+
+    # Save internal data to MindRecord path(feed in train data).
+    save_data_file: str = ""
+
+    # Enable save prompt completions data to json(raw train data).
+    save_prompt_completions_data: bool = False
+    # Save prompt completions data interval.
+    save_prompt_completions_interval: int = 1
+    # Save prompt completions data path.
+    save_prompt_completions_dir: str = ""
+
+    # Enable clip frac, KL loss, actor loss monitoring.
+    enable_full_monitor: bool = False
+    # Whether calculate entropy.
+    calculate_entropy: bool = False
+
+    # Enable performance collector.
+    performance_stats: bool = False
+
+    # Enable tensorboard.
+    tensorboard: bool = False
+    # Tensorboard dir.
+    tensorboard_dir: str = ""
+    # Tensorboard queue size.
+    tensorboard_queue_size: int = 10
 
 
 @dataclass
@@ -316,46 +433,11 @@ class GRPOConfig:
     GRPO config class which defines the model size
     """
 
-    actor_config = ActorConfig
-    ref_config = RefConfig
-    reward_config = RewardConfig
-    generate_config = GenerateConfig
-    rl_config = RLConfig
-    monitor_config = MonitorConfig
-    profiler_config = ProfilerConfig
-    context = Context
-
-    def __init__(self, file_path):
-        with open(file_path, "r", encoding="utf-8") as file:
-            data = yaml.safe_load(file)
-        for key in data:
-            setattr(self, key, getattr(self, key)(**data[key]))
-        self._update_sub_config(data)
-
-    def _set_config(self, data, name, sub_name, config_class):
-        if name in data and sub_name in data[name]:
-            module = getattr(self, name)
-            setattr(module, sub_name, config_class(**data[name][sub_name]))
-
-    def _update_sub_config(self, data):
-        """update sub config"""
-        self._set_config(data, "actor_config", "parallel_config", ParallelConfig)
-        self._set_config(data, "ref_config", "parallel_config", ParallelConfig)
-        self._set_config(data, "generate_config", "parallel_config", ParallelConfig)
-        self._set_config(data, "actor_config", "recompute_config", RecomputeConfig)
-        self._set_config(data, "ref_config", "recompute_config", RecomputeConfig)
-        self._set_config(data, "context", "jit_config", JitConfig)
-        self._set_config(data, "context", "ascend_config", AscendConfig)
-        self._set_config(data, "actor_config", "optimizer", Optimizer)
-        self._set_config(data, "actor_config", "lr_schedule", LRSchedule)
-        self._set_config(data, "generate_config", "sampling_config", SamplingConfig)
-        if "actor_config" in data and "parallel_config" in data["actor_config"]:
-            self.actor_config.parallel_config.param_dict = data["actor_config"]["parallel_config"]
-        if "actor_config" in data and "recompute_config" in data["actor_config"]:
-            self.actor_config.recompute_config.param_dict = data["actor_config"]["recompute_config"]
-        if "ref_config" in data and "parallel_config" in data["ref_config"]:
-            self.ref_config.parallel_config.param_dict = data["ref_config"]["parallel_config"]
-        if "generate_config" in data and "parallel_config" in data["generate_config"]:
-            self.generate_config.parallel_config.param_dict = data["generate_config"]["parallel_config"]
-        if "context" in data:
-            self.context.param_dict = data["context"]
+    rl_config: RLConfig = field(default_factory=RLConfig)
+    actor_config: ActorConfig = field(default_factory=ActorConfig)
+    ref_config: RefConfig = field(default_factory=RefConfig)
+    reward_config: RewardConfig = field(default_factory=RewardConfig)
+    generate_config: GenerateConfig = field(default_factory=GenerateConfig)
+    monitor_config: MonitorConfig = field(default_factory=MonitorConfig)
+    profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)

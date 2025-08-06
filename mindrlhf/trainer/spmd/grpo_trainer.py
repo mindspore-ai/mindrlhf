@@ -14,103 +14,77 @@
 """ GRPO Trainer """
 import os
 import time
-import numpy as np
 
+import numpy as np
+from mindformers import MindFormerConfig
+from mindformers import logger
+from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
 import mindspore as ms
 from mindspore import Tensor
+from mindspore._c_expression import MSContext
 from mindspore.common.api import _pynative_executor
 from mindspore.communication import get_rank, get_group_size
-from mindspore._c_expression import MSContext
+from omegaconf import DictConfig, OmegaConf
 
-from mindformers import logger
-from mindformers import MindFormerConfig
-from mindformers.utils.tensorboard import get_tensorboard_writer, _set_tensorboard_writer
-
+from mindrlhf.configs import GRPOConfigGenerator
+from mindrlhf.models import TokenizerFactory
+from mindrlhf.tools.host_monitor import ResourceMonitor
+from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 from mindrlhf.utils import (
-    transfer_from_str_to_bool,
     set_perf_stats,
     TimeConsumingCollector,
     convert_index_json_total,
     profiler_start,
     profiler_step,
-    set_infer_dp_size
+    set_infer_dp_size,
 )
-from mindrlhf.tools.host_monitor import ResourceMonitor
+from mindrlhf.utils.reshard_optimizer import ReshardOptimizer, Parallel
 from mindrlhf.worker.infer_worker import InferWorker
+from mindrlhf.worker.old_policy_worker import get_old_policy_worker, set_enable_old_policy
 from mindrlhf.worker.ref_worker import RefWorker
 from mindrlhf.worker.train_worker import TrainWorker
-from mindrlhf.worker.old_policy_worker import (
-    get_old_policy_worker,
-    set_enable_old_policy,
-)
 from mindrlhf.worker.transform_worker import TransformWorker
-import mindrlhf.utils.reshard_optimizer as reshard_optimizer
-from mindrlhf.configs.grpo_configs import GRPOConfig, VllmMode
-from mindrlhf.models import TokenizerFactory
-from mindrlhf.trainer.spmd.grpo_experience_maker import GRPOExperienceMaker
 
 
 class GRPOTrainer:
     """GRPO Trainer"""
 
-    def __init__(self, no_patch_tensor_shape, args=None):
-        """Initialize"""
-        self.args = args
+    def __init__(self, config_from_yaml: DictConfig, **kwargs):
+        """
+        GRPOTrainer initialization.
+
+        Args:
+            config_from_yaml (DictConfig): RL config.
+            **kwargs (Dict): Key-word args.
+        """
+        self.no_patch_tensor_shape = kwargs.get("no_patch_tensor_shape")
+        self.grpo_config = GRPOConfigGenerator.create_config(config_from_yaml)
+        self._init_testing_env()
+        self._init_deterministic()
         self._set_hccl_op_expansion_mode()
-        self.grpo_config = self._init_grpo_configs(args)
-        self.tokenizer = TokenizerFactory.init_tokenizer(self.grpo_config)
-        if isinstance(self.grpo_config.rl_config.seed, int):
-            ms.set_seed(self.grpo_config.rl_config.seed)
         self._set_vllm_generation_config()
-        self.no_patch_tensor_shape = no_patch_tensor_shape
+        set_perf_stats(self.grpo_config.rl_config.performance_stats)
+        set_enable_old_policy(self.grpo_config)
+        set_infer_dp_size(self.grpo_config)
+
+        self.reshard_optimizer = self._init_reshard_optimizer()
         self.tensor_writer = self._init_tensorboard()
-        setattr(self.args, "tensor_writer", self.tensor_writer)
-        self.host_monitor = ResourceMonitor(self.grpo_config.monitor_config.host_monitor_interval,
-                                            self.grpo_config.monitor_config.host_monitor_steps,
-                                            self.grpo_config.monitor_config.host_memory_protection,
-                                            self.grpo_config.monitor_config.host_max_memory_threshold)
+        self.tokenizer = TokenizerFactory.init_tokenizer(self.grpo_config)
+        self.host_monitor = ResourceMonitor(
+            self.grpo_config.monitor_config.host_monitor_interval,
+            self.grpo_config.monitor_config.host_monitor_steps,
+            self.grpo_config.monitor_config.host_memory_protection,
+            self.grpo_config.monitor_config.host_max_memory_threshold,
+        )
         self.host_monitor.start()
-
-        self.reshard_optimizer = None
-        if self.grpo_config.rl_config.enable_reshard_optimizer:
-            logger.info("GRPOTrainer: start init Reshard Optimizer")
-
-            self.reshard_optimizer = reshard_optimizer.ReshardOptimizer(
-                src_parallel=reshard_optimizer.Parallel(
-                    dp=self.grpo_config.actor_config.parallel_config.data_parallel,
-                    tp=self.grpo_config.actor_config.parallel_config.model_parallel,
-                    pp=self.grpo_config.actor_config.parallel_config.pipeline_stage,
-                ),
-                dst_parallel=reshard_optimizer.Parallel(
-                    dp=self.grpo_config.generate_config.parallel_config.data_parallel,
-                    tp=self.grpo_config.generate_config.parallel_config.model_parallel,
-                    pp=self.grpo_config.generate_config.parallel_config.pipeline_stage,
-                ),
-            )
-            reshard_optimizer.OPT_COMMUNICATION_GROUPS = self.reshard_optimizer.opt_communication_groups
-
-        logger.info("GRPOTrainer: start init workers")
-        self.infer = InferWorker(grpo_config=self.grpo_config, args=self.args, tokenizer=self.tokenizer)
-        self.ref = RefWorker(grpo_config=self.grpo_config, args=self.args)
-        self.train = TrainWorker(grpo_config=self.grpo_config, args=self.args)
-        self.old_policy = get_old_policy_worker(grpo_config=self.grpo_config, args=self.args)
-        logger.info(f"config of sft_model_config_train {self.train.sft_model_config_train}")
-        if self.grpo_config.rl_config.packing:
-            if self.grpo_config.rl_config.pack_num < 1:
-                raise ValueError("pack_num must >= 1!")
-            logger.info(
-                f"Set packing_sample_length to train worker seq_length: "
-                f"{self.train.sft_model_config_train.seq_length}."
-            )
-        else:
-            self.grpo_config.rl_config.packing = True
-            self.grpo_config.rl_config.pack_num = 1
-            logger.warning(f"Set packing False, reset packing True and pack_num = 1.")
+        self.infer = InferWorker(
+            grpo_config=self.grpo_config, tokenizer=self.tokenizer, tensor_writer=self.tensor_writer
+        )
+        self.ref = RefWorker(grpo_config=self.grpo_config, tensor_writer=self.tensor_writer)
+        self.train = TrainWorker(grpo_config=self.grpo_config, tensor_writer=self.tensor_writer)
+        self.old_policy = get_old_policy_worker(grpo_config=self.grpo_config)
         logger.info("GRPOTrainer: finish init workers")
 
-        self.reshard_mem_opt_level = self.grpo_config.rl_config.reshard_mem_opt_level
-        if self.reshard_mem_opt_level not in [0, 1]:
-            raise ValueError(f"reshard_mem_opt_level can only be 0 or 1, but got {self.reshard_mem_opt_level}")
         # rename parameters in safetensors
         if self.grpo_config.rl_config.load_ckpt_format == "hf_safetensors":
             self.rename_safetensors_weights()
@@ -124,22 +98,14 @@ class GRPOTrainer:
             self.ref.model(),
             self.old_policy.model(),
         )
-        self.i_step = 0
-        self.n_epoch = 0
-        self.start_step = 0
-        self.start_epoch = 0
-        self.total_time = 0
+
         self._load_checkpoint()
         if not self.grpo_config.generate_config.load:
             self.transform.reshard_params(0)
 
-        if self.grpo_config.rl_config.save_ckpt_interval <= 0:
-            raise ValueError(
-                f"save_ckpt_interval should be lager than 0, but got "
-                f"{self.grpo_config.rl_config.save_ckpt_interval}"
-            )
+        # Init train control variables.
+        self.i_step, self.n_epoch, self.start_step, self.start_epoch, self.total_time = 0, 0, 0, 0, 0
         self.world_group_size = get_group_size()
-
         self.experience_maker = GRPOExperienceMaker(
             self.train,
             self.infer,
@@ -152,13 +118,25 @@ class GRPOTrainer:
         )
         self.step_num = self.experience_maker.step_num
 
-        if self.infer.use_vllm == VllmMode.ORIGIN:
-            self.infer.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
-        else:
-            self.infer.grpo_model_infer.grpo_model.policy_model.set_train(False)
-        self.ref.ref_model.model.set_train(False)
-
         self.infer.refresh_policy_model_phase()
+
+    def _init_testing_env(self):
+        """Initiate environment for testing(ut/st) when MINDRLHF_TEST is set."""
+        if os.getenv("MINDRLHF_TEST") == "1":
+            print(f"124 set MINDRLHF_TEST to {os.getenv('MINDRLHF_TEST')}")
+            # Set vllm env.
+            os.environ["MINDFORMERS_MODEL_CONFIG"] = self.grpo_config.generate_config.model_config
+            from typing import Iterable, Set, Tuple
+
+            def qwen2_load_weights(self, weights: Iterable[Tuple[str, Tensor]]) -> Set[str]:
+                return None
+
+            from mindrlhf.third_party.vllm import Qwen2ForCausalLM
+
+            # skip load ckpt in ci
+            Qwen2ForCausalLM.load_weights = qwen2_load_weights
+        else:
+            print(f"137 MINDRLHF_TEST is not set.")
 
     @staticmethod
     def _set_hccl_op_expansion_mode():
@@ -173,13 +151,45 @@ class GRPOTrainer:
     def _init_tensorboard(self):
         """init tensorboard"""
         if self.grpo_config.rl_config.tensorboard and self.grpo_config.rl_config.tensorboard_dir:
-            self.grpo_config.rl_config.tensorboard_dir = os.path.join(
-                self.grpo_config.rl_config.tensorboard_dir, f"rank_{get_rank()}"
+            tensorboard_dir = os.path.join(self.grpo_config.rl_config.tensorboard_dir, f"rank_{get_rank()}")
+            tensorboard_conf = OmegaConf.create(
+                {
+                    "tensorboard_dir": tensorboard_dir,
+                    "tensorboard_queue_size": self.grpo_config.rl_config.tensorboard_queue_size,
+                }
             )
-            _set_tensorboard_writer(self.grpo_config.rl_config)
-        tensor_writer = get_tensorboard_writer()
-        return tensor_writer
+            _set_tensorboard_writer(tensorboard_conf)
+        return get_tensorboard_writer()
 
+    def _init_deterministic(self):
+        deterministic = self.grpo_config.rl_config.deterministic.lower() == "on"
+        logger.info(f"set deterministic: {deterministic}")
+        if deterministic:
+            ms.set_deterministic(True)
+            os.environ["HCCL_DETERMINISTIC"] = "true"
+            os.environ["TE_PARALLEL_COMPILER"] = "1"
+            os.environ["CUSTOM_MATMUL_SHUFFLE"] = "off"
+            os.environ["LCCL_DETERMINISTIC"] = "1"
+        ms.set_seed(self.grpo_config.rl_config.seed)
+
+    def _init_reshard_optimizer(self):
+        """Init reshard optimizer."""
+        reshard_optimizer = None
+        if self.grpo_config.rl_config.enable_reshard_optimizer:
+            logger.info("GRPOTrainer: start init Reshard Optimizer")
+            reshard_optimizer = ReshardOptimizer(
+                src_parallel=Parallel(
+                    dp=self.grpo_config.actor_config.parallel_config.data_parallel,
+                    tp=self.grpo_config.actor_config.parallel_config.model_parallel,
+                    pp=self.grpo_config.actor_config.parallel_config.pipeline_stage,
+                ),
+                dst_parallel=Parallel(
+                    dp=self.grpo_config.generate_config.parallel_config.data_parallel,
+                    tp=self.grpo_config.generate_config.parallel_config.model_parallel,
+                    pp=self.grpo_config.generate_config.parallel_config.pipeline_stage,
+                ),
+            )
+        return reshard_optimizer
 
     def _set_vllm_generation_config(self):
         os.environ["MINDFORMERS_MODEL_CONFIG"] = self.grpo_config.generate_config.model_config
@@ -188,83 +198,9 @@ class GRPOTrainer:
         if os.getenv("MINDFORMERS_MODEL_CONFIG"):
             del os.environ["MINDFORMERS_MODEL_CONFIG"]
 
-    @staticmethod
-    def _set_args_to_config(args, grpo_config: GRPOConfig):
-        """set args to config"""
-        if args.dataset_file is not None:
-            grpo_config.rl_config.dataset_file = args.dataset_file
-        if args.tokenizer_dir is not None:
-            grpo_config.rl_config.tokenizer_dir = args.tokenizer_dir
-        if args.actor_checkpoint_path is not None:
-            grpo_config.actor_config.load = args.actor_checkpoint_path
-        if args.ref_checkpoint_path is not None:
-            grpo_config.ref_config.load = args.ref_checkpoint_path
-        if args.generate_checkpoint_path is not None:
-            grpo_config.generate_config.load = args.generate_checkpoint_path
-        if args.verifier_function is not None:
-            if "," in args.verifier_function:
-                verifier_function = args.verifier_function.split(",")
-            else:
-                verifier_function = [args.verifier_function]
-            grpo_config.reward_config.verifier_function = verifier_function
-        if args.verifier_weight is not None:
-            if "," in args.verifier_weight:
-                verifier_weight = args.verifier_weight.split(",")
-                verifier_weight = [float(_) for _ in verifier_weight]
-            else:
-                verifier_weight = [float(args.verifier_weight)]
-            grpo_config.reward_config.verifier_weight = verifier_weight
-        if args.tensorboard is not None:
-            tensorboard = transfer_from_str_to_bool(args.tensorboard)
-            grpo_config.rl_config.tensorboard = tensorboard
-        if args.save_checkpoint_dir is not None:
-            grpo_config.actor_config.save = args.save_checkpoint_dir
-        if args.model_name:
-            grpo_config.rl_config.model_name = args.model_name
-        if args.tokenizer_type:
-            if args.model_name and args.model_name != args.tokenizer_type:
-                logger.warning(f"tokenizer_type [{args.tokenizer_type}] is different from "
-                               f"model_name [{args.model_name}], tokenizer init will use "
-                               f"tokenizer_type [{args.tokenizer_type}]")
-            grpo_config.rl_config.tokenizer_type = args.tokenizer_type
-        else:
-            logger.info("tokenizer_type is unset, "
-                        f"set tokenizer_type as model_name [{grpo_config.rl_config.model_name}]")
-            grpo_config.rl_config.tokenizer_type = grpo_config.rl_config.model_name
-        return grpo_config
-
-    def _init_grpo_configs(self, args):
-        """init grpo configs"""
-        logger.info(f"GRPOTrainer: _init_grpo_configs {args} in main task")
-        # init grpo config
-        grpo_config = GRPOConfig(args.config)
-        grpo_config = self._set_args_to_config(args, grpo_config)
-        set_perf_stats(grpo_config)
-        set_enable_old_policy(grpo_config)
-        set_infer_dp_size(grpo_config)
-        if grpo_config.generate_config.use_vllm not in range(len(VllmMode)):
-            logger.warning(f"use_vllm should be 0, 1 or 2, but got {grpo_config.generate_config.use_vllm}. Reset to 0.")
-            grpo_config.generate_config.use_vllm = 0
-        grpo_config.generate_config.use_vllm = VllmMode(grpo_config.generate_config.use_vllm)
-        logger.info(
-            f"vllm mode: {grpo_config.generate_config.use_vllm}, "
-            f"hf_config_path: {grpo_config.generate_config.hf_config_path}"
-        )
-        if (
-            grpo_config.rl_config.save_prompt_completions_data
-            and grpo_config.rl_config.save_prompt_completions_interval <= 0
-        ):
-            logger.warning(
-                f"save_prompt_completions_interval should be positive, "
-                f"but got {grpo_config.rl_config.save_prompt_completions_interval}. "
-                f"Set save_prompt_completions_data to False."
-            )
-            grpo_config.rl_config.save_prompt_completions_data = False
-        return grpo_config
-
     @property
     def use_parallel(self):
-        return transfer_from_str_to_bool(self.grpo_config.rl_config.use_parallel)
+        return self.grpo_config.rl_config.use_parallel
 
     def _compile(self):
         """
@@ -283,7 +219,7 @@ class GRPOTrainer:
         """
         load checkpoint files
         """
-        if self.args.resume_training:
+        if self.grpo_config.rl_config.resume_training:
             epoch_step_info = self.train.reload_ckpt()
             if epoch_step_info is None:
                 raise ValueError("epoch/step info not read")
@@ -309,7 +245,7 @@ class GRPOTrainer:
 
     def _reshard_train_to_infer(self):
         """Reshard train model parameters to infer model."""
-        if self.reshard_mem_opt_level == 1:
+        if self.grpo_config.rl_config.reshard_mem_opt_level == 1:
             self.train.offload_model()
             if self.train.model_on_device:
                 raise RuntimeError(
@@ -334,7 +270,7 @@ class GRPOTrainer:
 
         if self.transform.sync_ref_model and ((self.i_step + 1) % self.transform.ref_model_sync_steps == 0):
             # in some work, ref update may have a 'bad' effect
-            if self.reshard_mem_opt_level == 0:
+            if self.grpo_config.rl_config.reshard_mem_opt_level == 0:
                 self.ref.load()
             input_on_device_flag_dict = {
                 "policy2infer": (self.train.model_on_device, self.infer.on_device),
@@ -342,7 +278,7 @@ class GRPOTrainer:
                 "policy2old": (self.train.model_on_device, self.old_policy.on_device),
             }
             self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
-            if self.reshard_mem_opt_level == 0:
+            if self.grpo_config.rl_config.reshard_mem_opt_level == 0:
                 self.ref.offload()
         else:
             input_on_device_flag_dict = {
@@ -352,7 +288,7 @@ class GRPOTrainer:
             }
             self.transform.reshard_params(self.i_step, input_on_device_flag_dict)
 
-        if self.reshard_mem_opt_level == 0:
+        if self.grpo_config.rl_config.reshard_mem_opt_level == 0:
             if not self.train.model_on_device:
                 raise RuntimeError(
                     "when reshard_mem_opt_level is equal to 0, train model must on device after transform param"

@@ -1,14 +1,13 @@
 # RL config
 rl_config:
-  model_name: 'qwen2.5'
+  model_name: "qwen2.5"
   deterministic: "OFF"
   align_type: 'rlhf_stages'
   dataset_file: "/path/train.mindrecord"
-  tokenizer_type: 'qwen'
+  tokenizer_type: "qwen2.5"
   tokenizer_dir: "/path/"
   epochs: 1
   batch_size: 1
-  sink_size: 1
   seq_length: 8192
   use_parallel: True
   load_ckpt_format: "hf_safetensors"
@@ -16,8 +15,8 @@ rl_config:
   enable_compile_cache: False
   save_strategy_dir: "./strategy/"  # need to be set
   save_data_file: "/tmp/grpo.mindrecord"
+  seed: 10
 
-  packing: True
   pack_num: 1
 
   save_prompt_completions_data: False
@@ -34,16 +33,21 @@ rl_config:
 
   performance_stats: False
   micro_batch_interleaved: 1
+  calculate_entropy: False
+  enable_full_monitor: False
 
   beta: 0.01 # KL coefficient
   num_generations: 4
   num_rollouts: 1
   chunk_size: 1
-  gen_experience_kwargs: False
+  resume_training: False
+  enable_oldpolicy: True
 
 monitor_config:
   host_monitor_interval: 1.0
-  host_monitor_steps: None
+  host_monitor_steps: []
+  host_memory_protection: False
+  host_max_memory_threshold: 0.95
 
 
 # actor model config
@@ -93,6 +97,20 @@ ref_config:
   sync_ref_model: False
   ref_model_sync_steps: 50
 
+  # recompute config
+  recompute_config:
+    recompute: False #[1, 0]
+    select_recompute: False
+    #select_recompute:
+    #  'feed_forward\.mul': [ 31, 0]
+    #  'feed_forward\.w1\.activation\.silu': [ 31, 0]
+    #  'feed_forward\.w1\.reshape': [ 31, 0]
+    #  'feed_forward\.w2\.reshape': [ 31, 0]
+    parallel_optimizer_comm_recompute: False
+    mp_comm_recompute: False
+    recompute_slice_activation: False
+
+
   parallel_config:
     data_parallel: 4  # need to be set
     model_parallel: 2  # need to be set
@@ -110,6 +128,7 @@ generate_config:
   model_config: "./qwen2_5_vllm/predict_qwen2_5_7b_instruct_st.yaml"  # need to be set
   load: ""
   infer_model_batch_size: 1
+  offset: 0
 
   parallel_config:
     data_parallel: 4  # need to be set
@@ -117,7 +136,6 @@ generate_config:
     pipeline_stage: 1  # need to be set
 
   use_vllm: 1  # 0--MindFormers; 1--VLLM; 2--DEBUG mode; init model with vllm, but generate with mindformers
-  hf_config_path: "./config.json"   # vllm config path
   block_size: 16
   max_model_len: 32768
   max_num_batched_tokens: 32768
@@ -125,6 +143,7 @@ generate_config:
   max_prompt_length: 2048
   num_scheduler_steps: 32
   gpu_memory_utilization: 0.5
+  trust_remote_code: True
 
   sampling_config:
     max_tokens: 16  # max_decode_length
@@ -147,7 +166,6 @@ context:
   max_device_memory: "58GB"
   save_graphs: False
   save_graphs_path: "./graph/"
-  device_id: 0
   jit_config:
     jit_level: "O0"
   memory_optimize_level: "O0"

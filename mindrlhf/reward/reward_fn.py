@@ -26,7 +26,7 @@ def accuracy_reward(completions, solution, **kwargs):
 
     for content, sol in zip(completions, solution):
         response = re.sub(r"(\d),(\d)", r"\1\2", content)
-        if kwargs.get("model_name") == "qwen":
+        if kwargs.get("model_name") == "qwen2.5":
             numbers = re.findall(r"boxed{([-+]?\d*\.?\d+)}", response)
         else:
             numbers = re.findall(r"([-+]?\d+\.?\d*)", response)
@@ -109,7 +109,7 @@ def accuracy_reward_2(completions, solution, **kwargs):
 
 def qwen_accuracy_reward(completions, solution, **kwargs):
     """Reward function that checks if the completion is the same as the ground truth."""
-    rewards, answer_parsed_lst = accuracy_reward(completions, solution, model_name="qwen")
+    rewards, answer_parsed_lst = accuracy_reward(completions, solution, model_name="qwen2.5")
     return rewards, answer_parsed_lst
 
 

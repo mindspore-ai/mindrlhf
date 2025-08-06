@@ -13,30 +13,31 @@
 # limitations under the License.
 """Train Worker"""
 import os
+from omegaconf import DictConfig, OmegaConf
+
+from mindformers import LlamaConfig
+from mindformers import MindFormerConfig
+from mindformers import logger
+from mindformers.core.callback.callback import TopkBiasBalanceCallback
+from mindformers.core.optim import AdamW
+from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
+from mindformers.trainer.utils import load_distributed_checkpoint
 
 import mindspore as ms
-from mindspore import nn
 from mindspore import Tensor
-from mindspore.dataset.transforms import TypeCast
-from mindspore.dataset import GeneratorDataset
-from mindspore.communication import get_rank
 from mindspore import context
+from mindspore import nn
+from mindspore.communication import get_rank
+from mindspore.dataset import GeneratorDataset
+from mindspore.dataset.transforms import TypeCast
 from mindspore.nn.wrap.cell_wrapper import PipelineCell, _VirtualDatasetCell, MicroBatchInterleaved
 from mindspore.nn.wrap.loss_scale import DynamicLossScaleUpdateCell
 
-from mindformers import MindFormerConfig
-from mindformers.trainer.utils import load_distributed_checkpoint
-from mindformers.core.callback.callback import TopkBiasBalanceCallback
-from mindformers import LlamaConfig
-from mindformers import logger
-from mindformers.tools.resume_ckpt import get_resume_checkpoint_by_meta
-from mindformers.core.optim import AdamW
-
-from research.deepseek3.deepseek3_config import DeepseekV3Config
-
+from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
 from mindrlhf.utils.adam import AdamWeightDecayOp
+from mindrlhf.utils.configs import set_weight_decay
+from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.utils.utils import LearningRate, TimeConsumingCollector
-from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLossScaleCellGRPO
 from mindrlhf.utils.utils import (
     load_param_to_net,
     record_last_ckpt_to_json,
@@ -44,11 +45,9 @@ from mindrlhf.utils.utils import (
     ensure_total_ckpt_is_less_than_limit,
     load_safetensors,
 )
-from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelTrain
-from mindrlhf.utils.dataset import GRPOIteratorStore
 from mindrlhf.worker.worker import Worker
-from mindrlhf.utils.configs import set_weight_decay
-from mindrlhf.configs.grpo_configs import GRPOConfig
+from mindrlhf.wrapper import TrainOneStepWithLossScaleGRPO, TrainPipelineWithLossScaleCellGRPO
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 
 class TrainWorker(Worker):
@@ -56,22 +55,21 @@ class TrainWorker(Worker):
     This class do GRPO train.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, args):
-        super().__init__()
+    SAVED_MODEL_CONFIG_YAML = "saved_train_model_config.yaml"
+
+    def __init__(self, grpo_config: DictConfig, **kwargs):
+        """
+        Train worker.
+
+        Args:
+            grpo_config (DictConfig): GRPO configurations.
+            **kwargs (dict): Keyword args.
+        """
+        super().__init__(config=grpo_config, worker_type=Worker.WorkerType.TRAIN, **kwargs)
         logger.info("init TrainWorker")
-        self.args = args
+        self.tensor_writer = kwargs.get("tensor_writer")
         self.grpo_config = grpo_config
-        self.load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
-        sft_config_train = MindFormerConfig(grpo_config.actor_config.model_config)
-        sft_config_train.use_parallel = grpo_config.rl_config.use_parallel
-        self.sft_config_train = sft_config_train
-        sft_config_train.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
-        logger.info(f"actor parallel_config:{sft_config_train.parallel_config}")
-        logger.info(f"grpo_config.actor_config.recompute_config:{grpo_config.actor_config.recompute_config.param_dict}")
-        sft_config_train.recompute_config = grpo_config.actor_config.recompute_config.param_dict
-        sft_config_train.model.model_config.seq_length = grpo_config.rl_config.seq_length
-        sft_config_train.model.model_config.offset = grpo_config.actor_config.offset
-        sft_config_train.model.model_config.parallel_config = sft_config_train.parallel_config
+        self.sft_config_train = MindFormerConfig(**OmegaConf.to_container(self.reconstructed_model_config))
 
         if grpo_config.actor_config.save and get_rank() == 0:
             train_save_dir = os.path.join(grpo_config.actor_config.save, "train")
@@ -81,40 +79,33 @@ class TrainWorker(Worker):
             if not os.path.exists(optimizer_save_dir):
                 os.makedirs(optimizer_save_dir)
 
-        os.environ["RUN_MODE"] = sft_config_train.run_mode
-        sft_config_train.model.model_config.parallel_config.recompute = sft_config_train.recompute_config
-        if args.model_name in ["qwen", "llama"]:
-            sft_config_train.model.model_config.use_eod_attn_mask_compression = (
-                grpo_config.actor_config.use_eod_attn_mask_compression
-            )
-            sft_model_config_train = LlamaConfig(**sft_config_train.model.model_config)
-            sft_model_config_train.model_name = "llama"
-        elif args.model_name == "deepseek":
-            sft_config_train.model.model_config.moe_config = sft_config_train.moe_config
-            sft_model_config_train = DeepseekV3Config(**sft_config_train.model.model_config)
-            sft_model_config_train.model_name = "deepseek_training"
+        os.environ["RUN_MODE"] = self.sft_config_train.run_mode
+        if self.model_name in ["qwen2.5", "llama"]:
+            self.sft_model_config_train = LlamaConfig(**self.sft_config_train.model.model_config)
+            self.sft_model_config_train.model_name = "llama"
+        elif self.model_name == "deepseek":
+            self.sft_model_config_train = DeepseekV3Config(**self.sft_config_train.model.model_config)
+            self.sft_model_config_train.model_name = "deepseek_training"
             self.topk_bias_balance_callback = TopkBiasBalanceCallback(
-                sft_model_config_train.moe_config.balance_via_topk_bias,
-                sft_model_config_train.moe_config.topk_bias_update_rate,
-                sft_model_config_train.moe_config.expert_num,
-                sft_model_config_train.parallel_config.micro_batch_num
+                self.sft_model_config_train.moe_config.balance_via_topk_bias,
+                self.sft_model_config_train.moe_config.topk_bias_update_rate,
+                self.sft_model_config_train.moe_config.expert_num,
+                self.sft_model_config_train.parallel_config.micro_batch_num,
             )
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
-        sft_model_config_train.checkpoint_name_or_path = grpo_config.actor_config.load
-        self.sft_ckpt_path_train = sft_model_config_train.checkpoint_name_or_path
-        sft_model_config_train.checkpoint_name_or_path = None
+            raise ValueError(f"model_name should in ['qwen2.5', 'llama','deepseek'], but get {self.model_name}")
+        self.dump_mf_conf_to_yaml(self.sft_model_config_train, self.SAVED_MODEL_CONFIG_YAML)
 
-        self.train_pp_stage = sft_model_config_train.parallel_config.pipeline_stage or 1
+        self.sft_ckpt_path_train = self.model_path
+        self.sft_model_config_train.checkpoint_name_or_path = None
+        self.train_pp_stage = self.pipeline_stage or 1
         self.enable_parallel_optimizer = (
-            grpo_config.actor_config.enable_parallel_optimizer
-            and grpo_config.actor_config.parallel_config.data_parallel > 1
+            self.grpo_config.actor_config.enable_parallel_optimizer and self.data_parallel > 1
         )
         context.set_auto_parallel_context(
             pipeline_stages=self.train_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
-        self.sft_model_config_train = sft_model_config_train
-        policy_model = CausalLMHybrid(sft_model_config_train, self.grpo_config)
+        policy_model = CausalLMHybrid(self.sft_model_config_train, self.grpo_config)
         self.grpo_model_train = GRPOModelTrain(grpo_config, policy_model)
         self.grpo_model_train.set_train(True)
         self.grpo_with_grad = self._init_grpo_network_and_optimizer()
@@ -122,9 +113,7 @@ class TrainWorker(Worker):
 
         self.model_on_device = True
         self.optimizer_on_device = True
-        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
-        self.tensor_writer = self.args.tensor_writer
         self.global_training_step = 0
         if self.grpo_config.rl_config.save_max_ckpt_num < 1:
             raise ValueError(
@@ -144,13 +133,9 @@ class TrainWorker(Worker):
         )
         if self.train_pp_stage == 1:
             # for pipeline stage 1, the micro_batch_num is not used
-            train_bs = self.grpo_config.rl_config.batch_size * self.sft_model_config_train.parallel_config.data_parallel
+            train_bs = self.grpo_config.rl_config.batch_size * self.data_parallel
         else:
-            train_bs = (
-                self.grpo_config.rl_config.batch_size
-                * self.sft_model_config_train.parallel_config.micro_batch_num
-                * self.sft_model_config_train.parallel_config.data_parallel
-            )
+            train_bs = self.grpo_config.rl_config.batch_size * self.micro_batch_num * self.data_parallel
         prompt_completion_ids = ms.Tensor(
             shape=(train_bs, self.grpo_config.rl_config.seq_length + 1), dtype=ms.int32
         )  # [bs, seq_len+1]
@@ -182,7 +167,7 @@ class TrainWorker(Worker):
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{strategy_path}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": False
+                    "only_trainable_params": False,
                 },
                 pipeline_stages=self.train_pp_stage,
             )
@@ -203,7 +188,7 @@ class TrainWorker(Worker):
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": False
+                    "only_trainable_params": False,
                 }
             )
 
@@ -309,7 +294,6 @@ class TrainWorker(Worker):
         """
         Build train network.
         """
-
         sft_model_config = self.sft_model_config_train
         grpo_model_train = self.grpo_model_train
         grpo_config = self.grpo_config
@@ -317,7 +301,7 @@ class TrainWorker(Worker):
             logger.info("pipeline cell")
             grpo_with_loss_net = PipelineCell(
                 MicroBatchInterleaved(grpo_model_train, grpo_config.rl_config.micro_batch_interleaved),
-                sft_model_config.parallel_config.micro_batch_num,
+                self.micro_batch_num,
             )
         else:
             logger.info("non-pipeline cell")
@@ -331,7 +315,7 @@ class TrainWorker(Worker):
             use_cosine=grpo_config.actor_config.lr_schedule.lr_decay_style == "cosine",
         )
         params = grpo_with_loss.trainable_params()
-        if self.args.model_name == "deepseek":
+        if self.model_name == "deepseek":
             group_params = set_weight_decay(params, is_use_other_params=False)
         else:
             group_params = set_weight_decay(params)
@@ -352,7 +336,8 @@ class TrainWorker(Worker):
                 group_params,
                 learning_rate=lr,
                 betas=(grpo_config.actor_config.optimizer.adam_beta1, grpo_config.actor_config.optimizer.adam_beta2),
-                eps=grpo_config.actor_config.optimizer.eps)
+                eps=grpo_config.actor_config.optimizer.eps,
+            )
 
         loss_scale_value = grpo_config.actor_config.loss_scale_value
         update_cell = DynamicLossScaleUpdateCell(loss_scale_value=loss_scale_value, scale_factor=2, scale_window=1000)
@@ -363,15 +348,12 @@ class TrainWorker(Worker):
                 grpo_with_loss,
                 optimizer=optimizer,
                 scale_sense=update_cell,
-                micro_batch_num=sft_model_config.parallel_config.micro_batch_num
+                micro_batch_num=sft_model_config.parallel_config.micro_batch_num,
             )
         else:
             logger.info("non-pipeline cell")
             grpo_with_grad = TrainOneStepWithLossScaleGRPO(
-                grpo_with_loss,
-                optimizer=optimizer,
-                scale_sense=update_cell,
-                use_clip_grad=True
+                grpo_with_loss, optimizer=optimizer, scale_sense=update_cell, use_clip_grad=True
             )
         return grpo_with_grad
 
@@ -439,14 +421,14 @@ class TrainWorker(Worker):
             for epoch in range(self.grpo_config.rl_config.num_iterations):
                 for step, databatch in enumerate(iterator):
                     with TimeConsumingCollector(f"train epoch {epoch} step {step}"):
-                        prompt_completion_ids = databatch['prompt_completion_ids']
-                        responses_mask = databatch['responses_mask']
-                        ref_per_token_logps = databatch['ref_per_token_logps']
-                        advantages = databatch['advantages']
-                        actual_sequence_length = databatch['actual_sequence_length']
-                        sample_index = databatch['sample_index']
-                        sample_valid_length = databatch['sample_valid_length']
-                        old_per_token_logps = databatch['old_per_token_logps']
+                        prompt_completion_ids = databatch["prompt_completion_ids"]
+                        responses_mask = databatch["responses_mask"]
+                        ref_per_token_logps = databatch["ref_per_token_logps"]
+                        advantages = databatch["advantages"]
+                        actual_sequence_length = databatch["actual_sequence_length"]
+                        sample_index = databatch["sample_index"]
+                        sample_valid_length = databatch["sample_valid_length"]
+                        old_per_token_logps = databatch["old_per_token_logps"]
                         inputs = [
                             prompt_completion_ids,
                             responses_mask,
@@ -459,12 +441,16 @@ class TrainWorker(Worker):
                         ]
                         out = self.grpo_with_grad(*inputs)
                         if self.grpo_config.rl_config.enable_full_monitor:
-                            ratio = float(self.grpo_model_train.grpo_model_train.get_ratio()) \
+                            ratio = (
+                                float(self.grpo_model_train.grpo_model_train.get_ratio())
                                 / self.sft_model_config_train.parallel_config.micro_batch_num
+                            )
                             kl_loss = float(self.grpo_model_train.grpo_model_train.get_klloss())
                             actor_loss = float(self.grpo_model_train.grpo_model_train.get_actor_loss())
-                            clipfrac = float(self.grpo_model_train.grpo_model_train.get_clipfrac()) \
+                            clipfrac = (
+                                float(self.grpo_model_train.grpo_model_train.get_clipfrac())
                                 / self.sft_model_config_train.parallel_config.micro_batch_num
+                            )
                             logger.info(f"old_log_ps ratio of parameter: {ratio}")
                             logger.info(f"kl_loss of parameter: {kl_loss}")
                             logger.info(f"actor_loss of parameter: {actor_loss}")
@@ -482,7 +468,7 @@ class TrainWorker(Worker):
                         f"loss scale: {formatter(out[2])} | "
                         f"grad norm: {formatter(out[4])}"
                     )
-                    if self.args.model_name == "deepseek":
+                    if self.model_name == "deepseek":
                         if self.topk_bias_balance_callback.update_topk_bias_flag:
                             policy_model = self.grpo_model_train.grpo_model_train.policy_model.model
                             # pylint: disable=W0212
@@ -587,8 +573,7 @@ class TrainWorker(Worker):
         if epochs == start_epoch and steps == start_step:
             return
         if self.grpo_config.actor_config.save:
-            if self.grpo_config.rl_config.save_ckpt_format == "safetensors":
-                formats = "safetensors"
+            formats = "safetensors"
             logger.info("Save checkpoints in {}".format(self.grpo_config.actor_config.save))
             train_save_dir = os.path.join(self.grpo_config.actor_config.save, "train")
             rank_path = os.path.join(train_save_dir, f"rank_{get_rank()}")
