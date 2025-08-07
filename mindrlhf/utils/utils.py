@@ -38,7 +38,9 @@ __all__ = [
     "TimeConsumingCollector",
     "profiler_start",
     "profiler_step",
-    "mstx_timer_decorator"
+    "mstx_timer_decorator",
+    "set_infer_dp_size",
+    "get_infer_dp_size"
 ]
 
 import os
@@ -82,6 +84,7 @@ from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 PERF_STATS = False
+INFER_DP_SIZE = 1
 
 
 def yaml_to_dataclass(file_path, dataclass_type):
@@ -877,3 +880,13 @@ def mstx_timer_decorator(func):
         return result
 
     return wrapper
+
+
+def set_infer_dp_size(grpo_config):
+    global INFER_DP_SIZE
+    INFER_DP_SIZE = grpo_config.generate_config.parallel_config.data_parallel
+
+
+def get_infer_dp_size():
+    global INFER_DP_SIZE
+    return INFER_DP_SIZE
