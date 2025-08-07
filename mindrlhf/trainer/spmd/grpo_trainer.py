@@ -364,7 +364,7 @@ class GRPOTrainer:
             self.train.offload_model()
             self.old_policy.check_on_device()
             self.old_policy.offload()
-            self.infer.load_kvcache()
+            self.infer.init_kvcache()
         else:
             if self.train.model_on_device:
                 raise RuntimeError(
