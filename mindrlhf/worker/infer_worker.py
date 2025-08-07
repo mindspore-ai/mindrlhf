@@ -430,11 +430,11 @@ class InferWorker(Worker):
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
 
     def offload(self):
-        """offload stf infer"""
+        """offload infer"""
         if not self.on_device:
             return
-        logger.info(f"before offload stf infer {ms.hal.memory_stats()}")
-        with TimeConsumingCollector("offload stf infer"):
+        logger.info(f"before offload infer {ms.hal.memory_stats()}")
+        with TimeConsumingCollector("offload infer"):
             skip_kv_cache = False
             if self.use_vllm == VllmMode.VLLM:
                 self.inference_engine.free_cache_engine()
@@ -444,15 +444,15 @@ class InferWorker(Worker):
                     continue
                 # pylint: disable=W0212
                 param._offload()
-        logger.info(f"after offload stf infer {ms.hal.memory_stats()}")
+        logger.info(f"after offload infer {ms.hal.memory_stats()}")
         self.on_device = False
 
     def load(self, skip_kv_cache=False):
-        """load stf infer"""
+        """load infer"""
         if self.on_device:
             return
-        logger.info(f"before load stf infer {ms.hal.memory_stats()}")
-        with TimeConsumingCollector("load stf infer"):
+        logger.info(f"before load infer {ms.hal.memory_stats()}")
+        with TimeConsumingCollector("load infer"):
             if self.use_vllm == VllmMode.VLLM and not skip_kv_cache:
                 self._init_cache_engine()
                 skip_kv_cache = True
@@ -461,16 +461,16 @@ class InferWorker(Worker):
                     continue
                 # pylint: disable=W0212
                 param._load()
-        logger.info(f"after load stf infer {ms.hal.memory_stats()}")
+        logger.info(f"after load infer {ms.hal.memory_stats()}")
         self.on_device = True
 
-    def load_kvcache(self):
-        """load stf infer kvcache"""
-        logger.info(f"before load stf infer kv cache {ms.hal.memory_stats()}")
-        with TimeConsumingCollector("load stf infer kvcache"):
+    def init_kvcache(self):
+        """init infer kvcache"""
+        logger.info(f"before init infer kv cache {ms.hal.memory_stats()}")
+        with TimeConsumingCollector("init infer kvcache"):
             if self.use_vllm == VllmMode.VLLM:
                 self._init_cache_engine()
-        logger.info(f"after load stf infer kv cache {ms.hal.memory_stats()}")
+        logger.info(f"after init  infer kv cache {ms.hal.memory_stats()}")
         self.on_device = True
 
     def load_checkpoint(self):

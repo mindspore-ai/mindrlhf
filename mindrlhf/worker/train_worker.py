@@ -520,7 +520,7 @@ class TrainWorker(Worker):
         """offload optimizer"""
         if self.optimizer_on_device is False:
             return
-        logger.info(f"before offload train {ms.hal.memory_stats()}")
+        logger.info(f"before offload train optimizer {ms.hal.memory_stats()}")
         with TimeConsumingCollector("offload train optimizer"):
             for param in self.grpo_with_grad.optimizer.exp_avg:
                 # pylint: disable=W0212
@@ -532,7 +532,7 @@ class TrainWorker(Worker):
                 for param in self.grpo_with_grad.accu_grads:
                     # pylint: disable=W0212
                     param._offload()
-        logger.info(f"after offload train {ms.hal.memory_stats()}")
+        logger.info(f"after offload train optimizer {ms.hal.memory_stats()}")
         self.optimizer_on_device = False
 
     def load_optimizer(self):
@@ -570,7 +570,7 @@ class TrainWorker(Worker):
         """offload model"""
         if self.model_on_device is False:
             return
-        logger.info(f"after offload train model {ms.hal.memory_stats()}")
+        logger.info(f"before offload train model {ms.hal.memory_stats()}")
         with TimeConsumingCollector("offload train model"):
             for param in self.grpo_with_grad.network.get_parameters(expand=True):
                 # pylint: disable=W0212
