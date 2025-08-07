@@ -34,6 +34,8 @@ from vllm.distributed import get_tensor_model_parallel_world_size
 from vllm_mindspore.model_executor.models.attention_mask import LowerTriangularMask
 from vllm_mindspore.model_executor.models.mf_models.mf_model_base import MfModelBase
 
+from mindrlhf.utils import get_infer_dp_size
+
 
 def mf_model_base_init(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
     super(MfModelBase, self).__init__(vllm_config=vllm_config, prefix=prefix)
@@ -43,6 +45,7 @@ def mf_model_base_init(self, *, vllm_config: VllmConfig, prefix: str = "") -> No
     build_parallel_config(self.mf_config)
     self.mf_config.model.model_config.parallel_config = self.mf_config.parallel_config
     self.mf_config.model.model_config.parallel_config.model_parallel = get_tensor_model_parallel_world_size()
+    self.mf_config.model.model_config.parallel_config.data_parallel = get_infer_dp_size()
     self.mf_config.model.model_config.parallel_config.pipeline_stage = 1
     self._generate_model_config()
     self.casual_mask = LowerTriangularMask(dtype=self.mf_model_config.compute_dtype,

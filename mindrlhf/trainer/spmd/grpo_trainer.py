@@ -33,6 +33,7 @@ from mindrlhf.utils import (
     convert_index_json_total,
     profiler_start,
     profiler_step,
+    set_infer_dp_size
 )
 from mindrlhf.tools.host_monitor import ResourceMonitor
 from mindrlhf.worker.infer_worker import InferWorker
@@ -240,6 +241,7 @@ class GRPOTrainer:
         grpo_config = self._set_args_to_config(args, grpo_config)
         set_perf_stats(grpo_config)
         set_enable_old_policy(grpo_config)
+        set_infer_dp_size(grpo_config)
         if grpo_config.generate_config.use_vllm not in range(len(VllmMode)):
             logger.warning(f"use_vllm should be 0, 1 or 2, but got {grpo_config.generate_config.use_vllm}. Reset to 0.")
             grpo_config.generate_config.use_vllm = 0
