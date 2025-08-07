@@ -45,6 +45,8 @@ __all__ = [
     "profiler_start",
     "profiler_step",
     "mstx_timer_decorator",
+    "set_infer_dp_size",
+    "get_infer_dp_size"
 ]
 
 from .dataset import GRPOIteratorStore
@@ -75,6 +77,8 @@ from .utils import (
     profiler_start,
     profiler_step,
     mstx_timer_decorator,
+    set_infer_dp_size,
+    get_infer_dp_size
 )
 from .adam import AdamWeightDecayOp
 from .transform_param import TransformParametersD2D, TransformParametersD2DForDSv3
