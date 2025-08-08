@@ -1,0 +1,460 @@
+rl_config:
+  model_name: qwen2.5
+  seed: 1
+  deterministic: 'OFF'
+  align_type: rlhf_stages
+  dataset_file: gsm8k_train.mindrecord
+  tokenizer_type: qwen2.5
+  tokenizer_dir: Qwen2.5-7B
+  epochs: 1
+  batch_size: 1
+  seq_length: 8192
+  use_parallel: true
+  load_ckpt_format: hf_safetensors
+  parallel_mode: semi_auto_parallel
+  save_strategy_dir: ./strategy
+  save_ckpt_interval: 500
+  save_max_ckpt_num: 5
+  resume_training: false
+  pack_num: 1
+  micro_batch_interleaved: 1
+  beta: 0.01
+  num_generations: 8
+  num_rollouts: 4
+  chunk_size: 1
+  enable_oldpolicy: true
+  num_iterations: 1
+  epsilon_low: 0.2
+  epsilon_high: 0.2
+  reshard_mem_opt_level: 0
+  reshard_mode: 0
+  enable_reshard_optimizer: false
+  enable_compile_cache: false
+  compile_cache_path: ./compile_cache
+  save_data_file: ./train_output/saved_data_file
+  save_prompt_completions_data: true
+  save_prompt_completions_interval: 1
+  save_prompt_completions_dir: ./train_output/saved_prompt_completions
+  enable_full_monitor: false
+  calculate_entropy: false
+  performance_stats: false
+  tensorboard: false
+  tensorboard_dir: ''
+  tensorboard_queue_size: 10
+actor_config:
+  load: Qwen2.5-7B
+  save: ./train_output/saved_model
+  model_config: ./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml
+  offset: 0
+  use_eod_attn_mask_compression: true
+  loss_scale_value: 1
+  enable_parallel_optimizer: true
+  parallel_config:
+    data_parallel: 1
+    model_parallel: 4
+    pipeline_stage: 2
+    expert_parallel: 1
+    use_seq_parallel: false
+    micro_batch_num: 2
+    vocab_emb_dp: false
+    context_parallel: 1
+  recompute_config:
+    recompute: true
+    select_recompute: false
+    select_comm_recompute: false
+    parallel_optimizer_comm_recompute: false
+    mp_comm_recompute: true
+    recompute_slice_activation: false
+  optimizer:
+    type: adamw
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    eps: 1.0e-08
+    weight_decay: 0.01
+    opt_offload: false
+  lr_schedule:
+    lr_decay_style: cosine
+    lr: 5.0e-07
+    min_lr: 1.0e-10
+    warmup_step: 10
+    decay_steps: 200000
+  enable_alltoall: false
+  reconstructed_model_config:
+    run_mode: finetune
+    model:
+      model_config:
+        type: LlamaConfig
+        batch_size: 1
+        hidden_size: 3584
+        num_layers: 28
+        num_heads: 28
+        n_kv_heads: 4
+        vocab_size: 152064
+        intermediate_size: 18944
+        qkv_has_bias: true
+        rms_norm_eps: 1.0e-06
+        theta: 1000000.0
+        max_position_embedding: 131072
+        emb_dropout_prob: 0.0
+        eos_token_id: 151643
+        pad_token_id: 151643
+        compute_dtype: bfloat16
+        layernorm_compute_type: float32
+        softmax_compute_type: float16
+        rotary_dtype: float32
+        param_init_type: float32
+        use_past: false
+        extend_method: None
+        use_flash_attention: true
+        fine_grain_interleave: 1
+        qkv_concat: false
+        block_size: 32
+        num_blocks: 128
+        offset: 0
+        checkpoint_name_or_path: ''
+        repetition_penalty: 1
+        max_decode_length: 512
+        top_k: 0
+        top_p: 0.8
+        do_sample: false
+        compute_in_2d: true
+        rotary_pct: 1.0
+        rotary_emb_base: 1000000
+        kv_channels: 128
+        seq_length: 8192
+        use_eod_attn_mask_compression: true
+        parallel_config:
+          data_parallel: 1
+          model_parallel: 4
+          pipeline_stage: 2
+          expert_parallel: 1
+          use_seq_parallel: false
+          micro_batch_num: 2
+          vocab_emb_dp: false
+          context_parallel: 1
+          recompute:
+            recompute: true
+            select_recompute: false
+            select_comm_recompute: false
+            parallel_optimizer_comm_recompute: false
+            mp_comm_recompute: true
+            recompute_slice_activation: false
+      arch:
+        type: LlamaForCausalLM
+    processor:
+      return_tensors: ms
+      tokenizer:
+        model_max_length: 32768
+        vocab_file: ''
+        merges_file: ''
+        unk_token: <|endoftext|>
+        eos_token: <|endoftext|>
+        pad_token: <|endoftext|>
+        type: Qwen2Tokenizer
+      type: Qwen2Processor
+    use_parallel: true
+    parallel_config:
+      data_parallel: 1
+      model_parallel: 4
+      pipeline_stage: 2
+      expert_parallel: 1
+      use_seq_parallel: false
+      micro_batch_num: 2
+      vocab_emb_dp: false
+      context_parallel: 1
+    recompute_config:
+      recompute: true
+      select_recompute: false
+      select_comm_recompute: false
+      parallel_optimizer_comm_recompute: false
+      mp_comm_recompute: true
+      recompute_slice_activation: false
+ref_config:
+  model_config: ./model_configs/qwen_grpo/qwen2_5_7b/finetune_qwen2_5_7b.yaml
+  load: Qwen2.5-7B
+  ref_model_batch_size: 2
+  offset: 0
+  use_eod_attn_mask_compression: true
+  sync_ref_model: false
+  ref_model_sync_steps: 50
+  parallel_config:
+    data_parallel: 2
+    model_parallel: 4
+    pipeline_stage: 1
+    expert_parallel: 1
+    use_seq_parallel: false
+    micro_batch_num: 1
+    vocab_emb_dp: true
+    context_parallel: 1
+  recompute_config:
+    recompute: false
+    select_recompute: false
+    select_comm_recompute: false
+    parallel_optimizer_comm_recompute: false
+    mp_comm_recompute: true
+    recompute_slice_activation: false
+  reconstructed_model_config:
+    run_mode: finetune
+    model:
+      model_config:
+        type: LlamaConfig
+        batch_size: 1
+        hidden_size: 3584
+        num_layers: 28
+        num_heads: 28
+        n_kv_heads: 4
+        vocab_size: 152064
+        intermediate_size: 18944
+        qkv_has_bias: true
+        rms_norm_eps: 1.0e-06
+        theta: 1000000.0
+        max_position_embedding: 131072
+        emb_dropout_prob: 0.0
+        eos_token_id: 151643
+        pad_token_id: 151643
+        compute_dtype: bfloat16
+        layernorm_compute_type: float32
+        softmax_compute_type: float16
+        rotary_dtype: float32
+        param_init_type: float32
+        use_past: false
+        extend_method: None
+        use_flash_attention: true
+        fine_grain_interleave: 1
+        qkv_concat: false
+        block_size: 32
+        num_blocks: 128
+        offset: 0
+        checkpoint_name_or_path: ''
+        repetition_penalty: 1
+        max_decode_length: 512
+        top_k: 0
+        top_p: 0.8
+        do_sample: false
+        compute_in_2d: true
+        rotary_pct: 1.0
+        rotary_emb_base: 1000000
+        kv_channels: 128
+        seq_length: 8192
+        use_eod_attn_mask_compression: true
+        parallel_config:
+          data_parallel: 2
+          model_parallel: 4
+          pipeline_stage: 1
+          expert_parallel: 1
+          use_seq_parallel: false
+          micro_batch_num: 1
+          vocab_emb_dp: true
+          context_parallel: 1
+      arch:
+        type: LlamaForCausalLM
+    processor:
+      return_tensors: ms
+      tokenizer:
+        model_max_length: 32768
+        vocab_file: ''
+        merges_file: ''
+        unk_token: <|endoftext|>
+        eos_token: <|endoftext|>
+        pad_token: <|endoftext|>
+        type: Qwen2Tokenizer
+      type: Qwen2Processor
+    use_parallel: true
+    parallel_config:
+      data_parallel: 2
+      model_parallel: 4
+      pipeline_stage: 1
+      expert_parallel: 1
+      use_seq_parallel: false
+      micro_batch_num: 1
+      vocab_emb_dp: true
+      context_parallel: 1
+    recompute_config:
+      recompute: false
+      select_recompute: false
+      select_comm_recompute: false
+      parallel_optimizer_comm_recompute: false
+      mp_comm_recompute: true
+      recompute_slice_activation: false
+reward_config:
+  verifier_function:
+  - qwen_accuracy_reward
+  - format_reward
+  verifier_weight:
+  - 1.0
+  - 1.0
+generate_config:
+  model_config: ./model_configs/qwen_grpo/qwen2_5_7b/predict_qwen2_5_7b_instruct.yaml
+  load: Qwen2.5-7B
+  infer_model_batch_size: 2
+  offset: 0
+  use_eod_attn_mask_compression: false
+  use_vllm: VLLM
+  parallel_config:
+    data_parallel: 2
+    model_parallel: 4
+    pipeline_stage: 1
+    expert_parallel: 1
+    use_seq_parallel: false
+    micro_batch_num: 1
+    vocab_emb_dp: true
+    context_parallel: 1
+  block_size: 16
+  max_model_len: 32768
+  max_num_batched_tokens: 32768
+  max_num_seqs: 1024
+  max_prompt_length: 2048
+  num_scheduler_steps: 32
+  gpu_memory_utilization: 0.5
+  trust_remote_code: true
+  sampling_config:
+    bos_token_id: 151643
+    pad_token_id: 151643
+    eos_token_id:
+    - 151645
+    - 151643
+    max_tokens: 512
+    min_tokens: 2
+    temperature: 0.8
+    repetition_penalty: 1.05
+    top_p: 0.8
+    top_k: 20
+    detokenize: false
+    logprobs: 1.0
+    min_p: 0.01
+  reconstructed_model_config:
+    run_mode: predict
+    model:
+      model_config:
+        type: LlamaConfig
+        batch_size: 1
+        hidden_size: 3584
+        num_layers: 28
+        num_heads: 28
+        n_kv_heads: 4
+        vocab_size: 152064
+        intermediate_size: 18944
+        max_position_embeddings: 32768
+        qkv_has_bias: true
+        rms_norm_eps: 1.0e-06
+        theta: 1000000.0
+        emb_dropout_prob: 0.0
+        eos_token_id:
+        - 151645
+        - 151643
+        pad_token_id: 151643
+        bos_token_id: 151643
+        compute_dtype: bfloat16
+        layernorm_compute_type: float32
+        softmax_compute_type: float16
+        rotary_dtype: float32
+        param_init_type: float32
+        use_past: true
+        use_flash_attention: true
+        block_size: 32
+        num_blocks: 1024
+        use_past_shard: false
+        offset: 0
+        checkpoint_name_or_path: ''
+        repetition_penalty: 1.0
+        max_decode_length: 512
+        min_decode_length: 2
+        temperature: 1.2
+        top_k: 50
+        top_p: 1.0
+        do_sample: true
+        is_dynamic: true
+        qkv_concat: false
+        auto_map:
+          AutoTokenizer:
+          - qwen2_tokenizer.Qwen2Tokenizer
+          - null
+        parallel_config:
+          data_parallel: 2
+          model_parallel: 4
+          pipeline_stage: 1
+          expert_parallel: 1
+          use_seq_parallel: false
+          micro_batch_num: 1
+          vocab_emb_dp: true
+          context_parallel: 1
+        seq_length: 8192
+      arch:
+        type: LlamaForCausalLM
+    processor:
+      return_tensors: ms
+      tokenizer:
+        model_max_length: 32768
+        vocab_file: /path/vocab.json
+        merges_file: /path/merges.txt
+        unk_token: <|endoftext|>
+        pad_token: <|endoftext|>
+        eos_token: <|im_end|>
+        chat_template: '{% for message in messages %}{% if loop.first and messages[0][''role'']
+          != ''system'' %}{{ ''<|im_start|>system
+
+          You are a helpful assistant.<|im_end|>
+
+          '' }}{% endif %}{{''<|im_start|>'' + message[''role''] + ''
+
+          '' + message[''content''] + ''<|im_end|>'' + ''
+
+          ''}}{% endfor %}{% if add_generation_prompt %}{{ ''<|im_start|>assistant
+
+          '' }}{% endif %}'
+        type: Qwen2Tokenizer
+        auto_register: qwen2_tokenizer.Qwen2Tokenizer
+      type: Qwen2Processor
+    context:
+      mode: 0
+      device_target: Ascend
+      max_call_depth: 10000
+      max_device_memory: 55GB
+      save_graphs: false
+      save_graphs_path: ./graph
+      jit_config:
+        jit_level: O0
+      memory_optimize_level: O0
+      ascend_config:
+        precision_mode: must_keep_origin_dtype
+    use_parallel: true
+    parallel_config:
+      data_parallel: 2
+      model_parallel: 4
+      pipeline_stage: 1
+      expert_parallel: 1
+      use_seq_parallel: false
+      micro_batch_num: 1
+      vocab_emb_dp: true
+      context_parallel: 1
+monitor_config:
+  host_monitor_interval: -1.0
+  host_monitor_steps: []
+  host_memory_protection: false
+  host_max_memory_threshold: 0.95
+profiler_config:
+  profile: false
+  mstx: false
+  stage: all
+  profile_save_path: ./profiler_data
+  profile_level: level1
+  profile_with_memory: false
+  profile_with_cpu: true
+  profile_with_npu: true
+  profile_with_stack: false
+  profile_step_start: 0
+  profile_step_end: 1
+  profile_analysis: false
+  profile_ranks: all
+context:
+  mode: 0
+  device_target: Ascend
+  max_call_depth: 10000
+  max_device_memory: 55GB
+  save_graphs: false
+  save_graphs_path: ./graph
+  jit_config:
+    jit_level: O0
+  memory_optimize_level: O0
+  ascend_config:
+    precision_mode: must_keep_origin_dtype

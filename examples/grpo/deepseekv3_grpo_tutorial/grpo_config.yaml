@@ -7,7 +7,6 @@ rl_config:
   tokenizer_dir: "/path/"
   epochs: 10
   batch_size: 1
-  sink_size: 1
   seq_length: 8192
   use_parallel: True
   load_ckpt_format: "ms_safetensors"
@@ -16,7 +15,6 @@ rl_config:
   save_strategy_dir: "./strategy/"  # need to be set
   save_data_file: "/tmp/grpo.mindrecord"
   tokenizer_type: 'deepseek'
-  packing: True
   pack_num: 1
 
   save_prompt_completions_data: True

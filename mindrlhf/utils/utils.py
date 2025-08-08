@@ -40,7 +40,7 @@ __all__ = [
     "profiler_step",
     "mstx_timer_decorator",
     "set_infer_dp_size",
-    "get_infer_dp_size"
+    "get_infer_dp_size",
 ]
 
 import os
@@ -80,7 +80,6 @@ from mindformers.tools.ckpt_transform import TransformCkpt
 from mindformers import logger
 
 import mindrlhf.utils.reshard_optimizer as reshard_optimizer
-from mindrlhf.configs.grpo_configs import GRPOConfig
 
 
 PERF_STATS = False
@@ -240,11 +239,7 @@ def _get_model_parallel_group(mp):
 
 
 def _get_pipeline_group():
-    """
-
-    Calculate the communication group between all pipeline stages
-
-    """
+    """Calculate the communication group between all pipeline stages."""
     rank = get_rank()
     stage_nums = auto_parallel_context().get_pipeline_stages()
     device_nums = get_group_size()
@@ -497,10 +492,10 @@ def ckpt_transfer_for_generate(load_sft_checkpoint):
     )
 
 
-def set_perf_stats(grpo_config: GRPOConfig):
+def set_perf_stats(flag: bool):
     """set performance stats"""
     global PERF_STATS
-    if grpo_config.rl_config.performance_stats:
+    if flag:
         logger.info("grpo performance statistics is on")
         PERF_STATS = True
 
@@ -687,7 +682,7 @@ def load_safetensors(safetensors_path, load_ckpt_format, network, grpo_model, pr
                         name_map.update({f"{prefix}{k}": k})
                         param_name_map_dict[f"{prefix}{k}"] = os.path.basename(checkpoint_file)
             if get_rank() == 0:
-                with open(os.path.join(safetensors_path, 'param_name_map.json'), "w", encoding="utf-8") as f:
+                with open(os.path.join(safetensors_path, "param_name_map.json"), "w", encoding="utf-8") as f:
                     json.dump(param_name_map_dict, f, ensure_ascii=False, indent=4)
             else:
                 # wait for rank 0 to finish
@@ -775,17 +770,18 @@ def get_grpo_profiler(profiler_config, role: str = None):
     if not profiler_this_rank:
         return None
 
-    if args.profile_level == 'levelNone':
+    if args.profile_level == "levelNone":
         profiler_level = ms.profiler.ProfilerLevel.LevelNone
-    elif args.profile_level == 'level0':
+    elif args.profile_level == "level0":
         profiler_level = ms.profiler.ProfilerLevel.Level0
-    elif args.profile_level == 'level1':
+    elif args.profile_level == "level1":
         profiler_level = ms.profiler.ProfilerLevel.Level1
-    elif args.profile_level == 'level2':
+    elif args.profile_level == "level2":
         profiler_level = ms.profiler.ProfilerLevel.Level2
     else:
-        raise ValueError(f"profiler_level only supports level0,"
-                         f" 1, 2, and level_none, but gets {args.profile_level}")
+        raise ValueError(
+            f"profiler_level only supports level0," f" 1, 2, and level_none, but gets {args.profile_level}"
+        )
 
     base_path = args.profile_save_path
     if role:
@@ -821,7 +817,8 @@ def get_grpo_profiler(profiler_config, role: str = None):
         activities=activities,
         schedule=ms.profiler.schedule(wait=0, warmup=0, active=active, repeat=1, skip_first=skip_first),
         on_trace_ready=ms.profiler.tensorboard_trace_handler(profile_save_path, analyse_flag=args.profile_analysis),
-        experimental_config=experimental_config)
+        experimental_config=experimental_config,
+    )
 
     return prof
 
@@ -841,8 +838,9 @@ def profiler_start(profiler_config, role="profiler", profiler_iteration=None):
     if not profiler_config:
         return None
     if profiler_iteration is not None and (
-            profiler_iteration < profiler_config.profile_step_start or
-            profiler_iteration >= profiler_config.profile_step_end):
+        profiler_iteration < profiler_config.profile_step_start
+        or profiler_iteration >= profiler_config.profile_step_end
+    ):
         return None
     if profiler_config.stage != "all":
         if isinstance(profiler_config.stage, str):
@@ -872,6 +870,7 @@ def profiler_step(profiler):
 
 def mstx_timer_decorator(func):
     """Decorator for MindSpore mstx timer profiling."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         mstx_id = ms.profiler.mstx.range_start(func.__qualname__)

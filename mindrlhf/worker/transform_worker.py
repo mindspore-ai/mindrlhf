@@ -15,19 +15,16 @@
 
 import os
 import time
+from omegaconf import DictConfig
 
-# mindspore
 import mindspore as ms
 from mindspore.communication import get_rank
 
-# mindformers
 from mindformers import logger
 
-# mindrlhf
-from mindrlhf.worker.worker import Worker
 from mindrlhf.configs.grpo_configs import VllmMode
 from mindrlhf.utils import TransformParametersD2D, TransformParametersD2DForDSv3, TimeConsumingCollector
-from mindrlhf.configs.grpo_configs import GRPOConfig
+from mindrlhf.worker.worker import Worker
 
 
 def match_func(s1, s2):
@@ -78,8 +75,8 @@ def match_func_dkv3(s1, s2):
 
 def match_func_policy2ref(s1, s2):
     """match_func_policy2ref"""
-    s1 = s1[s1.find(".") + 1:]
-    s1 = s1[s1.find(".") + 1:]
+    s1 = s1[s1.find(".") + 1 :]
+    s1 = s1[s1.find(".") + 1 :]
     return s1 == s2
 
 
@@ -146,19 +143,18 @@ class TransformWorker(Worker):
 
     def __init__(
         self,
-        grpo_config: GRPOConfig,
+        grpo_config: DictConfig,
         sft_model_config_train,
         sft_train_model,
         sft_infer_model,
         ref_model,
         old_policy_model,
     ):
-        super(TransformWorker, self).__init__()
+        super(TransformWorker, self).__init__(config=grpo_config, worker_type=Worker.WorkerType.TRANSFORM)
         logger.info("Start prepare for parameter resharding in sft training.")
         self.grpo_config = grpo_config
         self.sync_ref_model = grpo_config.ref_config.sync_ref_model
         self.ref_model_sync_steps = grpo_config.ref_config.ref_model_sync_steps
-        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
         # TODO: save strategy
         ms.mint.distributed.barrier()
         src_merged_stra = os.path.join(self.save_strategy_dir, "merge_strategy", "train_policy_merged_strategy.ckpt")
@@ -175,7 +171,7 @@ class TransformWorker(Worker):
                     os.path.join(self.save_strategy_dir, "infer_policy_strategy"), dst_merged_stra
                 )
                 ms.merge_pipeline_strategys(os.path.join(self.save_strategy_dir, "infer_ref_strategy"), ref_merged_stra)
-                if grpo_config.rl_config.enable_oldpolicy:
+                if self.is_old_policy_enabled:
                     ms.merge_pipeline_strategys(
                         os.path.join(self.save_strategy_dir, "old_policy_strategy"), old_merged_stra
                     )
@@ -183,9 +179,8 @@ class TransformWorker(Worker):
                 logger.info("Waiting for main worker to merge strategies.")
                 time.sleep(10)
             ms.mint.distributed.barrier()
-            model_type = "deepseekv3" if "deepseek" in grpo_config.rl_config.model_name else ""
+            model_type = "deepseekv3" if "deepseek" in self.model_name else ""
             transform_args = {}
-            reshard_mode = grpo_config.rl_config.reshard_mode
             if model_type == "deepseekv3":
                 transform_args = {
                     "n_head": sft_model_config_train.num_heads,
@@ -202,11 +197,16 @@ class TransformWorker(Worker):
                         src_merged_stra,
                         dst_merged_stra,
                         match_func_dkv3,
-                        reshard_mode,
+                        self.reshard_mode,
                     )
                 else:
                     self.reshard_param_policy2infer = TransformParametersD2D(
-                        sft_train_model, sft_infer_model, src_merged_stra, dst_merged_stra, match_func, reshard_mode
+                        sft_train_model,
+                        sft_infer_model,
+                        src_merged_stra,
+                        dst_merged_stra,
+                        match_func,
+                        self.reshard_mode,
                     )
             else:
                 if model_type == "deepseekv3":
@@ -217,7 +217,7 @@ class TransformWorker(Worker):
                         src_merged_stra,
                         dst_merged_stra,
                         match_func_dkv3_vllm,
-                        reshard_mode,
+                        self.reshard_mode,
                     )
                 else:
                     self.reshard_param_policy2infer = TransformParametersD2D(
@@ -226,7 +226,7 @@ class TransformWorker(Worker):
                         src_merged_stra,
                         dst_merged_stra,
                         match_func_vllm,
-                        reshard_mode,
+                        self.reshard_mode,
                     )
             ms.communication.comm_func.barrier()
             self.reshard_param_policy2ref = TransformParametersD2D(
@@ -235,7 +235,7 @@ class TransformWorker(Worker):
                 src_merged_stra,
                 ref_merged_stra,
                 match_func=match_func_policy2ref,
-                reshard_mode=reshard_mode,
+                reshard_mode=self.reshard_mode,
             )
             if grpo_config.rl_config.enable_oldpolicy:
                 self.old_policy_param_policy2old = TransformParametersD2D(
@@ -244,7 +244,7 @@ class TransformWorker(Worker):
                     src_merged_stra,
                     old_merged_stra,
                     match_func=match_func_policy2ref,
-                    reshard_mode=reshard_mode,
+                    reshard_mode=self.reshard_mode,
                 )
             ms.communication.comm_func.barrier()
 

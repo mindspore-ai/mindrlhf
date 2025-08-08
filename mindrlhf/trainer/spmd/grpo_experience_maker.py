@@ -136,7 +136,7 @@ class GRPOExperienceMaker:
 
         verifier_function = []
         for reward_func_str in verifier_function_list:
-            if "qwen" in self.grpo_config.rl_config.model_name and reward_func_str == "accuracy_reward":
+            if "qwen2.5" in self.grpo_config.rl_config.model_name and reward_func_str == "accuracy_reward":
                 reward_func_str = "qwen_accuracy_reward"
             if reward_func_str == "accuracy_reward":
                 verifier_function.append(accuracy_reward)
@@ -312,9 +312,7 @@ class GRPOExperienceMaker:
             (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
         )
         if self.grpo_config.rl_config.calculate_entropy:
-            all_entropy = np.zeros(
-                (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
-            )
+            all_entropy = np.zeros((len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32)
             all_responses_mask = np.zeros(
                 (len(packed_samples), self.grpo_config.rl_config.seq_length), dtype=np.float32
             )
@@ -337,12 +335,7 @@ class GRPOExperienceMaker:
                     "constant",
                     constant_values=self.grpo_config.generate_config.sampling_config.pad_token_id,
                 )
-                responses_mask = np.pad(
-                    responses_mask,
-                    ((0, 0), (0, 1)),
-                    "constant",
-                    constant_values=0,
-                )
+                responses_mask = np.pad(responses_mask, ((0, 0), (0, 1)), "constant", constant_values=0)
 
                 samples_tensor = Tensor(prompt_completion_ids[:, 1:], dtype=ms.int32)
                 input_prompt_ids = Tensor(prompt_completion_ids[:, :-1], dtype=ms.int32)
@@ -363,11 +356,10 @@ class GRPOExperienceMaker:
                 end_index = (idx + 1) * batch_size
                 all_old_per_token_logps[start_index:end_index, :] = old_per_token_logps
                 if self.grpo_config.rl_config.calculate_entropy:
-                    all_entropy[start_index: end_index, :] = generation_entropy
-                    all_responses_mask[start_index: end_index, :] = responses_mask
+                    all_entropy[start_index:end_index, :] = generation_entropy
+                    all_responses_mask[start_index:end_index, :] = responses_mask
         if self.grpo_config.rl_config.calculate_entropy:
-            generation_entropy_mean = np.sum(
-                all_entropy * all_responses_mask) / (np.sum(all_responses_mask) + 1e-8)
+            generation_entropy_mean = np.sum(all_entropy * all_responses_mask) / (np.sum(all_responses_mask) + 1e-8)
         else:
             generation_entropy_mean = None
         self.old_policy.offload()
@@ -777,17 +769,14 @@ class GRPOExperienceMaker:
         all_old_per_token_logps = None
         if self.grpo_config.rl_config.enable_oldpolicy:
             old_log_prob_profiler = profiler_start(
-                self.grpo_config.profiler_config, role="actor_old_log_prob",
-                profiler_iteration=self.profiler_iteration
+                self.grpo_config.profiler_config, role="actor_old_log_prob", profiler_iteration=self.profiler_iteration
             )
             generation_entropy, all_old_per_token_logps = self._generate_old_logps(packed_samples)
             if self.grpo_config.rl_config.calculate_entropy:
                 logger.info(f"generation_entropy is {generation_entropy}")
                 if self.tensor_writer:
                     self.tensor_writer.add_scalar(
-                        "Training_grpo/generation-entropy",
-                        generation_entropy,
-                        global_step=self.make_exp_step
+                        "Training_grpo/generation-entropy", generation_entropy, global_step=self.make_exp_step
                     )
 
             profiler_step(old_log_prob_profiler)

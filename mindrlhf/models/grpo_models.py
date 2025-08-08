@@ -20,10 +20,10 @@ from mindspore import Tensor, ops, mint, Parameter
 from mindspore.ops import operations as P
 from mindformers.models.utils import lazy_inline
 from mindformers import logger
-from mindrlhf.utils.generator import GeneratorMixin
-from mindrlhf.configs import GRPOConfig
-from .base_model import BaseModel
+from omegaconf import DictConfig
 
+from mindrlhf.utils.generator import GeneratorMixin
+from .base_model import BaseModel
 
 
 class CausalLMHybrid(BaseModel):
@@ -31,7 +31,7 @@ class CausalLMHybrid(BaseModel):
     CausalLMHybrid
     """
 
-    def __init__(self, model_config, grpo_config: GRPOConfig, is_training=True):
+    def __init__(self, model_config, grpo_config: DictConfig, is_training=True):
         super(CausalLMHybrid, self).__init__()
         if not is_training:
             model_config.dropout_rate = 0.0
@@ -157,7 +157,7 @@ class CausalLMHybrid(BaseModel):
         actual_sequence_length=None,
         return_full_logit=False,
         is_ref=False,
-        calculate_entropy=False
+        calculate_entropy=False,
     ):
         """
         construct function for CausalLMHybrid
@@ -169,7 +169,8 @@ class CausalLMHybrid(BaseModel):
                 bsz, _ = actual_sequence_length.shape
                 if bsz > 1:
                     actual_sequence_length = self.offset_actual_sequence_length(
-                        actual_sequence_length, input_ids.shape[1])
+                        actual_sequence_length, input_ids.shape[1]
+                    )
         if self.model_type == "llama":
             if self.model.phase == "train":
                 tokens = input_ids
@@ -234,7 +235,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
     """GRPOModel"""
 
     @lazy_inline
-    def __init__(self, grpo_config: GRPOConfig, policy_model):
+    def __init__(self, grpo_config: DictConfig, policy_model):
         super(GRPOModel, self).__init__()
         self.grpo_config = grpo_config
         self.beta = grpo_config.rl_config.beta
@@ -335,20 +336,19 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         ops.assign(self.clipfrac, Parameter(Tensor(0, mstype.float32), name="clipfrac", requires_grad=False))
 
     def construct(
-            self,
-            prompt_completion_ids, # [bs, seq_len]
-            responses_mask,  # [bs, seq_len]
-            ref_per_token_logps, # [bs, seq_len]
-            advantages,  # [bs, seq_len]
-            actual_sequence_length,  # [bs, packed_sample_num]
-            sample_index, # [bs, seq_len]
-            sample_valid_length,  # [bs, packed_sample_num]
-            old_per_token_logps  # [bs, seq_len]
-        ):
-        """ construct function for GRPOModel """
+        self,
+        prompt_completion_ids,  # [bs, seq_len]
+        responses_mask,  # [bs, seq_len]
+        ref_per_token_logps,  # [bs, seq_len]
+        advantages,  # [bs, seq_len]
+        actual_sequence_length,  # [bs, packed_sample_num]
+        sample_index,  # [bs, seq_len]
+        sample_valid_length,  # [bs, packed_sample_num]
+        old_per_token_logps,  # [bs, seq_len]
+    ):
+        """construct function for GRPOModel"""
         pack_sample_num = sample_valid_length.shape[1]
         real_sample_num = ops.sum(sample_valid_length != 1, dtype=mstype.int32)
-
         input_ids = prompt_completion_ids[:, :-1]  # [bs, seq_len]
         samples = prompt_completion_ids[:, 1:]  # [bs, seq_len]
         actual_sequence_length = self.offset_actual_sequence_length(actual_sequence_length, input_ids.shape[1])
@@ -359,7 +359,8 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         log_ratio = self.compute_approx_kl(per_token_logps, ref_per_token_logps)
 
         kl_mean = self.masked_mean(
-            log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1)
+            log_ratio, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1
+        )
         kl_loss = kl_mean.sum() / real_sample_num
 
         if not self.enable_oldpolicy:
@@ -367,12 +368,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         ratio = self.exp(per_token_logps - old_per_token_logps)
         if self.enable_full_monitor:
             old_log_ratio = self.masked_mean(
-                ratio,
-                responses_mask,
-                sample_index,
-                pack_sample_num,
-                sample_valid_length,
-                dim=-1
+                ratio, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1
             ).mean()
             ops.assign_add(self.old_log_ratio, old_log_ratio)
         surr1 = ratio * advantages
@@ -382,12 +378,7 @@ class GRPOModel(nn.Cell, GeneratorMixin):
             if self.enable_full_monitor:
                 clipfrac = mint.gt(surr1, surr2)
                 clipfrac = self.masked_mean(
-                    clipfrac,
-                    responses_mask,
-                    sample_index,
-                    pack_sample_num,
-                    sample_valid_length,
-                    dim=-1
+                    clipfrac, responses_mask, sample_index, pack_sample_num, sample_valid_length, dim=-1
                 ).mean()
                 ops.assign_add(self.clipfrac, clipfrac)
         else:
@@ -402,8 +393,9 @@ class GRPOModel(nn.Cell, GeneratorMixin):
         loss = actor_loss + kl_loss * self.beta
         return loss
 
+
 class GRPOModelInfer(nn.Cell):
-    def __init__(self, grpo_config: GRPOConfig, policy_model):
+    def __init__(self, grpo_config: DictConfig, policy_model):
         super(GRPOModelInfer, self).__init__()
         self.grpo_model = GRPOModel(grpo_config, policy_model)
 
@@ -412,7 +404,7 @@ class GRPOModelInfer(nn.Cell):
 
 
 class GRPOModelTrain(nn.Cell):
-    def __init__(self, grpo_config: GRPOConfig, policy_model):
+    def __init__(self, grpo_config: DictConfig, policy_model):
         super(GRPOModelTrain, self).__init__()
         self.grpo_model_train = GRPOModel(grpo_config, policy_model)
 

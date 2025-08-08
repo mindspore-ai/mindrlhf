@@ -13,12 +13,17 @@
 # limitations under the License.
 # ============================================================================
 """save prompt completions test case"""
-
 import os
-import pytest
+import sys
 
+WORKDIR = os.path.dirname(os.path.abspath(__file__))
+mindrlhf_path = os.path.join(WORKDIR, "../../")
+mindformers_path = os.path.join(WORKDIR, "mindformers")
+sys.path = [mindrlhf_path, mindformers_path] + sys.path
+
+from mindrlhf.configs.grpo_configs import RLConfig
 from mindrlhf.utils import MetricData, save_prompt_completions_data
-from mindrlhf.configs.grpo_configs import GRPOConfig
+from tests.mark_utils import arg_mark
 
 prompts = [
     "User: How many of the following are equal to $x^x+x^x$ for all $x>0$?\n$\\textbf{I:}$ $2x^x$ $\\qquad"
@@ -34,78 +39,66 @@ completions = [
     "\\) is:\n\n\\[\n\\boxed{[-1, 1]}\n\\]",
     "Sum of numerator and denominator: \\(277 + 280 = 557\\).\n\n\\boxed{557}",
 ]
-answer_parsed_lst = [
-    "$[-1,1]$",
-    "557",
-]
-solution = [
-    "$[-1,1]$",
-    "$97$",
-]
+answer_parsed_lst = ["$[-1,1]$", "557"]
+solution = ["$[-1,1]$", "$97$"]
 rewards = [1.0, 0.0]
 responses_length_list = [200, 100]
 
 
-@pytest.mark.save_prompt_completions
+@arg_mark(plat_marks=["platform_ascend910b"], level_mark="level0", card_mark="dryrun", essential_mark="essential")
 def test_save_interval_1():
     """
     Feature: transform param with zero redundancy
     Description: dptppp transform
     Expectation: Run success
     """
-    config_path = 'qwen2_5/grpo_config_st.yaml'
-    grpo_config = GRPOConfig(config_path)
-    grpo_config.rl_config.save_prompt_completions_data = True
-    grpo_config.rl_config.save_prompt_completions_interval = 1
-    grpo_config.rl_config.save_prompt_completions_dir = './test_save_interval_1'
+    rl_config = RLConfig()
+    rl_config.save_prompt_completions_data = True
+    rl_config.save_prompt_completions_interval = 1
+    rl_config.save_prompt_completions_dir = "./test_save_interval_1"
 
     for make_exp_step in range(0, 10):
-        if (grpo_config.rl_config.save_prompt_completions_data and
-                make_exp_step % grpo_config.rl_config.save_prompt_completions_interval == 0):
+        if rl_config.save_prompt_completions_data and make_exp_step % rl_config.save_prompt_completions_interval == 0:
             save_kwargs = {
                 MetricData.QUESTION.value: prompts,
                 MetricData.ANSWER.value: completions,
                 MetricData.PARSED_ANSWER.value: answer_parsed_lst,
                 MetricData.SOLUTION.value: solution,
                 MetricData.REWARD_PER_QUESTION.value: rewards,
-                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list
+                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list,
             }
-            save_prompt_completions_data(grpo_config.rl_config.save_prompt_completions_dir, make_exp_step,
-                                         **save_kwargs)
+            save_prompt_completions_data(rl_config.save_prompt_completions_dir, make_exp_step, **save_kwargs)
     for i in range(10):
         filename = f"prompt_completions_step_{i}.json"
-        assert os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
+        assert os.path.isfile(os.path.join(rl_config.save_prompt_completions_dir, filename))
 
 
-@pytest.mark.save_prompt_completions
+@arg_mark(plat_marks=["platform_ascend910b"], level_mark="level0", card_mark="dryrun", essential_mark="essential")
 def test_save_interval_5():
     """
     Feature: transform param with zero redundancy
     Description: dptppp transform
     Expectation: Run success
     """
-    config_path = 'qwen2_5/grpo_config_st.yaml'
-    grpo_config = GRPOConfig(config_path)
-    grpo_config.rl_config.save_prompt_completions_data = True
-    grpo_config.rl_config.save_prompt_completions_interval = 5
-    grpo_config.rl_config.save_prompt_completions_dir = './test_save_interval_5'
+    rl_config = RLConfig()
+    rl_config.save_prompt_completions_data = True
+    rl_config.save_prompt_completions_interval = 5
+    rl_config.save_prompt_completions_dir = "./test_save_interval_5"
 
     for make_exp_step in range(0, 10):
-        if (grpo_config.rl_config.save_prompt_completions_data and
-                make_exp_step % grpo_config.rl_config.save_prompt_completions_interval == 0):
+        if rl_config.save_prompt_completions_data and make_exp_step % rl_config.save_prompt_completions_interval == 0:
             save_kwargs = {
                 MetricData.QUESTION.value: prompts,
                 MetricData.ANSWER.value: completions,
                 MetricData.PARSED_ANSWER.value: answer_parsed_lst,
                 MetricData.SOLUTION.value: solution,
                 MetricData.REWARD_PER_QUESTION.value: rewards,
-                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list
+                MetricData.COMPLETION_LENGTH_PER_QUESTION.value: responses_length_list,
             }
-            save_prompt_completions_data(grpo_config.rl_config.save_prompt_completions_dir, make_exp_step,
-                                         **save_kwargs)
+            save_prompt_completions_data(rl_config.save_prompt_completions_dir, make_exp_step, **save_kwargs)
     for i in range(10):
         filename = f"prompt_completions_step_{i}.json"
         if i in (0, 5):
-            assert os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
+            assert os.path.isfile(os.path.join(rl_config.save_prompt_completions_dir, filename))
         else:
-            assert not os.path.isfile(os.path.join(grpo_config.rl_config.save_prompt_completions_dir, filename))
+            assert not os.path.isfile(os.path.join(rl_config.save_prompt_completions_dir, filename))

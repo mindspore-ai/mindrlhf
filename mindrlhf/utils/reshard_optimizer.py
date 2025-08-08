@@ -13,7 +13,6 @@
 # limitations under the License.
 # ============================================================================
 """Reshard Optimizer"""
-
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 import itertools
@@ -64,6 +63,12 @@ class ReshardOptimizer:
             f"Reshard Optimizer is created successfully! src_parallel: {src_parallel}, "
             f"dst_parallel: {dst_parallel}, opt_communication_groups: {self.opt_communication_groups}"
         )
+        self.set_optimize_communication_groups(self.opt_communication_groups)
+
+    @classmethod
+    def set_optimize_communication_groups(cls, comm_group):
+        global OPT_COMMUNICATION_GROUPS
+        OPT_COMMUNICATION_GROUPS = comm_group
 
     def get_dst_layout(self, layout: Layout) -> Layout:
         """

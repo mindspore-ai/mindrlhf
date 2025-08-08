@@ -14,9 +14,9 @@
 # ============================================================================
 """MindRLHF configs."""
 __all__ = [
+    "GRPOConfigGenerator",
     "ActorConfig",
-    "AscendConfig",
-    "Context",
+    "ContextConfig",
     "GRPOConfig",
     "GenerateConfig",
     "RefConfig",
@@ -26,10 +26,10 @@ __all__ = [
     "SamplingConfig",
 ]
 
+from .utils import GRPOConfigGenerator
 from .grpo_configs import (
     ActorConfig,
-    AscendConfig,
-    Context,
+    ContextConfig,
     GRPOConfig,
     GenerateConfig,
     RefConfig,

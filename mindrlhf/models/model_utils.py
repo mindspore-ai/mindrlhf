@@ -14,18 +14,18 @@
 # ============================================================================
 """Model utils collection."""
 import os
+from omegaconf import DictConfig
 
 from mindformers import MindFormerConfig
 from mindformers.models.build_tokenizer import build_tokenizer
 from mindformers.models.llama import LlamaTokenizerFast
 
-from mindrlhf.configs.grpo_configs import GRPOConfig
 from .qwen2_5 import Qwen2_5Tokenizer
 
 
 def is_model_supported(model_name: str):
     """
-    Whether model is supported, only support qwen, llama, deepseek.
+    Whether model is supported, only support qwen2.5, llama, deepseek.
 
     Args:
         model_name (str): model name.
@@ -33,7 +33,7 @@ def is_model_supported(model_name: str):
     Returns:
         bool, whether supported.
     """
-    return model_name in ["qwen", "llama", "deepseek"]
+    return model_name in ["qwen2.5", "llama", "deepseek"]
 
 
 class TokenizerFactory:
@@ -42,12 +42,12 @@ class TokenizerFactory:
     """
 
     @classmethod
-    def init_tokenizer(cls, grpo_config: GRPOConfig):
+    def init_tokenizer(cls, grpo_config: DictConfig):
         """
         Create tokenizer instance.
 
         Args:
-            grpo_config (GRPOConfig): grpo config instance.
+            grpo_config (DictConfig): grpo config instance.
 
         Returns:
             Tokenizer, tokenizer.
@@ -58,7 +58,7 @@ class TokenizerFactory:
             raise FileNotFoundError(f"{tokenizer_dir} is not existed.")
         if not os.path.isdir(tokenizer_dir):
             raise NotADirectoryError(f"{tokenizer_dir} is not a directory.")
-        if tokenizer_type == "qwen":
+        if tokenizer_type == "qwen2.5":
             # For Qwen Model
             vocab_path = os.path.join(tokenizer_dir, "vocab.json")
             merges_file_path = os.path.join(tokenizer_dir, "merges.txt")
@@ -68,12 +68,15 @@ class TokenizerFactory:
             # e.g. When using Distill-Qwen Model,
             #      user should set model_name as 'qwen' and tokenizer_type as 'deepseek'
             sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
-            tokenizer = LlamaTokenizerFast(os.path.join(tokenizer_dir, "tokenizer.json"),
-                                           os.path.join(tokenizer_dir, "tokenizer.json"),
-                                           unk_token=sft_config_infer.processor.tokenizer.unk_token,
-                                           bos_token=sft_config_infer.processor.tokenizer.bos_token,
-                                           eos_token=sft_config_infer.processor.tokenizer.eos_token,
-                                           fast_tokenizer=True, trust_remote_code=True)
+            tokenizer = LlamaTokenizerFast(
+                os.path.join(tokenizer_dir, "tokenizer.json"),
+                os.path.join(tokenizer_dir, "tokenizer.json"),
+                unk_token=sft_config_infer.processor.tokenizer.unk_token,
+                bos_token=sft_config_infer.processor.tokenizer.bos_token,
+                eos_token=sft_config_infer.processor.tokenizer.eos_token,
+                fast_tokenizer=True,
+                trust_remote_code=True,
+            )
             return tokenizer
         if tokenizer_type == "llama":
             # For Llama Model
@@ -81,4 +84,4 @@ class TokenizerFactory:
             sft_config_infer.processor.tokenizer.tokenizer_file = tokenizer_dir
             sft_config_infer.processor.tokenizer.vocab_file = tokenizer_dir
             return build_tokenizer(sft_config_infer.processor.tokenizer)
-        raise ValueError(f"tokenizer_type should in [qwen, deepseek, llama], but get {tokenizer_type}")
+        raise ValueError(f"tokenizer_type should in [qwen2.5, deepseek, llama], but get {tokenizer_type}")

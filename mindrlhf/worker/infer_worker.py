@@ -12,35 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference Worker."""
-
 import os
 import time
-import numpy as np
+from omegaconf import DictConfig, OmegaConf
 
-import mindspore as ms
-from mindspore import Tensor
-from mindspore.communication import GlobalComm, get_rank
-from mindspore import context
-from mindspore import communication as D
+import numpy as np
 
 from mindformers import LlamaConfig
 from mindformers import MindFormerConfig
-from mindformers.trainer.utils import load_distributed_checkpoint
+from mindformers import logger
 from mindformers.core.context import build_context
 from mindformers.core.parallel_config import build_parallel_config
 from mindformers.parallel_core.inference.utils import generate_state_dict
-from mindformers import logger
-from research.deepseek3.deepseek3_config import DeepseekV3Config
+from mindformers.trainer.utils import load_distributed_checkpoint
 
-from mindrlhf.utils import transfer_from_str_to_bool, TimeConsumingCollector
-from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
+import mindspore as ms
+from mindspore import Tensor
+from mindspore import context
+from mindspore import communication as D
+from mindspore.communication import GlobalComm, get_rank
+
+import mindrlhf.utils.reshard_optimizer as reshard_optimizer
 from mindrlhf.configs.grpo_configs import VllmMode
+from mindrlhf.models.grpo_models import CausalLMHybrid, GRPOModelInfer
+from mindrlhf.utils import TimeConsumingCollector
+from mindrlhf.utils.strategy_utils import save_strategy_file
 from mindrlhf.utils.utils import get_valid_length_each_example, get_dp_rank, load_safetensors, enable_pynative_async
 from mindrlhf.worker.worker import Worker
-from mindrlhf.utils.strategy_utils import save_strategy_file
-import mindrlhf.utils.reshard_optimizer as reshard_optimizer
-from mindrlhf.configs.grpo_configs import GRPOConfig
-
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 DTYPE_STR = {ms.float16: "float16", ms.bfloat16: "bfloat16", ms.float32: "float32", ms.int8: "int8", ms.uint8: "uint8"}
 
@@ -48,73 +47,48 @@ DTYPE_STR = {ms.float16: "float16", ms.bfloat16: "bfloat16", ms.float32: "float3
 class InferWorker(Worker):
     """
     This class generates responses.
+
+    Args:
+        grpo_config (DictConfig): GRPO config instance.
+        args: Args will be removed in next release version.
+        **kwargs: Key word args.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, args, **kwargs):
-        """
-        Init infer worker.
+    SAVED_MODEL_CONFIG_YAML = "saved_infer_model_config.yaml"
 
-        Args:
-            grpo_config (GRPOConfig): GRPO config instance.
-            args: Args will be removed in next release version.
-            **kwargs: Key word args.
-        """
-        super().__init__()
-        logger.info("init InferWorker")
-        self.args = args
+    def __init__(self, grpo_config: DictConfig, **kwargs):
+        """Init infer worker."""
+        super().__init__(config=grpo_config, worker_type=Worker.WorkerType.INFER, **kwargs)
+        logger.info("Start init InferWorker")
         self.tokenizer = kwargs.get("tokenizer")
-        self.load_ckpt_format = grpo_config.rl_config.load_ckpt_format
-        sft_config_infer = MindFormerConfig(grpo_config.generate_config.model_config)
-        sft_config_infer.model.model_config.seq_length = grpo_config.rl_config.seq_length
-        sft_config_infer.use_parallel = grpo_config.rl_config.use_parallel
-        sft_config_infer.parallel_config = MindFormerConfig(**grpo_config.generate_config.parallel_config.param_dict)
-        logger.info(f"generate parallel_config:{sft_config_infer.parallel_config}")
-        sft_config_infer.model.model_config.offset = grpo_config.generate_config.offset
-        sft_config_infer.model.model_config.max_decode_length = grpo_config.generate_config.sampling_config.max_tokens
-        sft_config_infer.model.model_config.min_decode_length = grpo_config.generate_config.sampling_config.min_tokens
-        enable_compile_cache = transfer_from_str_to_bool(grpo_config.rl_config.enable_compile_cache)
-        self.use_parallel = grpo_config.rl_config.use_parallel
-        os.environ["RUN_MODE"] = sft_config_infer.run_mode
+        self.grpo_config = grpo_config
+        sft_config_infer = MindFormerConfig(**OmegaConf.to_container(self.reconstructed_model_config))
 
-        # Reentrancy protection for distributed init.
+        os.environ["RUN_MODE"] = sft_config_infer.run_mode
+        self.dump_mf_conf_to_yaml(sft_config_infer, "mf_infer_conf.yaml")
         if not GlobalComm.INITED:
-            logger.info(f"launch actor roll out sft_config_infer.use_parallel {sft_config_infer.use_parallel}")
-            sft_config_infer.context = grpo_config.context.param_dict
-            logger.info(f"sft_config_infer.context:{sft_config_infer.context}")
-            deterministic = grpo_config.rl_config.deterministic.lower() == "on"
-            logger.info(f"set deterministic: {deterministic}")
-            if deterministic:
-                ms.set_deterministic(True)
-                os.environ["HCCL_DETERMINISTIC"] = "true"
-                os.environ["TE_PARALLEL_COMPILER"] = "1"
-                os.environ["CUSTOM_MATMUL_SHUFFLE"] = "off"
-                os.environ["LCCL_DETERMINISTIC"] = "1"
             build_context(sft_config_infer)
         build_parallel_config(sft_config_infer)
-        context.set_context(enable_compile_cache=enable_compile_cache, compile_cache_path="./generate_cache")
+        context.set_context(
+            enable_compile_cache=self.grpo_config.rl_config.enable_compile_cache,
+            compile_cache_path=self.grpo_config.rl_config.compile_cache_path,
+        )
 
-        # init sft infer model
-        sft_config_infer.model.model_config.parallel_config = sft_config_infer.parallel_config
-        logger.info(f"sft_config_infer:\n{sft_config_infer}")
-
-        if args.model_name in ["qwen", "llama"]:
-            sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
-            sft_model_config_infer.model_name = "llama"
-        elif args.model_name == "deepseek":
-            sft_config_infer.model.model_config.moe_config = sft_config_infer.moe_config
-            sft_model_config_infer = DeepseekV3Config(**sft_config_infer.model.model_config)
-            sft_model_config_infer.model_name = "deepseek_infer"
+        if self.model_name in ["qwen2.5", "llama"]:
+            self.sft_model_config_infer = LlamaConfig(**sft_config_infer.model.model_config)
+            self.sft_model_config_infer.model_name = "llama"
+        elif self.model_name == "deepseek":
+            self.sft_model_config_infer = DeepseekV3Config(**sft_config_infer.model.model_config)
+            self.sft_model_config_infer.model_name = "deepseek_infer"
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
+            raise ValueError(f"model_name should in ['qwen2.5', 'llama','deepseek'], " f"but get {self.model_name}")
 
-        sft_model_config_infer.checkpoint_name_or_path = grpo_config.generate_config.load
-
-        self.grpo_config = grpo_config
-        self.sft_ckpt_path_infer = sft_model_config_infer.checkpoint_name_or_path
+        self.sft_ckpt_path_infer = self.grpo_config.generate_config.load
         # Must set this to None before building policy model.
-        sft_model_config_infer.checkpoint_name_or_path = None
-        self.sft_model_config_infer = sft_model_config_infer
+        self.sft_model_config_infer.checkpoint_name_or_path = None
         self.dp_rank_id = get_dp_rank(self.sft_model_config_infer.parallel_config.data_parallel)
+
+        self.dump_mf_conf_to_yaml(self.sft_model_config_infer, self.SAVED_MODEL_CONFIG_YAML)
 
         context.set_auto_parallel_context(parallel_mode="stand_alone", full_batch=False)
         sim_level = os.getenv("MS_SIMULATION_LEVEL")
@@ -126,14 +100,14 @@ class InferWorker(Worker):
         if self.use_vllm != VllmMode.ORIGIN:
             self.policy_model = self.__init_use_vllm()
             self.old_phase = self.policy_model.phase
-            self.policy_model.dp = sft_model_config_infer.parallel_config.data_parallel
+            self.policy_model.dp = self.sft_model_config_infer.parallel_config.data_parallel
         else:
             # no vllm
-            self.policy_model = CausalLMHybrid(sft_model_config_infer, self.grpo_config)
+            self.policy_model = CausalLMHybrid(self.sft_model_config_infer, self.grpo_config)
         context.set_auto_parallel_context(parallel_mode="semi_auto_parallel", full_batch=True)
         self.grpo_model_infer = GRPOModelInfer(self.grpo_config, self.policy_model)
         self.grpo_model_infer.set_train(False)
-        self.infer_pp_stage = sft_model_config_infer.parallel_config.pipeline_stage or 1
+        self.infer_pp_stage = self.sft_model_config_infer.parallel_config.pipeline_stage or 1
         if self.use_vllm == VllmMode.ORIGIN:
             self.grpo_model_infer.grpo_model.policy_model.model.add_flags_recursive(is_first_iteration=True)
             self.grpo_model_infer.grpo_model.policy_model.model.set_train(False)
@@ -141,7 +115,10 @@ class InferWorker(Worker):
             self.grpo_model_infer.grpo_model.policy_model.add_flags_recursive(is_first_iteration=True)
             self.grpo_model_infer.grpo_model.policy_model.set_train(False)
         self.on_device = True
-        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
+
+    @property
+    def load_ckpt_format(self):
+        return self.grpo_config.rl_config.load_ckpt_format
 
     def refresh_policy_model_phase(self):
         """
@@ -159,7 +136,7 @@ class InferWorker(Worker):
         from mindrlhf.third_party.vllm import package_version, LLM
         from vllm import SamplingParams
 
-        if self.args.resume_training:
+        if self.grpo_config.rl_config.resume_training:
             logger.warning("Enable resume_training, skip loading infer model weights")
             from vllm_mindspore.model_executor.models.mf_models.qwen2 import Qwen2ForCausalLM
             from mindrlhf.third_party.vllm.qwen2 import load_weights
@@ -178,7 +155,6 @@ class InferWorker(Worker):
             f"gpu_memory_utilization: {self.grpo_config.generate_config.gpu_memory_utilization}, "
             f"seed: {self.dp_rank_id}"
         )
-        vllm_start_time = time.time()
         if package_version.startswith("0.8"):
             from mindrlhf.third_party.vllm.vllm_v_general import initialize_parallel_state
 
@@ -497,8 +473,8 @@ class InferWorker(Worker):
                 strategy_path,
             )
             return
-        load_ckpt_func = load_distributed_checkpoint if self.use_parallel else ms.load_checkpoint
-        logger.info(f"use_parallel is {self.use_parallel} {load_ckpt_func}")
+        load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
+        logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel} {load_ckpt_func}")
         if self.sft_ckpt_path_infer:
             self.on_device = True
             param_dict = load_ckpt_func(self.sft_ckpt_path_infer)

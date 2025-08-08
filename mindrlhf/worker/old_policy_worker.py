@@ -11,27 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Reference Worker """
-
-# python
+"""Reference Worker."""
 import os
+
 import numpy as np
+from omegaconf import DictConfig, OmegaConf
+
+from mindformers import LlamaConfig
+from mindformers import MindFormerConfig
+from mindformers import logger
+from mindformers.trainer.utils import load_distributed_checkpoint
 
 import mindspore as ms
-from mindspore.communication import get_rank
 from mindspore import context, ops
-
-from mindformers import MindFormerConfig
-from mindformers.trainer.utils import load_distributed_checkpoint
-from mindformers import LlamaConfig
-from mindformers import logger
-from research.deepseek3.deepseek3_config import DeepseekV3Config
+from mindspore.communication import get_rank
 
 from mindrlhf.models.grpo_models import CausalLMHybrid
-from mindrlhf.worker.worker import Worker
 from mindrlhf.utils import TimeConsumingCollector
-from mindrlhf.configs.grpo_configs import GRPOConfig
 from mindrlhf.utils.utils import load_safetensors
+from mindrlhf.worker.worker import Worker
+from research.deepseek3.deepseek3_config import DeepseekV3Config
 
 
 class OldPolicyWorker(Worker):
@@ -39,52 +38,41 @@ class OldPolicyWorker(Worker):
     This class generates responses.
     """
 
-    def __init__(self, grpo_config: GRPOConfig, args):
-        super().__init__()
+    SAVED_MODEL_CONFIG_YAML = "saved_old_policy_model_config.yaml"
+
+    def __init__(self, grpo_config: DictConfig, **kwargs):
+        super().__init__(config=grpo_config, worker_type=Worker.WorkerType.OLD_POLICY, **kwargs)
         logger.info("init OldPolicyWorker")
-        self.args = args
         self.grpo_config = grpo_config
-        self.load_ckpt_format = self.grpo_config.rl_config.load_ckpt_format
-        old_policy_config = MindFormerConfig(grpo_config.actor_config.model_config)
-        old_policy_config.model.model_config.seq_length = grpo_config.rl_config.seq_length
-        old_policy_config.use_parallel = grpo_config.rl_config.use_parallel
-        old_policy_config.parallel_config = MindFormerConfig(**grpo_config.actor_config.parallel_config.param_dict)
-        logger.info(f"old_policy parallel_config:{old_policy_config.parallel_config}")
-        old_policy_config.recompute_config = grpo_config.actor_config.recompute_config.param_dict
-        logger.info(f"old_policy_config recompute_config:{old_policy_config.recompute_config}")
-        old_policy_config.model.model_config.parallel_config = old_policy_config.parallel_config
-        old_policy_config.model.model_config.parallel_config.recompute = old_policy_config.recompute_config
-        old_policy_config.model.model_config.offset = grpo_config.actor_config.offset
-        if args.model_name in ["qwen", "llama"]:
-            old_policy_config.model.model_config.use_eod_attn_mask_compression = (
-                grpo_config.actor_config.use_eod_attn_mask_compression
-            )
-            old_policy_model_config = LlamaConfig(**old_policy_config.model.model_config)
-            old_policy_model_config.model_name = "llama"
-        elif args.model_name == "deepseek":
-            old_policy_config.model.model_config.moe_config = old_policy_config.moe_config
-            old_policy_model_config = DeepseekV3Config(**old_policy_config.model.model_config)
-            old_policy_model_config.model_name = "deepseek_training"
+        self.old_policy_config = MindFormerConfig(**OmegaConf.to_container(self.reconstructed_model_config))
+
+        if self.model_name in ["qwen2.5", "llama"]:
+            self.old_policy_model_config = LlamaConfig(**self.old_policy_config.model.model_config)
+            self.old_policy_model_config.model_name = "llama"
+        elif self.model_name == "deepseek":
+            self.old_policy_model_config = DeepseekV3Config(**self.old_policy_config.model.model_config)
+            self.old_policy_model_config.model_name = "deepseek_training"
         else:
-            raise ValueError(f"model_name should in ['qwen', 'llama','deepseek'], but get {args.model_name}")
+            raise ValueError(f"model_name should in ['qwen2.5', 'llama','deepseek'], but get {self.model_name}")
+        self.old_policy_model_config.checkpoint_name_or_path = None
+        self.dump_mf_conf_to_yaml(self.old_policy_model_config, self.SAVED_MODEL_CONFIG_YAML)
 
-        old_policy_model_config.checkpoint_name_or_path = grpo_config.actor_config.load
-        self.old_policy_ckpt_path = old_policy_model_config.checkpoint_name_or_path
-        old_policy_model_config.checkpoint_name_or_path = None
+        assert self.old_policy_model_config.parallel_config.pipeline_stage == self.pipeline_stage
+        self.old_policy_pp_stage = self.pipeline_stage or 1
 
-        self.old_policy_pp_stage = old_policy_model_config.parallel_config.pipeline_stage or 1
-        self.old_policy_dp = old_policy_model_config.parallel_config.data_parallel
-        self.enable_parallel_optimizer = grpo_config.actor_config.enable_parallel_optimizer and self.old_policy_dp > 1
+        assert self.old_policy_model_config.parallel_config.data_parallel == self.data_parallel
+        self.old_policy_dp = self.data_parallel
+        self.enable_parallel_optimizer = (
+            self.grpo_config.actor_config.enable_parallel_optimizer and self.old_policy_dp > 1
+        )
         context.set_auto_parallel_context(
             pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
-        self.old_policy_model_config = old_policy_model_config
-        self.old_policy_model = CausalLMHybrid(old_policy_model_config, grpo_config)
+        self.old_policy_model = CausalLMHybrid(self.old_policy_model_config, grpo_config)
         self.old_policy_model.model.set_train(False)
         for name, param in self.old_policy_model.parameters_and_names():
             param.name = name
         self.on_device = True
-        self.save_strategy_dir = grpo_config.rl_config.save_strategy_dir
 
     def get_old_policy_dp(self):
         """Get old policy model data parallel size"""
@@ -108,19 +96,28 @@ class OldPolicyWorker(Worker):
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{self.save_strategy_dir}/{stage_name}_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": False
+                    "only_trainable_params": False,
                 },
                 pipeline_stages=self.old_policy_pp_stage,
             )
             self.old_policy_model.compile(
-                fake_data, None, None, None, False, False, fake_data, actual_seq_data, False, False,
-                calculate_entropy=self.grpo_config.rl_config.calculate_entropy
+                fake_data,
+                None,
+                None,
+                None,
+                False,
+                False,
+                fake_data,
+                actual_seq_data,
+                False,
+                False,
+                calculate_entropy=self.grpo_config.rl_config.calculate_entropy,
             )
             stage_name = "other"
             context.set_auto_parallel_context(
                 strategy_ckpt_config={
                     "save_file": f"{self.save_strategy_dir}/{stage_name}_policy_strategy/strategy_{get_rank()}.ckpt",
-                    "only_trainable_params": False
+                    "only_trainable_params": False,
                 }
             )
 
@@ -142,15 +139,25 @@ class OldPolicyWorker(Worker):
             pipeline_stages=self.old_policy_pp_stage, enable_parallel_optimizer=self.enable_parallel_optimizer
         )
         actual_sequence_length = self.offset_actual_sequence_length(
-            actual_sequence_length, prompt_completion_ids_tensor.shape[1])
+            actual_sequence_length, prompt_completion_ids_tensor.shape[1]
+        )
         logger.info(
             f"precision old policy model inputs are {prompt_completion_ids_tensor}, "
             f"{samples}, {actual_sequence_length}"
         )
 
         results = self.old_policy_model(
-            prompt_completion_ids_tensor, None, None, None, False, False, samples, actual_sequence_length, False, False,
-            calculate_entropy=self.grpo_config.rl_config.calculate_entropy
+            prompt_completion_ids_tensor,
+            None,
+            None,
+            None,
+            False,
+            False,
+            samples,
+            actual_sequence_length,
+            False,
+            False,
+            calculate_entropy=self.grpo_config.rl_config.calculate_entropy,
         )
 
         if self.grpo_config.rl_config.calculate_entropy:
@@ -188,28 +195,28 @@ class OldPolicyWorker(Worker):
 
     def load_checkpoint(self):
         """load checkpoint"""
-        if not self.old_policy_ckpt_path:
+        if not self.model_path:
             return
 
-        if not os.path.exists(self.old_policy_ckpt_path):
-            raise ValueError(f"old policy model checkpoint path: {self.old_policy_ckpt_path} not exists")
+        if not os.path.exists(self.model_path):
+            raise ValueError(f"old policy model checkpoint path: {self.model_path} not exists")
 
-        if self.old_policy_ckpt_path and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
+        if self.model_path and self.load_ckpt_format in ["ms_safetensors", "hf_safetensors"]:
             self.on_device = True
             strategy_path = os.path.join(self.save_strategy_dir, "merge_strategy", "old_policy_merged_strategy.ckpt")
             network = self.old_policy_model.model
             prefix = "model."
             load_safetensors(
-                self.old_policy_ckpt_path, self.load_ckpt_format, network, self.old_policy_model, prefix, strategy_path
+                self.model_path, self.load_ckpt_format, network, self.old_policy_model, prefix, strategy_path
             )
             return
         load_ckpt_func = load_distributed_checkpoint if self.grpo_config.rl_config.use_parallel else ms.load_checkpoint
         logger.info(f"use_parallel is {self.grpo_config.rl_config.use_parallel} {load_ckpt_func}")
-        if self.old_policy_ckpt_path:
+        if self.model_path:
             self.on_device = True
-            param_dict = load_ckpt_func(self.old_policy_ckpt_path)
+            param_dict = load_ckpt_func(self.model_path)
             new_param_dict = {"model." + k: v for k, v in param_dict.items()}
-            logger.info(f"begin to load old policy model from: {self.old_policy_ckpt_path}")
+            logger.info(f"begin to load old policy model from: {self.model_path}")
             for _, param in self.old_policy_model.parameters_and_names():
                 logger.info(f"old policy model para names:   {param.name}")
             param_not_load, ckpt_not_load = ms.load_param_into_net(self.old_policy_model, new_param_dict)
